@@ -408,7 +408,6 @@ Lab-M4/
 │   │   │   │   └── opencode.rs
 │   │   │   ├── approval.rs
 │   │   │   ├── audit.rs
-│   │   │   ├── broker.rs
 │   │   │   ├── budget.rs
 │   │   │   ├── job.rs
 │   │   │   ├── lib.rs
@@ -418,7 +417,7 @@ Lab-M4/
 │   │   │   └── worktrees.rs
 │   │   └── tests/
 │   │       ├── adapters.rs
-│   │       ├── enforcement.rs
+│   │       ├── approvals.rs
 │   │       ├── fixtures/
 │   │       │   ├── antigravity.jsonl
 │   │       │   ├── codex.jsonl
@@ -511,18 +510,18 @@ flowchart LR
   US --> UC[usage-core: parsers / pricing / aggregates]
   UC -->|iba čítanie povolených ciest| AL[Syntetické alebo používateľom zvolené logy]
   UC <-->|iba normalizované záznamy| DB[Lab-M4 usage cache]
-  R --> OC[orchestrator-core: policy / budgets / queue]
+  R --> OC[orchestrator-core: CLI approvals / budgets / queue]
   OC <-->|štruktúrované úlohy| M[Manager CLI]
   OC <-->|samostatný proces; vlastný panel| WK[Worker CLIs]
   WK --> WT[Vlastné worktrees a branches]
   OC --> AQ[Approval queue; rozhoduje používateľ]
-  AQ -->|jednorazové schválenie konkrétnej operácie| OC
+  AQ -->|odpoveď na požiadavku CLI| OC
   OC --> SL[Redigovaný audit + usage events]
   SL --> US
   OC --> STOP[STOP: ukončenie Job Object]
 ```
 
-Zostane rozloženie panelov, sessions/sidebar, presúvanie/resize, terminal rendering, témy a nastavenia vzhľadu. Premenujú sa identity a cesty (§3). Nové sú Usage, sidecar, worker scheduler, worktrees, preukázateľné enforcement pravidlá a audit. **Konflikt požiadaviek:** Wraith API chat/diktovanie dnes závisia od `apiKey` (`W:src/agent/useAgent.ts:202–211,724–729`, `dictation.ts:68–86`). Nemožno súčasne zachovať tento mechanizmus identicky a nikdy neukladať kľúče. Odporúčanie: zachovať zdroje, vypnúť pôvodnú credential-backed cestu, chat nahradiť CLI managerom; diktovanie zostane nedostupné, kým sa neschváli riešenie bez kľúčov. Toto je otvorené rozhodnutie č. 2, nie skrytá strata funkcie.
+Zostane rozloženie panelov, sessions/sidebar, presúvanie/resize, terminal rendering, témy a nastavenia vzhľadu. Premenujú sa identity a cesty (§3). Nové sú Usage, sidecar, worker scheduler, worktrees, natívne režimy schvaľovania CLI a audit. **Konflikt požiadaviek:** Wraith API chat/diktovanie dnes závisia od `apiKey` (`W:src/agent/useAgent.ts:202–211,724–729`, `dictation.ts:68–86`). Nemožno súčasne zachovať tento mechanizmus identicky a nikdy neukladať kľúče. Odporúčanie: zachovať zdroje, vypnúť pôvodnú credential-backed cestu, chat nahradiť CLI managerom; diktovanie zostane nedostupné, kým sa neschváli riešenie bez kľúčov. Toto je otvorené rozhodnutie č. 2, nie skrytá strata funkcie.
 
 ## 3. Rebranding a koexistencia s Wraithom
 
@@ -656,32 +655,33 @@ Worker stdout/stderr zachytáva supervisor oddelene; machine stream ide do versi
 
 Done = potvrdený terminal event adaptéra + príslušný proces/turn skončil úspešne + nezostali otvorené approvals + nezávisle overené acceptance. Výstup „done“, shell prompt, ticho ani Wraith marker nestačia. Pri dokumentovanom finálnom JSON namiesto stream eventu validovať envelope a exit code. EOF bez výsledku → `incomplete`, nonzero → `failed`; neopakovať ne-idempotentnú úlohu automaticky. Presné event predicates Grok/Copilot/OpenCode sú gate F5/F7, nie odhad názvov.
 
-### 5.3 Worktrees, approval queue a vykonávanie
+### 5.3 Worktrees a režimy schvaľovania
 
-Supervisor pripraví `git worktree add -b orchestrator/<session>/<worker> <repo>/.lab-m4/worktrees/<session>/<worker> <baseSha>`; branch/ref/path vytvára sám z validovaných IDs, nie z modelového textu. Každý worker iný branch a adresár; `.lab-m4/` ignorovať. Worktrees zachovať po STOP/crash; čistenie až po explicitnom UI schválení. [Git worktree dokumentácia](https://git-scm.com/docs/git-worktree) potvrdzuje samostatné working trees, ale zdieľané repository metadáta: **worktree nie je bezpečnostný sandbox**.
+Supervisor pripraví `git worktree add -b orchestrator/<session>/<worker> <repo>/.lab-m4/worktrees/<session>/<worker> <baseSha>`; IDs a cesty validuje. Každý worker má vlastnú branch a adresár. Worktrees zostávajú po STOP/crash; čistenie iba po rozhodnutí používateľa. [Git worktree](https://git-scm.com/docs/git-worktree) používa zdieľané Git metadáta: **worktree nie je sandbox**.
 
-**Povinná hranica F5:** procesový wrapper alebo regex nad promptom nezachytí vnorený shell, skript, git knižnicu ani sieťový push. Riadený worker môže byť zapnutý iba vtedy, keď adaptér preukáže pre-execution permission handshake pre všetky mutujúce nástroje a zabráni obchádzaniu cez native tools, hooks, plugins a MCP. Návrh: broker vlastní vykonávanie príkazov a zápisy; CLI má len explicitne povolené čítanie a broker nástroje. Native shell/write/network tools musia byť blokované alebo rovnako sprostredkované. OS confinement musí obmedziť potomkov a zápis mimo worktree; Job Object sám rieši lifecycle, nie filesystem/network sandbox.
+**Používateľská voľba:** session má prepínač `Manual approve` / `Auto-approve`; každý worker môže zdediť session hodnotu alebo mať vlastnú. Default návrh `Manual approve`. UI vždy ukazuje efektívnu hodnotu aj zdroj (`session` / `worker override`). Zmena sa vzťahuje na nasledujúce požiadavky; ak zmena CLI vyžaduje nový proces/turn, UI oznámi a použije ju až po opätovnom spustení, bez predstierania okamžitej zmeny. Nastavenie nikdy neukladá prihlasovacie údaje.
 
-Konkrétne Windows confinement + CLI permission protokoly ešte nie sú dokázané: **NEOVERENÉ, blokujúci spike F5**. Ak CLI nedovolí vynútiteľné sprostredkovanie, adaptér je `unsupported-for-managed-mode`; zostane iba fake/dry-run a manuálny terminal launch. **Nesmie sa nahradiť „dôveruj promptu“ ani automatickým yolo.** Pred pokračovaním je potrebná úprava plánu, nie improvizácia. Rovnaká hranica platí pre manager CLI.
+- **Manual approve:** natívna žiadosť CLI, ktorú jeho rozhranie poskytne klientovi, sa zobrazí v Lab-M4 s workerom, úlohou, činnosťou a dostupnými podrobnosťami. `Approve` alebo `Deny` pošle odpoveď príslušnému CLI; pri odpojení, timeout alebo STOP zostáva zamietnutá/nepotvrdená podľa protokolu. Jeden klik platí pre konkrétnu požiadavku; ak CLI ponúka dlhšie povolenie, nevyberať ho automaticky.
+- **Auto-approve:** Lab-M4 zvolí vstavaný automatický režim konkrétneho CLI. Rozsah automatického povolenia sa líši podľa CLI; UI uvádza jeho aktuálny profil a známe výnimky. Nejde o vlastný OS sandbox ani vykonávací broker.
+- **Vždy vyžadované osobitné schválenie používateľa v oboch režimoch:** push na `main`, merge, force-push (`--force`, `--force-with-lease`, `+refspec`), `rebase`, prepis histórie (`git filter-branch`, `git filter-repo`, `git commit --amend`, `git replace`, a ekvivalentné operácie) a mazanie mimo workerovho worktree (`rm`, `rmdir`, `del`, `Remove-Item` a ekvivalentné operácie vrátane API). Aj nepriamy zápis cez skript/API spadá do požiadavky. Príklady sú kategórie, nie úplný bezpečnostný filter. Na samotný repozitár Lab-M4 počas tohto projektu zostáva prísnejší zákaz: **nikdy push/merge do main ani force-push, rebase alebo rewrite**, aj keby bol v generickom produkte možný súhlas.
 
-Approval item: `{approvalId,workerId,taskId,operation,executable,argv,cwd,paths,diffHash,policyVersion,expiresAt}`. UI zobrazí účinok a konkrétny diff/príkaz; approve je jednorazové a viazané na hash, zamietnutie alebo zmena parametrov ruší token. Žiadne session-wide „approve all“. Queue je autoritatívna v Rust, nie v React; čakajúce operácie sa bez rozhodnutia nevykonajú.
+**Hranica overenia:** všeobecné natívne auto-approve často schváli aj vyššie uvedené akcie. CLI musí podporovať selektívny natívny `ask` alebo ekvivalentný pre-execution permission event s odpoveďou pre konkrétnu akciu, ktorý v auto režime neobíde; iba vtedy možno danú kombináciu označiť za podporovanú. `deny` nie je `ask` a samo o sebe neimplementuje tlačidlo Approve. Ak sa ochrana alebo odpoveď z UI nedá overiť, UI označí kombináciu **NEOVERENÉ / nepodporované** a daný riadený režim nespustí; neobchádza sa to automatickým povolením. Iné natívne riziká a zložité vnorené skripty nemožno bez ďalšej izolácie považovať za úplne zachytené.
 
-Presné kategórie/patterny, case-insensitive pri Windows command names, ktoré vyžadujú schválenie alebo sú úplne zakázané:
+F5 výslovne **neimplementuje vlastný OS sandbox ani broker vykonávania**. Vstavané ochrany samotných CLI sa môžu používať podľa ich dokumentácie a konfigurácie, nie sú vlastným sandboxom Lab-M4. Dodatočná OS izolácia/broker sú možnou samostatnou neskoršou fázou po novom návrhu; nie sú súčasťou F5–F7. Job Object pre STOP rieši lifecycle, nie vynútenie approval pravidiel.
 
-| Pattern / operácia | Policy |
-| --- | --- |
-| `git push ...`, vrátane `git -C <path> push`, `git -c ... push`; HTTP/SSH/API ekvivalent zápisu vzdialeného repozitára | UI approval pre konkrétny feature ref, nikdy `main`; sieťový zápis mimo brokera blokovať. |
-| `git merge ...`, `gh pr merge ...`, API merge | Pre tento projekt merge vykonáva len používateľ; workerovi vždy deny, aj keď všeobecná queue vie zobrazovať žiadosť. |
-| `git push --force`, `--force-with-lease`, `+<refspec>`, `git rebase`, `git filter-branch`, `git filter-repo`, `git commit --amend`, `git replace` | V tomto projekte vždy deny: zákaz prepisovania histórie. |
-| `git reset --hard`, `git clean -f*`, `git restore ...`, `git checkout -- <path>`, `git checkout -f`, `git branch -d/-D`, `git worktree remove/prune` | UI approval pre konkrétne zahadzované dáta; v prípade neistoty deny. Žiadne automatické cleanup po chybe. |
-| `rm`, `rmdir`, `del`, `erase`, `rd`, `Remove-Item` a aliasy `ri`, `Clear-Content`, `shred`, `truncate`; file delete/overwrite API | UI approval vrátane konkrétnych paths a obsahu diff; chránené zdrojové Lab-M4 súbory iba presunúť, nie zahodiť. |
-| `format`, `Format-Volume`, `Clear-Disk`, `Initialize-Disk`, `diskpart`, `dd`, `mkfs*`, raw disk writes | Vždy deny. |
-| `reg add/delete/import`, `Set-ItemProperty` mimo worktree, `sc delete`, `Remove-Service`, `Stop-Process` mimo vlastného jobu | Vždy deny, nemajú dôvod v coding workeri. |
-| `powershell/pwsh -Command/-EncodedCommand/-File`, `cmd /c`, `bash/sh -c`, `Invoke-Expression`/`iex`, `eval`, Python/Node skripty, `npm/pnpm run/install`, build scripts | Nestačí schváliť názov interpretera. Broker overí celý účinok alebo sandboxuje celý schválený proces; unknown/opaque → approval + confinement, bez confinement deny. |
-| `;`, pipes, `&&`, `||`, redirect `>`, `$()`, backticks, aliasy, neznámy executable, junction/symlink operácie | Rozparsovať na operácie; neinterpretovateľný vstup fail-closed. Modelový shell text priamo nevykonať. |
-| Všetky nové zápisy, rename/delete cez nástroj mimo schváleného task scope alebo do `.git`, `.env`, auth či settings | Approval alebo deny podľa chráneného cieľa. Auth súbory vždy deny, ani ich „prečítanie na redakciu“ nie je dovolené. |
+#### Zdokumentované režimy CLI (stav 4. 11. 2026)
 
-Toto je policy zo zadania a návrh brokera, **nie tvrdenie**, že blacklist garantuje izoláciu. Absolútne cesty, aliasy aj premenované binárky sa kontrolujú na úrovni skutočnej operácie; samotný zoznam patternov je vysvetlenie pre UI/test cases.
+| CLI | Auto-approve | Manual approve a odpoveď UI | Obmedzenie |
+| --- | --- | --- | --- |
+| Codex | `--ask-for-approval never` nastavuje politiku bez pýtania; `--dangerously-bypass-approvals-and-sandbox` / `--yolo` vypína aj sandbox. [CLI referencia](https://developers.openai.com/codex/cli/reference/). | `--ask-for-approval on-request` žiada schválenie tam, kde ho CLI vyžaduje; [app-server](https://developers.openai.com/codex/app-server/) dokumentuje `item/commandExecution/requestApproval` a `item/fileChange/requestApproval` s odpoveďou klienta. | `never` sám nevynucuje výnimky; režim so všetkými výnimkami **NEOVERENÉ**. `on-request` neznamená automaticky každú operáciu. |
+| Grok Build | `grok --always-approve`, alias `--yolo`; deny rules a PreToolUse hooks zostávajú podľa [permissions](https://docs.x.ai/build/features/permissions). | Natívny `ask` je predvolený režim; [headless/ACP docs](https://docs.x.ai/build/cli/headless-scripting) dokumentujú `grok agent stdio`. | Dokumentácia prečítaná pri plánovaní nepreukazuje presnú ACP žiadosť/odpoveď ani selektívne výnimky `ask` počas `--always-approve`: **NEOVERENÉ**. Deny nie je schválenie. |
+| Copilot CLI | `--allow-all-tools` povoľuje nástroje; `--allow-all` / `--yolo` navyše aj paths a URLs. [Programmatic reference](https://docs.github.com/en/copilot/reference/copilot-cli-reference/cli-programmatic-reference). | Interaktívny režim má natívne permission prompty; v `-p` sa nevybavené žiadosti podľa referencie zamietajú. | UI odpoveď cez konkrétne programové rozhranie a výnimky v auto režime: **NEOVERENÉ**. `--assisted-approval` je automatická kontrola, nie používateľské tlačidlo. |
+| Antigravity | `--dangerously-skip-permissions` automaticky povoľuje tool requests. [CLI reference](https://antigravity.google/docs/cli/reference/). | Nastavenie `toolPermission=request-review` je zdokumentované; `strict` žiada viac akcií. [Headless docs](https://antigravity.google/docs/cli/headless/) však uvádzajú, že nevybavená žiadosť v headless režime je soft-denied. | Štruktúrované interactive approval API a účinnosť výnimiek v auto režime sú **NEOVERENÉ**. Nezapisovať globálny používateľský settings súbor; per-session override mechanizmus overiť. |
+| OpenCode | `opencode run --auto`; automaticky schváli requests, ktoré nie sú explicitne denied. [Permissions](https://opencode.ai/docs/permissions/). | `permission: {"*":"ask"}` je zdokumentovaná konfigurácia; možnosti zahŕňajú once/reject. Presný bezpečný per-worker spôsob jej dodania a programová odpoveď: **NEOVERENÉ**. | `--auto` schvaľuje aj `ask`; deny ostáva deny, nie tlačidlo. Selektívne povinné výnimky v tomto režime **NEOVERENÉ**. |
+
+Presné flagy sa pri adaptéri viažu na zistenú kompatibilnú verziu; žiadne globálne nastavovanie ani čítanie auth súborov. Natívne nastavenia/reštrikcie môže zmeniť lokálna alebo enterprise policy: UI zobrazí skutočný dostupný stav, nie len požadovanú hodnotu. Predpokladané UI payload `{approvalId,sessionId,workerId,taskId,sourceRequestId,operation,details,expiresAt}` musí vychádzať zo skutočného protokolu; chýbajúce údaje označiť unknown. V prípade zmeny či opakovania žiadosti odpoveď neprenášať na inú operáciu.
+
+Poznámka k F5: pre manager Codex je zdokumentovaný app-server approval protokol; Grok ACP transport je zdokumentovaný, no jeho presný permission handshake nie. Prototyp a syntetický fake worker sú súčasťou F5; živý Grok režim je akceptovaný len po overení kompatibilnej kombinácie a trvalých výnimiek. Inak sa v PR jasne reportuje blokujúci rozdiel a navrhuje úprava plánu, bez vlastného brokeru/sandboxu. Praktická úplná ochrana pred obchádzaním cez ľubovoľný child proces bez dodatočnej izolácie zostáva **NEOVERENÉ**.
 
 ### 5.4 Budget, STOP a spoľahlivosť
 
@@ -707,7 +707,7 @@ Loop detection: rovnaký task/action+diff hash trikrát bez pokroku, opakovaný 
 
 Každé rozhodnutie managera, dispatch, požiadavka/odpoveď approval, začiatok/koniec nástroja, zmena stavu, retry, budget event a STOP má monotonické `sequence`, timestamp, IDs, action enum, výsledok a hash diff. Ukladať lokálne do `orchestrator/sessions/<id>/events.jsonl`, bez raw prompts, env, hlavičiek, auth alebo celých transcriptov. Obsahový súhrn je krátky, prejde allowlist/redakciou pred UI, pred disk aj pred odoslaním managerovi; neznámy payload sa neuchová. Automatická redakcia nie je dôkaz, že neunikne ľubovoľné tajomstvo: preto je základom minimalizácia a zabránenie čítaniu chránených ciest.
 
-Audit zobrazuje **všetky sprostredkované akcie**. Ak CLI vie vykonať nepozorovanú akciu, nespĺňa gate managed mode. Zmerať inference usage managera aj workers; lokálne policy rozhodnutia samy nemajú modelové tokeny. Dedupe live/history podľa §4.3; raw CLI native logs nikdy neimportovať do session auditu. Retencia návrh 90 dní audit, usage agregáty bez automatického mazania; zmena retencie je rozhodnutie č. 8.
+Audit zobrazuje rozhodnutia managera a udalosti, ktoré CLI skutočne sprístupní. Úplnosť všetkých interných akcií CLI je **NEOVERENÉ**; UI označí chýbajúce pokrytie. Chránené operácie musia pred vykonaním prejsť používateľským schválením podľa §5.3; ak dané rozhranie túto podmienku nepreukazuje, príslušný režim nie je podporovaný. Zmerať inference usage managera aj workers; lokálne policy rozhodnutia samy nemajú modelové tokeny. Dedupe live/history podľa §4.3; raw CLI native logs nikdy neimportovať do session auditu. Retencia návrh 90 dní audit, usage agregáty bez automatického mazania; zmena retencie je rozhodnutie č. 8.
 
 ## 6. Bezpečnosť
 
@@ -715,8 +715,8 @@ Audit zobrazuje **všetky sprostredkované akcie**. Ak CLI vie vykonať nepozoro
 
 | Hrozba | Návrh mitigácie a overiteľný výsledok |
 | --- | --- |
-| Prompt injection v repo/web/worker output | Zdrojový text vždy označený ako nedôveryhodné dáta; nemôže meniť policy/budget/approval. Žiadne implicitné trust repo hooks/plugins. Manager používa schema-validované návrhy; synthetic fixture „push to main“ musí skončiť deny. |
-| Worker spustí delete/format/push | Broker + pre-execution approvals + OS confinement; §5.3. Bez dôkazu adaptér vypnutý. Worktree nie je sandbox, regex nie je enforcement. |
+| Prompt injection v repo/web/worker output | Zdrojový text vždy označený ako nedôveryhodné dáta; nemôže meniť policy/budget/approval. Žiadne implicitné trust repo hooks/plugins. Manager používa schema-validované návrhy; synthetic fixture „push to main“ musí vyžadovať používateľovo schválenie; pre prácu na Lab-M4 je push do main aj tak zakázaný. |
+| Worker spustí delete/format/push | Natívne CLI permissions a osobitné schválenie podľa §5.3; nepodporovanú kombináciu nezapnúť. Bez vlastnej OS izolácie/brokera nemožno garantovať zachytenie obídenia; worktree nie je sandbox a regex nie je enforcement. |
 | Únik secrets do auditu/Usage | Explicitný source allowlist, auth deny pred open, projekcia polí, minimum obsahu, žiadny env dump. Syntetické canary reťazce musia byť odstránené pred UI/disk; reálne kľúče nikdy nevytvárať ani nečítať. |
 | PTY escape sekvencie / spoof done | xterm pre obrazovku, žiadne `innerHTML` z PTY; structured output oddelene. OSC 52 clipboard a automatické otváranie URL zakázať v worker paneli, allowlist ANSI pre audit; marker nie je úspech. Test split ESC/OSC, obrovský výstup, falošný completion marker. |
 | Path traversal/junction/TOCTOU | Canonical root scope a overenie otvoreného handle, reparse odmietnuť; žiadne generické read/write z rendereru. |
@@ -765,7 +765,7 @@ Renderer nedostane `fs:*`, `shell:*`, HTTP plugin ani ľubovoľný process spawn
 
 Teraz iba `docs/plan` → PR **docs: Lab-M4 technický plán**, jediný súbor, STOP. Po schválení najprv zapracovať pripomienky do rovnakého PR a počkať na používateľov merge. Potom vždy jedna fáza, branch z aktuálneho `main`, malé commity, PR, report a STOP do používateľovho merge. Žiadny push/merge na main, force-push, rebase ani história rewrite. Zmena reality oproti tomuto plánu → zastaviť a navrhnúť aktualizáciu plánu.
 
-**Upresnenie používateľa počas plánovania:** v tejto fáze nespúšťať testy. Pri implementácii znížiť bežný rozsah testovania približne na polovicu: vybrať cielene testy zmeneného modulu, neopakovať celé sady lokálne aj v CI. Povinný jeden Windows CI build + test gate zostáva; nižšie uvedené test cases sú návrh pokrytia, nie pokyn každý test opakovane spúšťať. Žiadne dodatočné široké regresné cykly bez nálezu chyby. Bezpečnostné gates nemožno nahradiť tvrdením, že boli overené.
+**Upresnenie používateľa počas plánovania:** v tejto fáze nespúšťať testy. Pri implementácii znížiť bežný rozsah testovania približne na polovicu: vybrať cielene testy zmeneného modulu, neopakovať celé sady lokálne aj v CI. Povinný jeden Windows CI build + test gate zostáva; nižšie uvedené test cases sú návrh pokrytia, nie pokyn každý test opakovane spúšťať. Žiadne dodatočné široké regresné cykly bez nálezu chyby. Natívne schvaľovanie a jeho hranice nemožno označiť za overené bez dôkazu.
 
 **Presná mapa F1 (zo snapshotu L, nie zmazanie existujúcej histórie):**
 
@@ -836,19 +836,19 @@ Akceptácia: všetky položky §4.4, žiadne zdvojenie podmnožín, nulové falo
 
 ### F5 — `feat/orchestrator-core`
 
-**Súbory:** `O/src/{lib.rs,session.rs,supervisor.rs,worktrees.rs,policy.rs,approval.rs,budget.rs,audit.rs,job.rs,broker.rs,adapters/mod.rs,adapters/manager_codex.rs,adapters/grok.rs}`, `O/{Cargo.toml,tests/session.rs,tests/enforcement.rs,tests/lifecycle.rs}`; nové `packages/contracts/{src/orchestrator.ts,schemas/orchestrator.schema.json}`, `D/src/orchestrator.rs`, `apps/desktop/src/orchestrator/Controls.tsx`, `tools/fake-worker/{package.json,main.mjs}`, `docs/cli-compatibility.md`; zmeny `D/{src/lib.rs,build.rs,permissions/app.toml,capabilities/default.json,Cargo.toml}`, `apps/desktop/src/App.tsx`, root Cargo/lock/CI/test map; `apps/usage-service/src/{main.ts,protocol.ts}`, `U/src/server/summary.ts` pre ingestion.
+**Súbory:** `O/src/{lib.rs,session.rs,supervisor.rs,worktrees.rs,policy.rs,approval.rs,budget.rs,audit.rs,job.rs,adapters/mod.rs,adapters/manager_codex.rs,adapters/grok.rs}`, `O/{Cargo.toml,tests/session.rs,tests/approvals.rs,tests/lifecycle.rs}`; nové `packages/contracts/{src/orchestrator.ts,schemas/orchestrator.schema.json}`, `D/src/orchestrator.rs`, `apps/desktop/src/orchestrator/Controls.tsx`, `tools/fake-worker/{package.json,main.mjs}`, `docs/cli-compatibility.md`; zmeny `D/{src/lib.rs,build.rs,permissions/app.toml,capabilities/default.json,Cargo.toml}`, `apps/desktop/src/App.tsx`, root Cargo/lock/CI/test map; `apps/usage-service/src/{main.ts,protocol.ts}`, `U/src/server/summary.ts` pre ingestion.
 
-Postup: (1) fake worker + safety capability matrix/spike, (2) manager Codex transport + jeden Grok worker, (3) supervisor/worktree/broker/approval, (4) job STOP/budgets/timeouts, (5) audit/Usage dedupe, (6) minimálne štart/STOP/approval controls dostupné už v F5, aby sa nečakalo na F6 na bezpečné ovládanie. F5 neaktivuje ostatných workers. Žiadny živý CLI launch bez splnenia enforcement gate §5.3; nepodporovaný handshake = blokovaný PR acceptance a návrh úpravy plánu.
+Postup: (1) fake worker a matica natívnych approval možností, (2) manager Codex app-server a jeden Grok worker cez overený CLI transport, (3) supervisor/worktree a sprostredkovanie natívnych žiadostí, (4) job STOP/budgets/timeouts, (5) audit/Usage dedupe, (6) minimálne session/worker prepínače a Approve/Deny controls už v F5. F5 neimplementuje vlastný OS sandbox ani vykonávací broker. Nepodporovaný handshake alebo chýbajúce vždy vyžadované výnimky = označiť režim nepodporovaný a navrhnúť update plánu podľa §5.3.
 
-Testy: jeden deterministický integration scenár pokryje approval deny/approve/hash invalidáciu, fake nested child STOP, crash/timeout/rate-limit, loop a budget; samostatná adversarial sada pokryje bypass cez shell/script/FS API, falošné done a injection. Fixture repo len pod `.lab-m4/test-tmp/`, remote fake, žiadne reálne push. Príkazy: gate `--phase F5`; `pnpm orchestrator:dry-run`; Windows dev fake manager+Grok, STOP aj počas approval a launch race; potom používateľom spustený minimálny syntetický live smoke iba pri overenej izolácii.
+Testy: jeden deterministický integration scenár pokryje prepínače session/worker, mapovanie CLI režimu, permission request Approve/Deny, trvalé výnimky, nedostupné API, STOP potomkov, timeout a budget. Syntetické prípady odhalia vnorené skripty/API ako obmedzenie, nie dôkaz OS izolácie. Fixture repo len pod `.lab-m4/test-tmp/`, remote fake, žiadne reálne push. Príkazy: gate `--phase F5`; `pnpm orchestrator:dry-run`; Windows dev fake manager+Grok, STOP pri approval; live smoke iba s kompatibilným overeným režimom.
 
-Akceptácia: presne manager+Grok, všetky akcie sprostredkované, worktree/branch oddelené, STOP nezanechá potomkov, audity bez secrets, cost gaps explicitné. Pracnosť **10–18 dní**, najvyššia neistota; nie sľub fungujúceho enforcement všetkých CLI.
+Akceptácia: manager+Grok, session/worker prepínače, natívne approval žiadosti v UI, osobitné výnimky §5.3, worktree/branch, STOP, audit bez secrets a explicitné cost gaps. Každá nepodporovaná kombinácia musí byť jasná; žiadny vlastný OS sandbox/broker. Pôvodný odhad **10–18 dní** je po zmene rozsahu **NEOVERENÉ** a vyžaduje nové upresnenie podľa CLI handshake.
 
 ### F6 — `feat/orchestrator-ui`
 
 **Súbory:** nové `apps/desktop/src/orchestrator/{OrchestratorTab.tsx,WorkerPane.tsx,TaskBoard.tsx,ApprovalQueue.tsx,BudgetBar.tsx,SessionLog.tsx,useOrchestrator.ts,OrchestratorTab.test.tsx}`; meniť `Controls.tsx`, `apps/desktop/src/{App.tsx,App.css}`, `packages/contracts/src/orchestrator.ts`, `D/src/orchestrator.rs` len DTO wiring, phase test map.
 
-Postup: (1) session konfigurácia bez auth, (2) manager+worker panely a board, (3) presná approval preview a odmietnutie, (4) budget + trvalý STOP, (5) audit timeline, crash/recovery a Usage links. UI nesmie schvaľovať operáciu cez agent text alebo PTY vstup; orchestrator panel nebude generický write_powershell cieľ.
+Postup: (1) session konfigurácia bez auth, (2) manager+worker panely a board, (3) presná approval preview a odmietnutie, (4) budget + trvalý STOP, (5) audit timeline, crash/recovery a Usage links. UI používa zdokumentovanú natívnu odpoveď na permission request; ak ju CLI neposkytuje, kombinácia je nepodporovaná. Orchestrator panel nebude generický write_powershell cieľ.
 
 Testy: jeden UI end-to-end fake session, keyboard-only approve/reject, expired approval, STOP vo všetkých stavoch, log redaction; neprehrávať celý F5 backend suite lokálne. Príkazy: gate `--phase F6`, Windows dev s fake CLI, resize/scroll/focus/contrast a prerušenie session.
 
@@ -858,11 +858,11 @@ Akceptácia: všetky stavy zodpovedajú Rust snapshotu, žiadne stratené approv
 
 **Súbory:** nové `O/src/adapters/{codex.rs,copilot.rs,antigravity.rs,opencode.rs}`, `O/tests/adapters.rs`, `O/tests/fixtures/{codex.jsonl,copilot.jsonl,antigravity.jsonl,opencode.jsonl}`; meniť `O/src/adapters/mod.rs`, `docs/cli-compatibility.md`, `packages/contracts/src/{orchestrator.ts,usage.ts}`, `apps/desktop/src/orchestrator/{OrchestratorTab.tsx,useOrchestrator.ts}`, `apps/usage-service/src/protocol.ts`, `U/src/core/types.ts`, nový `U/src/liveUsage.ts`, `U/tests/liveUsage.test.ts`; Cargo/JS lock iba ak potreba závislosti doložená, phase test map.
 
-Postup: po jednom adaptéri overiť `--help`/verziu na používateľom schválenom executable, official event/permissions protocol, fake contract, confinement, done, cancel, usage; až potom sprístupniť v UI. Fixtures ručne syntetické, nie záznam osobnej relácie. Copilot provider rozšíri enum; Antigravity historický stub ostáva zachovaný. Historické log formáty Copilot/Antigravity neimplementovať bez samostatného potvrdeného návrhu.
+Postup: po jednom adaptéri overiť `--help`/verziu na používateľom schválenom executable, official event/permissions protocol, native mode flags, fake contract, vždy vyžadované výnimky, done, cancel, usage; až potom sprístupniť v UI. Fixtures ručne syntetické, nie záznam osobnej relácie. Copilot provider rozšíri enum; Antigravity historický stub ostáva zachovaný. Historické log formáty Copilot/Antigravity neimplementovať bez samostatného potvrdeného návrhu.
 
 Testy: spoločný adapter contract suite parametrizovaný 4 fixtures (done/error/approval/STOP/usage), dedupe live/history a unknown usage; vybraná Windows smoke sada po jednom agentovi, bez opakovania celého desktop regresu. Príkazy: gate `--phase F7`; Windows dev s fake všetkými profilmi, potom používateľský smoke každého podporovaného adaptéra.
 
-Akceptácia: dostupný iba adaptér so zdokumentovanou kompatibilnou verziou a enforcement dôkazom; unsupported stav viditeľný. Nesmie sa tvrdiť „všetci fungujú“, keď je niektorý gate nesplnený; vtedy stop a plán update. Pracnosť **6–12 dní**, závisí od CLI verzií a schopnosti broker integrácie.
+Akceptácia: adaptér má zdokumentovanú kompatibilnú verziu, natívne mapovanie prepínača a overenú možnosť povinných výnimiek; unsupported stav viditeľný. Ak výnimka alebo UI odpoveď nie sú možné, daný režim sa nesprístupní a navrhne sa update plánu. Pôvodný odhad **6–12 dní** po zmene rozsahu **NEOVERENÉ**.
 
 ## 8. Testovanie
 
@@ -876,7 +876,7 @@ Fáza 1 tohto zadania: **žiadny install, build ani aplikačné testy**; iba kon
 | F2 | Paths/identity/ACL | Dva inštalátory, metadata segregation | Súčasný Wraith/Lab-M4 + uninstall Lab-M4 |
 | F3 | Normalizácia, cursor, ceny | Sidecar + syntetická SQLite/WAL/zstd, no-write | Inštalácia bez Node, scan/cancel |
 | F4 | Formátovanie, agregácie, CSV | Empty/partial/export UI flow | Graf, filtre, keyboard, témy |
-| F5 | Policy/budget/state | Fake procesový strom + adversarial gate | Approval/STOP počas behu a timeout |
+| F5 | Policy/budget/state | Fake procesový strom + natívny approval kontrakt | Approval/STOP počas behu a timeout |
 | F6 | DTO/state rendering | Fake session → approvals → log → stop | Fokus, panel layout, accessibility |
 | F7 | Parameterized adapter contracts | Každý fake CLI protocol v spoločnej sade | Každý preukázateľne podporovaný CLI |
 
@@ -890,7 +890,7 @@ Workflow/toolchain presné action SHAs a dostupná Windows image sú **NEOVEREN�
 
 `tools/fake-worker/main.mjs` simuluje jednotlivé protokoly, usage, rate-limit, čakanie na approval, veľký výstup, malformed JSON a child/grandchild proces. Nedostáva credentials ani sieť. `pnpm orchestrator:dry-run` generuje task/action návrhy bez vykonania OS/git mutácií; integration mód smie mutovať len syntetický sandbox repo pod `.lab-m4/test-tmp/` s lokálnym fake remote. Žiadny push do Wraith ani main; všetky nebezpečné vzory sú vstupné test strings, nie reálne diskové operácie.
 
-No-write test porovná hash DB a inventory pred/po vrátane WAL/SHM; auth sentinel preukazuje, že open nebol volaný, nie iba že sa obsah neobjavil na stdout. Crash test overí reštart cache bez dvojitého započítania. Approval bypass test musí overiť reálne odmietnutie v broker/confinement, nie iba obsah systémového promptu. Bez splnenia týchto podmienok managed mode ostane vypnutý.
+No-write test porovná hash DB a inventory pred/po vrátane WAL/SHM; auth sentinel preukazuje, že open nebol volaný, nie iba že sa obsah neobjavil na stdout. Crash test overí reštart cache bez dvojitého započítania. Approval test musí overiť natívne request/response pre každú podporovanú kombináciu aj povinné výnimky; chýbajúci request pri auto režime sa nesmie započítať ako úspech. Odolnosť voči ľubovoľnému child procesu bez vlastnej izolácie je **NEOVERENÉ**.
 
 ## 9. Riziká a otvorené otázky
 
@@ -900,7 +900,7 @@ Tieto rozhodnutia sa žiadajú **pri revízii plánu**, nie opakovanými potvrde
 2. **„Všetko Wraith“ verzus zákaz kľúčov.** Odporúčam bezpečnostnú podmienku nadradiť: zachovať pôvodný kód, deaktivovať API-key chat/diktovanie, chat nahradiť CLI. Diktovanie bez key závislosti je **NEOVERENÉ** a nie je skryto zahrnuté v odhade F7. Ak musí zostať funkčne identické, treba zmeniť návrh, nie potichu ukladať kľúče.
 3. **Koexistencia na úrovni CLI.** Odporúčam oddeliť všetky Lab-M4/Wraith aplikačné dáta, ale dovoliť CLIs používať používateľovo existujúce prihlásenie a provider-owned logs. Požiadavka aj na oddelené provider profiles je **NEOVERENÉ** a zvýši rozsah.
 4. **Manager a Astra.** Odporúčam F5 Codex manager transport + Grok worker; konkrétny dostupný model ID vyberie používateľ. „Astra“ ako CLI model identifier je **NEOVERENÉ**. Žiadna priama API integrácia s uloženým kľúčom.
-5. **Enforcement na Windows.** Najväčší blocker: headless JSON nepreukazuje kontrolu nástrojov. Odporúčam F5 gate a broker-only režim, bez unsafe fallback. Ak CLI neumožní úplné sprostredkovanie, zastaviť a schváliť nový izolovaný runtime návrh alebo ponechať iba manuálny režim; neoznačiť to za dokončený Orchestrator.
+5. **Natívne approvals a povinné výnimky.** Používateľ požaduje per-session/worker Auto alebo Manual, vždy osobitne schvaľovať chránené akcie a bez vlastného sandboxu/brokera v F5. Veľké auto-approve prepínače často schvália aj tieto akcie; dôkaz selektívnej výnimky a response handshake pre každé CLI je **NEOVERENÉ**. Odporúčanie: nepodporovanú kombináciu vypnúť a navrhnúť aktualizáciu plánu; neskoršiu OS izoláciu posúdiť samostatne.
 6. **Živá SQLite/WAL história.** Odporúčam read-only live režim len s dokázaným no-write správaním; inak explicitný snapshot a coverage warning. `immutable=1` nie je univerzálna live oprava. Úplnosť historických formátov je **NEOVERENÉ**.
 7. **Distribučná platforma.** Odporúčam prvý release Windows x64, bez systému Node. ARM64 a podpisovanie/updater sú samostatné následné PR; signing credentials teraz nežiadať ani nečítať. Node sidecar verzia/native ABI gate F3.
 8. **Retencia a súkromie.** Odporúčam 90 dní metadát auditu, usage bez automatickej expirácie, žiadne raw transcript archívy; osobné session názvy a absolútne paths neexportovať. Používateľ môže zvoliť kratšiu retenciu.
@@ -908,7 +908,7 @@ Tieto rozhodnutia sa žiadajú **pri revízii plánu**, nie opakovanými potvrde
 10. **Značka/ikony/identifier.** Odporúčam `Lab-M4`, `com.wondris.labm4`, nové odlíšiteľné ikony, text based on Wraith. Pôvodné assets/notice zachovať. Finálny vizuál ikony je otvorený.
 11. **Rozsah „všetci agenti“.** Odporúčam explicitnú coverage maticu: Codex/Grok/OpenCode historické zdroje podľa existujúcich podkladov; Antigravity history stub; Copilot history **NEOVERENÉ**. Live CLI usage pridať vo F7 s novými syntetickými contract fixtures. Bez logov nemožno poctivo sľúbiť plnú históriu všetkých agentov.
 12. **Worktree cleanup a merge.** Odporúčam worktrees zachovať, cleanup iba explicitne, main merge výlučne používateľ. Žiadne automatické „upratanie“ po páde a žiadny agentový rebase.
-13. **Veľkosť fáz.** F1 má veľký import diff, F5 zložitý bezpečnostný rozsah. Odporúčam malé tematické commity v jednej fáze; ak bezpečnostný spike vyžaduje viac PR, najprv upraviť plán s používateľom, nie rozšíriť rozsah potichu.
+13. **Veľkosť fáz.** F1 má veľký import diff, F5 zložitú kompatibilitu natívnych approval protokolov. Odporúčam malé tematické commity v jednej fáze; ak bezpečnostný spike vyžaduje viac PR, najprv upraviť plán s používateľom, nie rozšíriť rozsah potichu.
 14. **Riziko starých schém a docs.** Súčasné dokumenty obsahujú historické neaktuálne tvrdenia (§1.5). Odporúčam uchovať pôvod a doplniť jasnú compatibility tabuľku; nové verzie CLI nepovoľovať bez contract dôkazu. Znižovanie počtu testových behov nesmie viesť k falošnému tvrdeniu o podpore.
 
 ## 10. Odhad
@@ -921,11 +921,11 @@ Inžiniersky odhad pre jedného vývojára, 1 deň ≈ 6 sústredených hodín, 
 | F2 rebrand + koexistencia | 3–5 | MSI/NSIS a profile separation; vyradenie key cesty |
 | F3 Usage backend | 6–10 | Node/sqlite3 balenie, WAL/no-write, incremental correctness |
 | F4 Usage UI | 4–6 | Partial coverage, presné ceny a výkonnosť tabuliek |
-| F5 Orchestrator core | 10–18 | Vynútiteľná izolácia/approvals, Windows descendant lifecycle |
+| F5 Orchestrator core | 10–18 | Natívne CLI approvals a osobitné výnimky, Windows descendant lifecycle |
 | F6 Orchestrator UI | 4–7 | Konzistencia queue/panes pri STOP a reconnect |
 | F7 ďalší agenti | 6–12 | Verziované CLI protokoly a permissions, live/history dedupe |
 | **Spolu** | **36–63 dní (216–378 h)** | Najmä F3/F5/F7 |
 
-Pri približne piatich pracovných dňoch týždenne ide o 7–13 týždňov práce plus review a čakanie. Ak CLI nemá potrebný enforcement protokol, problém nie je iba ďalší počet dní: príslušný adaptér zostane zablokovaný do zmeny návrhu. Rýchlejší testovací režim už zohľadňuje jednu cielenú kontrolnú cestu, nie polovičnú bezpečnosť.
+Pri približne piatich pracovných dňoch týždenne ide o 7–13 týždňov práce plus review a čakanie. Ak CLI nemá potrebné natívne approval rozhranie alebo výnimky, príslušný režim zostane nepodporovaný do zmeny návrhu. Odhad F5/F7 aj celkový sú po tejto zmene **NEOVERENÉ** a treba ich znovu potvrdiť. Rýchlejší testovací režim už zohľadňuje jednu cielenú kontrolnú cestu, nie polovičnú bezpečnosť.
 
 **Koniec fázy plánovania:** commit iba `docs/PLAN-lab-m4.md` na `docs/plan`, push tejto vetvy, PR do `main`, odovzdať link a desaťriadkové zhrnutie, STOP. Žiadny súbor aplikácie sa v tomto PR nevytvára ani nemení. Fáza 2 čaká na výslovné schválenie používateľa.

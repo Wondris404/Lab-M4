@@ -22,5 +22,5 @@ export interface UsageRecord {
   reasoningTokens: number;
   speed: 'standard' | 'fast' | 'unknown';
   costUsd?: number;
-  costSource: 'skutočné' | 'odhad';
+  costSource: 'skutočné' | 'odhad' | 'neznáme';
 }

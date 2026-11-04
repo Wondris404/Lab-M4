@@ -1,0 +1,9 @@
+{
+  "ts": "2026-10-24T13:38:23.868Z",
+  "ctx": {
+    "prompt_tokens": 33249,
+    "cached_prompt_tokens": 1792,
+    "completion_tokens": 237,
+    "reasoning_tokens": 150
+  }
+}

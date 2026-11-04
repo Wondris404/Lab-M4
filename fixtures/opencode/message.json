@@ -1,0 +1,13 @@
+{
+  "data": {
+    "tokens": {
+      "input": 8423,
+      "output": 33,
+      "reasoning": 29,
+      "cache": {
+        "read": 0,
+        "write": 0
+      }
+    }
+  }
+}

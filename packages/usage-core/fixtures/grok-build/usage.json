@@ -1,0 +1,9 @@
+{
+  "ts": "2025-01-01T10:00:00.000Z",
+  "ctx": {
+    "prompt_tokens": 100,
+    "cached_prompt_tokens": 20,
+    "completion_tokens": 10,
+    "reasoning_tokens": 4
+  }
+}

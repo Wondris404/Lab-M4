@@ -45,10 +45,7 @@ function consume(row: Row, result: ParseResult): void {
       );
     else mismatch(result, 'total_not_numeric');
   }
-  const cost =
-    typeof row.cost === 'number' && Number.isFinite(row.cost) && row.cost >= 0
-      ? row.cost
-      : undefined;
+  // NEOVERENÉ: the source cost currency is not established.
   result.records.push({
     provider: 'opencode',
     sessionId,
@@ -59,8 +56,7 @@ function consume(row: Row, result: ParseResult): void {
     outputTokens: output + reasoning,
     reasoningTokens: reasoning,
     speed: 'unknown',
-    ...(cost !== undefined && { costUsd: cost }),
-    costSource: cost !== undefined ? 'odhad' : 'neznáme',
+    costSource: 'neznáme',
   });
 }
 export const opencodeParser: Parser = {
@@ -68,7 +64,7 @@ export const opencodeParser: Parser = {
   async parse(path) {
     await assertSafeFile(path);
     const result = emptyResult();
-    const uri = pathToFileURL(path).href + '?immutable=1&mode=ro';
+    const uri = pathToFileURL(path).href + '?mode=ro';
     const db = await new Promise<sqlite3.Database>((resolve, reject) => {
       const d = new sqlite3.Database(
         uri,

@@ -218,8 +218,8 @@ describe('opencode', () => {
         first.outputTokens,
         first.reasoningTokens,
       ]).toEqual([123, 20, 14, 4]);
-      expect(first.costUsd).toBe(0.5);
-      expect(first.costSource).toBe('odhad');
+      expect(first.costUsd).toBeUndefined();
+      expect(first.costSource).toBe('neznáme');
       expect(r.mismatchFields.total).toBe(1);
       expect(r.mismatchFields.total_less_than_components).toBe(1);
       expect(r.warnings).toBe(2);

@@ -231,11 +231,11 @@ fn user_home() -> Result<PathBuf, String> {
 }
 
 fn agent_settings_path(home: &Path) -> PathBuf {
-    home.join(".wraith").join("agent.json")
+    home.join(".lab-m4").join("agent.json")
 }
 
 fn app_settings_path(home: &Path) -> PathBuf {
-    home.join(".wraith").join("settings.json")
+    home.join(".lab-m4").join("settings.json")
 }
 
 fn default_agent_settings() -> Value {
@@ -308,17 +308,7 @@ fn load_app_settings_value() -> Result<Value, String> {
     if path.exists() {
         let file = load_json_object(&path)?;
         merge_json(&mut settings, &file);
-    } else {
-        // One-time migration: seed AI section from legacy agent.json.
-        let agent_path = agent_settings_path(&home);
-        if agent_path.exists() {
-            let agent = load_json_object(&agent_path)?;
-            if let Some(ai) = settings.get_mut("ai") {
-                merge_json(ai, &agent);
-            }
-            // Persist migrated settings so subsequent loads use settings.json.
-            let _ = write_json_pretty(&path, &settings);
-        }
+
     }
 
     Ok(settings)
@@ -507,6 +497,7 @@ fn save_app_settings(state: Value) -> Result<(), String> {
     // Merge onto defaults so partial saves never drop unknown/missing keys.
     let mut merged = default_app_settings();
     merge_json(&mut merged, &state);
+    if let Some(ai) = merged.get_mut("ai").and_then(Value::as_object_mut) { ai.remove("apiKey"); }
     write_json_pretty(&path, &merged)
 }
 
@@ -833,13 +824,8 @@ pub fn run() {
             load_sessions,
             save_sessions,
             agent_hook_url,
-            ensure_agent_hooks,
             load_app_settings,
-            save_app_settings,
-            load_agent_settings,
-            save_agent_settings,
-            agent_chat_completion,
-            agent_audio_transcription
+            save_app_settings
         ])
         .on_window_event(|window, event| {
             if let tauri::WindowEvent::CloseRequested { .. } = event {

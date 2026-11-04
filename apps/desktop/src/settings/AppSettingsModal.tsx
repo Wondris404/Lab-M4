@@ -121,7 +121,8 @@ export function AppSettingsModal({ api }: AppSettingsModalProps) {
   const tabs: { id: SettingsTab; label: string }[] = [
     { id: "appearance", label: "Appearance" },
     { id: "terminal", label: "Terminal" },
-    { id: "ai", label: "AI" },
+    // Lab-M4: credential-backed AI is disabled; original implementation retained.
+    // { id: "ai", label: "AI" },
     { id: "general", label: "General" },
   ];
 

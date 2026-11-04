@@ -2544,3 +2544,6 @@ body,
 .term-container .xterm {
   padding: 2px;
 }
+
+/* Lab-M4: legacy credential-backed agent and dictation are disabled. */
+.agent-tool-btn, .pane-dictation-btn { display: none !important; }

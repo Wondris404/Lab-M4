@@ -69,7 +69,7 @@ describe('codex', () => {
     }));
   it('streams compressed synthetic fixture', async () => {
     const result = await codexParser.parse(
-      'fixtures/synthetic/codex.jsonl.zst',
+      'packages/usage-core/fixtures/synthetic/codex.jsonl.zst',
     );
     expect(result.records).toHaveLength(1);
     expect(result.records[0]?.sessionId).toBe('sess-test-1');

@@ -1,0 +1,111 @@
+import { createReadStream } from 'node:fs';
+import { lstat, readdir, realpath } from 'node:fs/promises';
+import { basename, join } from 'node:path';
+import { Transform } from 'node:stream';
+import { createInterface } from 'node:readline';
+import { Decompress } from 'fzstd';
+
+export type Obj = Record<string, unknown>;
+export const obj = (v: unknown): Obj =>
+  v !== null && typeof v === 'object' && !Array.isArray(v) ? (v as Obj) : {};
+export const str = (v: unknown): string | undefined =>
+  typeof v === 'string' && v.length > 0 ? v : undefined;
+export const count = (v: unknown): number | undefined =>
+  typeof v === 'number' && Number.isSafeInteger(v) && v >= 0 ? v : undefined;
+export const time = (v: unknown): string | undefined => {
+  if (typeof v !== 'string' && typeof v !== 'number') return;
+  const d = new Date(v);
+  return Number.isFinite(d.getTime()) ? d.toISOString() : undefined;
+};
+const forbidden = /auth|credential|token|secret|api.?key|login|\.env/i;
+export async function assertSafeFile(path: string): Promise<void> {
+  if (forbidden.test(basename(path)))
+    throw new Error('Nepovolený názov súboru.');
+  const info = await lstat(path);
+  if (
+    !info.isFile() ||
+    info.isSymbolicLink() ||
+    forbidden.test(basename(await realpath(path)))
+  )
+    throw new Error('Nepovolený zdroj.');
+}
+export async function* lines(path: string): AsyncGenerator<string> {
+  await assertSafeFile(path);
+  const stream = createReadStream(path);
+  const decompressed = path.endsWith('.zst')
+    ? stream.pipe(
+        new Transform({
+          construct(callback) {
+            const state = this as Transform & { decoder?: Decompress };
+            state.decoder = new Decompress((data) => {
+              state.push(Buffer.from(data));
+            });
+            callback();
+          },
+          transform(chunk: Buffer, _encoding, callback) {
+            try {
+              (this as Transform & { decoder: Decompress }).decoder.push(
+                chunk,
+                false,
+              );
+              callback();
+            } catch (e) {
+              callback(e as Error);
+            }
+          },
+          flush(callback) {
+            try {
+              (this as Transform & { decoder: Decompress }).decoder.push(
+                new Uint8Array(),
+                true,
+              );
+              callback();
+            } catch (e) {
+              callback(e as Error);
+            }
+          },
+        }),
+      )
+    : stream;
+  if (decompressed !== stream)
+    stream.on('error', (error) => decompressed.destroy(error));
+  try {
+    for await (const line of createInterface({
+      input: decompressed,
+      crlfDelay: Infinity,
+    }))
+      yield line;
+  } finally {
+    stream.destroy();
+    decompressed.destroy();
+  }
+}
+export async function* findCodexFiles(path: string): AsyncGenerator<string> {
+  const info = await lstat(path);
+  if (info.isSymbolicLink())
+    throw new Error('Symbolické odkazy nie sú povolené.');
+  if (info.isFile()) {
+    if (/\.jsonl(?:\.zst)?$/i.test(path)) {
+      await assertSafeFile(path);
+      yield path;
+    }
+    return;
+  }
+  if (basename(path).toLowerCase() === '.codex') {
+    for (const name of ['sessions', 'archived_sessions']) {
+      try {
+        yield* findCodexFiles(join(path, name));
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+      }
+    }
+    return;
+  }
+  for (const entry of await readdir(path, { withFileTypes: true })) {
+    if (entry.isSymbolicLink() || forbidden.test(entry.name)) continue;
+    const child = join(path, entry.name);
+    if (entry.isDirectory()) yield* findCodexFiles(child);
+    else if (entry.isFile() && /\.jsonl(?:\.zst)?$/i.test(entry.name))
+      yield child;
+  }
+}

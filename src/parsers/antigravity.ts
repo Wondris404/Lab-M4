@@ -1,9 +1,7 @@
-import type { Parser } from './index.js';
-
+import { emptyResult, type Parser } from './contracts.js';
 export const antigravityParser: Parser = {
   provider: 'antigravity',
-  parse: () => {
-    // TODO: Implement only after the local log format is verified. No file access yet.
-    return Promise.resolve([]);
+  async parse() {
+    return emptyResult();
   },
 };

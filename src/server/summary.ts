@@ -1,0 +1,75 @@
+import { loadSettings, type Settings } from '../core/settings.js';
+import { estimateCost } from '../pricing/index.js';
+import { parserRegistry, type ParseResult } from '../parsers/index.js';
+import type { Provider } from '../core/types.js';
+
+export async function summarize(settings: Settings) {
+  const agents: Partial<Record<Provider, ParseResult>> = {};
+  const errors: Partial<Record<Provider, string>> = {};
+  for (const provider of Object.keys(settings.agents) as Provider[]) {
+    const agent = settings.agents[provider];
+    if (!agent.enabled) continue;
+    try {
+      const parsed = await parserRegistry[provider].parse(agent.path);
+      parsed.records = parsed.records.map((record) => {
+        if (record.costUsd !== undefined) return record;
+        const estimate = estimateCost(record, settings.priceTable);
+        return estimate === null
+          ? record
+          : { ...record, costUsd: estimate, costSource: 'odhad' as const };
+      });
+      agents[provider] = parsed;
+    } catch {
+      errors[provider] = 'Zdroj sa nepodarilo prečítať.';
+    }
+  }
+  const records = Object.values(agents).flatMap((a) => a.records);
+  const known = records.filter((r) => r.costUsd !== undefined);
+  const costUsd = known.length
+    ? known.reduce((n, r) => n + (r.costUsd ?? 0), 0)
+    : null;
+  return {
+    recordCount: records.length,
+    sourcesIncomplete: Object.keys(errors).length > 0,
+    totals: records.length
+      ? {
+          sessions: new Set(
+            records
+              .filter((r) => r.sessionId !== 'unknown')
+              .map((r) => JSON.stringify([r.provider, r.sessionId])),
+          ).size,
+          sessionsIncomplete:
+            Object.keys(errors).length > 0 ||
+            records.some((r) => r.sessionId === 'unknown'),
+          totalTokens: records.reduce(
+            (n, r) => n + r.inputTokens + r.outputTokens,
+            0,
+          ),
+          inputTokens: records.reduce((n, r) => n + r.inputTokens, 0),
+          cachedInputTokens: records.reduce(
+            (n, r) => n + r.cachedInputTokens,
+            0,
+          ),
+          outputTokens: records.reduce((n, r) => n + r.outputTokens, 0),
+          reasoningTokens: records.reduce((n, r) => n + r.reasoningTokens, 0),
+          costUsd,
+          costEur: costUsd === null ? null : costUsd * settings.usdToEur,
+          costIncomplete:
+            Object.keys(errors).length > 0 || known.length !== records.length,
+          costSource: known.length
+            ? known.some((r) => r.costSource === 'odhad')
+              ? 'odhad'
+              : 'skutočné'
+            : 'neznáme',
+        }
+      : null,
+    warnings: Object.fromEntries(
+      Object.entries(agents).map(([k, v]) => [k, v.warnings]),
+    ),
+    agents,
+    errors,
+  };
+}
+export async function summaryFromFile(path: string) {
+  return summarize(await loadSettings(path));
+}

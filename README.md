@@ -1,7 +1,7 @@
 # Agent usage
 
 Malá lokálna kostra dashboardu pre Codex, Grok Build, OpenCode a Antigravity.
-Zatiaľ nečíta žiadne logy. Stránka obsahuje iba nadpis a „Zatiaľ žiadne dáta“.
+Parsery Codex, Grok Build a OpenCode čítajú lokálne zdroje iba po zapnutí v nastaveniach. Stránka zatiaľ obsahuje iba nadpis a „Zatiaľ žiadne dáta“; výsledky sú dostupné cez API.
 
 ## Spustenie vo Windows
 
@@ -26,7 +26,7 @@ pnpm build
 Invoke-RestMethod http://127.0.0.1:3001/api/health
 ```
 
-Health vráti status ok. /api/summary vráti prázdne records a totals: null.
+Health vráti status ok. /api/summary vráti počet záznamov, súčty, varovania, limity a prípadné chyby čítania.
 Build vytvorí server v dist/server a statický web v dist/web.
 Tento krok obsahuje dev spúšťanie; produkčné servírovanie webu ešte nie je súčasťou kostry.
 
@@ -35,7 +35,7 @@ Tento krok obsahuje dev spúšťanie; produkčné servírovanie webu ešte nie j
 config/settings.example.json obsahuje iba zástupné hodnoty. Všetci agenti sú vypnutí,
 cesty sú prázdne, kurz 1 a ceny pri REPLACE_WITH_MODEL sú iba ukážka štruktúry,
 nie reálny kurz ani cenník. Pred použitím treba usdToEur nastaviť na vlastný kurz. Vlastný config/settings.json je v .gitignore.
-Server zatiaľ žiadne nastavenia nenačítava; loadSettings načíta iba výslovne dodaný súbor.
+Server načíta config/settings.json. Skopírujte settings.example.json na settings.json a zapnite len vybraných agentov s ich cestami. Codex prijíma cestu ku .codex, k sessions, archived_sessions alebo ku konkrétnemu JSONL/JSONL.zst. Grok prijíma cestu k unified.jsonl a OpenCode k opencode.db. Antigravity je zatiaľ stub. Databáza sa číta v režime immutable, ktorý nemusí obsahovať nezapísaný WAL.
 
 Ceny sú v USD za milión tokenov, osobitne pre standard a fast. Neznámy model alebo
 chýbajúca rýchlostná sadzba vracia null. Cached input je súčasť inputTokens a reasoning

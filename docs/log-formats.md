@@ -104,4 +104,16 @@ k tajomstvám a s ďalšími redigovanými príkladmi. Parsery v tejto vetve zos
 - Grok Build: oficiálna dokumentácia https://docs.x.ai/developers/advanced-api-usage/prompt-caching/usage-and-pricing uvádza cache v detaile prompt a reasoning v detaile completion. Zo 853 lokálnych udalostí s oboma počtami cache nikdy nepresahovala prompt a reasoning nikdy nepresahoval completion. Deduplikácia ani prepojenie modelu sa ešte neoverili.
 - OpenCode: z 1 017 objektov message.data.tokens malo 1 002 pole total; pri 996 platilo total = input + output + reasoning + cache.read + cache.write. V 899 prípadoch cache.read presahovalo input a v 87 reasoning presahovalo output. Pre tieto záznamy teda nejde vždy o podmnožiny. Pri šiestich záznamoch s total sa rovnica nepotvrdila a treba preskúmať aj chýbajúce hodnoty; význam sa môže líšiť podľa verzie a poskytovateľa.
 
-Skutočné parsery a ich agregované výsledky zatiaľ neboli implementované ani spustené. Vyššie uvedené počty sú diagnostika, nie výsledok parsera.
+Vyššie uvedené počty sú diagnostika sémantiky, nie výsledok parsera.
+
+## Implementované čítanie a obmedzenia
+
+Parsery vracajú records spolu s počtom warnings, samostatnými limits a agregátmi mismatchFields. Codex číta JSONL a streamované JSONL.zst, používa last_token_usage a vynechá opakovaný kumulatívny stav relácie. Limitné okná sú oddelené od UsageRecord. Model a výslovné pole speed prichádzajú z posledného turn_context; inak je rýchlosť unknown.
+
+OpenCode otvára SQLite pomocou mode=ro a immutable=1 a vyberá iba potrebné polia cez json_extract; ignoruje WAL, ktorý ešte nebol zapísaný do databázy. Pre každú reláciu preferuje správy; súhrn session použije iba ak nemá žiadnu správu s tokenovým objektom. Podľa zadania normalizuje input = input + cache.read + cache.write, cached input = cache.read, output = output + reasoning. Nesúhlasné total sa importuje a pridá warning a kategóriu rozdielu. Chýbajúce alebo neplatné povinné počty nemožno bezpečne normalizovať a záznam sa s warning vynechá. Uložené cost sa označí odhad; jeho mena a skutočná fakturácia ostávajú neoverené.
+
+Grok číta JSONL po riadkoch; lokálne overený typ s počtami je shell.turn.inference_done. Páruje kontext podľa sid a deduplikuje presné opakovania podľa sid, loop_index, času a tokenových počtov. Ak session ID nie je výslovne prepojené v kontexte, použije sessionId aj model unknown; sid slúži ako korelačný identifikátor, nie automaticky ako relácia. Overenie voči indexu našlo zhodu troch z 25 korelačných identifikátorov, čo nepotvrdzuje zvyšné. Pri zmene logovacieho formátu alebo opakovaní tej istej požiadavky s odlišným časom treba deduplikáciu znovu overiť. Pri chýbajúcich povinných poliach sa položka preskočí s warning.
+
+Server číta config/settings.json, spúšťa iba enabled zdroje a pri chýbajúcej zaznamenanej cene skúsi cenník podľa známej rýchlosti; bez platnej sadzby je cena neznáme. V EUR použije nastavený kurz. Čiastočný súčet ceny je označený costIncomplete. Žiadne správy alebo prompty sa nevracajú ani neukladajú. Antigravity ostáva prázdny stub.
+
+Pri šiestich lokálnych nezhodách OpenCode je celkové pole total vždy menšie ako súčet input, output, reasoning, cache.read a cache.write. Všetkých šesť má nenulové reasoning, štyri nenulové cache.read, žiadny nenulové cache.write. Odčítanie iba jediného z týchto piatich komponentov nesúlad nevysvetlilo; konkrétne chybné pole nemožno z uvedených agregátov určiť.

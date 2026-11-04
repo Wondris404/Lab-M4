@@ -1,6 +1,6 @@
 import { createReadStream } from 'node:fs';
 import { lstat, readdir, realpath } from 'node:fs/promises';
-import { basename, join } from 'node:path';
+import { basename, join, parse, resolve, sep } from 'node:path';
 import { Transform } from 'node:stream';
 import { createInterface } from 'node:readline';
 import { Decompress } from 'fzstd';
@@ -19,6 +19,15 @@ export const time = (v: unknown): string | undefined => {
 };
 const forbidden = /auth|credential|token|secret|api.?key|login|\.env/i;
 export async function assertSafeFile(path: string): Promise<void> {
+  const absolute = resolve(path);
+  const root = parse(absolute).root;
+  const parts = absolute.slice(root.length).split(sep).filter(Boolean);
+  let parent = root;
+  for (const part of parts) {
+    if (forbidden.test(part)) throw new Error('Nepovolená cesta.');
+    parent = join(parent, part);
+    if ((await lstat(parent)).isSymbolicLink()) throw new Error('Nepovolený odkaz.');
+  }
   if (forbidden.test(basename(path)))
     throw new Error('Nepovolený názov súboru.');
   const info = await lstat(path);

@@ -308,7 +308,6 @@ fn load_app_settings_value() -> Result<Value, String> {
     if path.exists() {
         let file = load_json_object(&path)?;
         merge_json(&mut settings, &file);
-
     }
 
     Ok(settings)
@@ -497,7 +496,9 @@ fn save_app_settings(state: Value) -> Result<(), String> {
     // Merge onto defaults so partial saves never drop unknown/missing keys.
     let mut merged = default_app_settings();
     merge_json(&mut merged, &state);
-    if let Some(ai) = merged.get_mut("ai").and_then(Value::as_object_mut) { ai.remove("apiKey"); }
+    if let Some(ai) = merged.get_mut("ai").and_then(Value::as_object_mut) {
+        ai.remove("apiKey");
+    }
     write_json_pretty(&path, &merged)
 }
 

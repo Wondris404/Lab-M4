@@ -1,4 +1,4 @@
-# Architektúra kostry agent-usage
+# Architektúra projektu Lab-M4
 
 ## Rozsah
 

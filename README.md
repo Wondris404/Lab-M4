@@ -1,4 +1,4 @@
-# Agent usage
+# Lab-M4
 
 Malá lokálna kostra dashboardu pre Codex, Grok Build, OpenCode a Antigravity.
 Parsery Codex, Grok Build a OpenCode čítajú lokálne zdroje iba po zapnutí v nastaveniach. Stránka zatiaľ obsahuje iba nadpis a „Zatiaľ žiadne dáta“; výsledky sú dostupné cez API.

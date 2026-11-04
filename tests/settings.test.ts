@@ -30,7 +30,7 @@ describe('settings', () => {
     );
   });
   it('loads only an explicitly supplied settings file', async () => {
-    const directory = await mkdtemp(join(tmpdir(), 'agent-usage-test-'));
+    const directory = await mkdtemp(join(tmpdir(), 'lab-m4-test-'));
     try {
       const path = join(directory, 'settings.json');
       await writeFile(path, JSON.stringify(example));

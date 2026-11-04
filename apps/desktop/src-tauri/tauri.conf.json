@@ -1,18 +1,18 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "Wraith",
+  "productName": "Lab-M4",
   "version": "0.2.0",
-  "identifier": "com.wraith.app",
+  "identifier": "com.wondris.labm4",
   "build": {
     "beforeDevCommand": "pnpm dev",
-    "devUrl": "http://localhost:1420",
+    "devUrl": "http://localhost:1430",
     "beforeBuildCommand": "pnpm build",
     "frontendDist": "../dist"
   },
   "app": {
     "windows": [
       {
-        "title": "Wraith",
+        "title": "Lab-M4",
         "width": 900,
         "height": 700
       }

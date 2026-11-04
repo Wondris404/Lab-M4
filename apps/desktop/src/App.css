@@ -2547,3 +2547,6 @@ body,
 
 /* Lab-M4: legacy credential-backed agent and dictation are disabled. */
 .agent-tool-btn, .pane-dictation-btn { display: none !important; }
+
+.brand-title { font-size: 0 !important; }
+.brand-title::after { content: "Lab-M4"; font-size: 15px; }

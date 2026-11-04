@@ -161,6 +161,7 @@ export function AppSettingsModal({ api }: AppSettingsModalProps) {
           </nav>
 
           <div className="settings-panel">
+            <p className="settings-section-hint">Lab-M4 — Based on Wraith (MIT).</p>
             {settingsTab === "appearance" && (
               <div className="settings-section">
                 <p className="settings-section-hint">

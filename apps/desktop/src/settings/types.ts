@@ -342,7 +342,7 @@ export function normalizeAppSettings(raw: unknown): AppSettings {
 /** Migrate font size from legacy localStorage if present (frontend-only). */
 export function readLegacyFontSize(): number | null {
   try {
-    const raw = localStorage.getItem("wraith:font-size");
+    const raw = localStorage.getItem("lab-m4:font-size");
     if (!raw) return null;
     const parsed = Number.parseInt(raw, 10);
     if (!Number.isFinite(parsed)) return null;
@@ -354,7 +354,7 @@ export function readLegacyFontSize(): number | null {
 
 export function clearLegacyFontSize(): void {
   try {
-    localStorage.removeItem("wraith:font-size");
+    localStorage.removeItem("lab-m4:font-size");
   } catch {
     // ignore
   }

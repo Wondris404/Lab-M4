@@ -50,6 +50,23 @@ describe('pricing', () => {
       ),
     ).toBe(0);
   });
+  it('validates tokens before returning for unknown pricing', () => {
+    expect(() =>
+      estimateCost({ ...record, model: 'missing', inputTokens: -1 }, prices),
+    ).toThrow(RangeError);
+    expect(() =>
+      estimateCost(
+        { ...record, speed: 'unknown', cachedInputTokens: 1001 },
+        prices,
+      ),
+    ).toThrow(RangeError);
+    expect(() =>
+      estimateCost(
+        { ...record, speed: 'fast', reasoningTokens: 201 },
+        { 'test-model': { standard: prices['test-model'].standard } },
+      ),
+    ).toThrow(RangeError);
+  });
   it('rejects invalid token subsets', () => {
     expect(() =>
       estimateCost({ ...record, cachedInputTokens: 1001 }, prices),

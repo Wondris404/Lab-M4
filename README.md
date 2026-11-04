@@ -34,7 +34,7 @@ Tento krok obsahuje dev spúšťanie; produkčné servírovanie webu ešte nie j
 
 config/settings.example.json obsahuje iba zástupné hodnoty. Všetci agenti sú vypnutí,
 cesty sú prázdne, kurz 1 a ceny pri REPLACE_WITH_MODEL sú iba ukážka štruktúry,
-nie reálny kurz ani cenník. Vlastný config/settings.json je v .gitignore.
+nie reálny kurz ani cenník. Pred použitím treba usdToEur nastaviť na vlastný kurz. Vlastný config/settings.json je v .gitignore.
 Server zatiaľ žiadne nastavenia nenačítava; loadSettings načíta iba výslovne dodaný súbor.
 
 Ceny sú v USD za milión tokenov, osobitne pre standard a fast. Neznámy model alebo

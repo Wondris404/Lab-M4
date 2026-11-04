@@ -6,10 +6,6 @@ export function estimateCost(
   record: UsageRecord,
   prices: PriceTable,
 ): number | null {
-  if (record.speed === 'unknown' || !Object.hasOwn(prices, record.model))
-    return null;
-  const price = prices[record.model]?.[record.speed];
-  if (!price) return null;
   const counts = [
     record.inputTokens,
     record.cachedInputTokens,
@@ -23,6 +19,10 @@ export function estimateCost(
   ) {
     throw new RangeError('Neplatné počty tokenov.');
   }
+  if (record.speed === 'unknown' || !Object.hasOwn(prices, record.model))
+    return null;
+  const price = prices[record.model]?.[record.speed];
+  if (!price) return null;
   return (
     ((record.inputTokens - record.cachedInputTokens) * price.inputPerMillion +
       record.cachedInputTokens * price.cachedInputPerMillion +

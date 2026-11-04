@@ -81,6 +81,7 @@ struct AgentHookFinished {
 
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
+#[allow(dead_code)] // Preserved legacy implementation; disabled in Lab-M4.
 struct AgentChatCompletionResponse {
     status: u16,
     body: String,
@@ -88,6 +89,7 @@ struct AgentChatCompletionResponse {
 
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
+#[allow(dead_code)] // Preserved legacy implementation; disabled in Lab-M4.
 struct AgentAudioTranscriptionResponse {
     status: u16,
     body: String,
@@ -213,10 +215,8 @@ fn start_agent_hook_server(app: AppHandle) -> Result<String, String> {
     let url = format!("http://127.0.0.1:{port}/agent-finished");
 
     thread::spawn(move || {
-        for stream in listener.incoming() {
-            if let Ok(stream) = stream {
-                handle_agent_hook_request(stream, &app);
-            }
+        for stream in listener.incoming().flatten() {
+            handle_agent_hook_request(stream, &app);
         }
     });
 
@@ -230,6 +230,7 @@ fn user_home() -> Result<PathBuf, String> {
         .ok_or_else(|| "user home directory not found".to_string())
 }
 
+#[allow(dead_code)] // Preserved legacy implementation; disabled in Lab-M4.
 fn agent_settings_path(home: &Path) -> PathBuf {
     home.join(".lab-m4").join("agent.json")
 }
@@ -340,6 +341,7 @@ fn load_json_object(path: &Path) -> Result<Value, String> {
     }
 }
 
+#[allow(dead_code)] // Preserved legacy implementation; disabled in Lab-M4.
 fn ensure_agent_hook_script(home: &Path) -> Result<String, String> {
     let script_dir = home.join(".wraith");
     std::fs::create_dir_all(&script_dir)
@@ -374,6 +376,7 @@ try {
     ))
 }
 
+#[allow(dead_code)] // Preserved legacy implementation; disabled in Lab-M4.
 fn ensure_stop_hook_json(path: &Path, command: &str) -> Result<(), String> {
     let mut root = load_json_object(path)?;
     let root_obj = root
@@ -414,6 +417,7 @@ fn ensure_stop_hook_json(path: &Path, command: &str) -> Result<(), String> {
     write_json_pretty(path, &root)
 }
 
+#[allow(dead_code)] // Preserved legacy implementation; disabled in Lab-M4.
 fn ensure_grok_hook(home: &Path, command: &str) -> Result<(), String> {
     let path = home
         .join(".grok")
@@ -438,6 +442,7 @@ fn ensure_grok_hook(home: &Path, command: &str) -> Result<(), String> {
     write_json_pretty(&path, &value)
 }
 
+#[allow(dead_code)] // Preserved legacy implementation; disabled in Lab-M4.
 fn ensure_opencode_plugin(home: &Path) -> Result<(), String> {
     let plugin_dir = home.join(".config").join("opencode").join("plugins");
     std::fs::create_dir_all(&plugin_dir)
@@ -504,6 +509,7 @@ fn save_app_settings(state: Value) -> Result<(), String> {
 
 /// Compatibility: load AI section from unified settings.json.
 #[tauri::command]
+#[allow(dead_code)] // Preserved legacy implementation; disabled in Lab-M4.
 fn load_agent_settings() -> Result<Value, String> {
     let settings = load_app_settings_value()?;
     Ok(settings
@@ -514,6 +520,7 @@ fn load_agent_settings() -> Result<Value, String> {
 
 /// Compatibility: write AI section into unified settings.json.
 #[tauri::command]
+#[allow(dead_code)] // Preserved legacy implementation; disabled in Lab-M4.
 fn save_agent_settings(state: Value) -> Result<(), String> {
     let home = user_home()?;
     let path = app_settings_path(&home);
@@ -532,6 +539,7 @@ fn save_agent_settings(state: Value) -> Result<(), String> {
 }
 
 #[tauri::command]
+#[allow(dead_code)] // Preserved legacy implementation; disabled in Lab-M4.
 async fn agent_chat_completion(
     url: String,
     headers: HashMap<String, String>,
@@ -542,6 +550,7 @@ async fn agent_chat_completion(
 }
 
 #[tauri::command]
+#[allow(dead_code)] // Preserved legacy implementation; disabled in Lab-M4.
 async fn agent_audio_transcription(
     url: String,
     headers: HashMap<String, String>,
@@ -551,6 +560,7 @@ async fn agent_audio_transcription(
     Ok(AgentAudioTranscriptionResponse { status, body })
 }
 
+#[allow(dead_code)] // Preserved legacy implementation; disabled in Lab-M4.
 async fn post_json(
     url: String,
     headers: HashMap<String, String>,
@@ -596,6 +606,7 @@ async fn post_json(
 }
 
 #[tauri::command]
+#[allow(dead_code)] // Preserved legacy implementation; disabled in Lab-M4.
 fn ensure_agent_hooks() -> Result<(), String> {
     let home = user_home()?;
     let command = ensure_agent_hook_script(&home)?;
@@ -809,7 +820,7 @@ pub fn run() {
         .manage(AppState::default())
         .setup(|app| {
             let url = start_agent_hook_server(app.handle().clone())
-                .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))?;
+                .map_err(std::io::Error::other)?;
             let state = app.state::<AppState>();
             if let Ok(mut slot) = state.agent_hook_url.lock() {
                 *slot = Some(url);

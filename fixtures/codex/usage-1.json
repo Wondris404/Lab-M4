@@ -1,24 +1,24 @@
 {
-  "timestamp": "2026-09-09T15:44:20.706Z",
+  "timestamp": "2025-01-01T10:00:00.000Z",
   "type": "event_msg",
   "payload": {
     "type": "token_count",
     "info": {
       "total_token_usage": {
-        "input_tokens": 27928,
-        "cached_input_tokens": 13056,
+        "input_tokens": 100,
+        "cached_input_tokens": 20,
         "cache_write_input_tokens": 0,
-        "output_tokens": 228,
-        "reasoning_output_tokens": 18,
-        "total_tokens": 28156
+        "output_tokens": 10,
+        "reasoning_output_tokens": 4,
+        "total_tokens": 110
       },
       "last_token_usage": {
-        "input_tokens": 27928,
-        "cached_input_tokens": 13056,
+        "input_tokens": 100,
+        "cached_input_tokens": 20,
         "cache_write_input_tokens": 0,
-        "output_tokens": 228,
-        "reasoning_output_tokens": 18,
-        "total_tokens": 28156
+        "output_tokens": 10,
+        "reasoning_output_tokens": 4,
+        "total_tokens": 110
       }
     }
   }

@@ -7,10 +7,7 @@ Súbory agentov sa nemenili. Autentifikačné súbory, prihlasovacie údaje a s�
 s názvami obsahujúcimi auth, credential, token, secret, key, login alebo .env
 neboli cieľom čítania. Súkromné správy ani názvy projektov nie sú vo vzorkách.
 
-Vzorky v `fixtures/` sú výseky zo skutočných pozorovaní vytvorené výberom
-explicitne povolených polí. Žiadne skutočné identifikátory relácií, cesty,
-obsah správ, kód, cena ani limity sa nekopírujú. Časové údaje a počty sú skutočné.
-Vzorky nie sú plnohodnotné vstupné súbory a nemožno nimi odvodiť úplnú schému.
+Vzorky v fixtures/ sú syntetické: časy a počty nie sú reálne používateľské údaje. Zachovávajú iba vybrané polia bez osobného obsahu a skutočných identifikátorov.
 
 ## Codex
 
@@ -100,3 +97,11 @@ byť viditeľná; počty môžu byť kumulatívne, čiastkové alebo prekrývaj�
 Vzorky nepreukazujú jednotky ceny ani fakturačnú presnosť. Zmeny verzií môžu
 schému zmeniť. Pred návrhom parserov treba overiť tieto vlastnosti bez prístupu
 k tajomstvám a s ďalšími redigovanými príkladmi. Parsery v tejto vetve zostali stuby.
+
+## Dodatočné overenie tokenov
+
+- Codex: vo vzorkách total_tokens = input_tokens + output_tokens; OpenAI opisuje cached input a reasoning ako detaily zodpovedajúcich celkov: https://developers.openai.com/api/reference/resources/responses/methods/create. Celkové počty sú kumulatívne.
+- Grok Build: oficiálna dokumentácia https://docs.x.ai/developers/advanced-api-usage/prompt-caching/usage-and-pricing uvádza cache v detaile prompt a reasoning v detaile completion. Zo 853 lokálnych udalostí s oboma počtami cache nikdy nepresahovala prompt a reasoning nikdy nepresahoval completion. Deduplikácia ani prepojenie modelu sa ešte neoverili.
+- OpenCode: z 1 017 objektov message.data.tokens malo 1 002 pole total; pri 996 platilo total = input + output + reasoning + cache.read + cache.write. V 899 prípadoch cache.read presahovalo input a v 87 reasoning presahovalo output. Pre tieto záznamy teda nejde vždy o podmnožiny. Pri šiestich záznamoch s total sa rovnica nepotvrdila a treba preskúmať aj chýbajúce hodnoty; význam sa môže líšiť podľa verzie a poskytovateľa.
+
+Skutočné parsery a ich agregované výsledky zatiaľ neboli implementované ani spustené. Vyššie uvedené počty sú diagnostika, nie výsledok parsera.

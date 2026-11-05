@@ -1,5 +1,6 @@
 import { createHash } from 'node:crypto';
 import { lstat, realpath } from 'node:fs/promises';
+import { basename } from 'node:path';
 import sqlite3 from 'sqlite3';
 import type { Parser, ParseResult } from '../parsers/contracts.js';
 import { assertSafeFile, findCodexFiles } from '../parsers/shared.js';
@@ -35,6 +36,11 @@ export async function scanCached(parser: Parser, source: string, cachePath: stri
     if (parser.provider === 'opencode' && (wal || shm)) throw new Error('Live WAL database requires a closed snapshot.');
     signature = JSON.stringify([2, info.size, info.mtimeMs, wal?.size ?? null, wal?.mtimeMs ?? null]);
   }
+  if (/auth|credential|token|secret|api.?key|login|\.env/i.test(basename(cachePath))) {
+    throw new Error('Nepovolená cache.');
+  }
+  const cacheInfo = await lstatIfExists(cachePath);
+  if (cacheInfo && (cacheInfo.isSymbolicLink() || !cacheInfo.isFile())) throw new Error('Nepovolená cache.');
   const db = await new Promise<sqlite3.Database>((resolve, reject) => {
     const instance = new sqlite3.Database(cachePath, (error) => error ? reject(error) : resolve(instance));
   });

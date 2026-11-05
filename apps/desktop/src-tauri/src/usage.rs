@@ -9,13 +9,13 @@ use std::sync::{
     Mutex,
 };
 use std::thread;
-use std::time::{Duration, Instant};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use tauri::{AppHandle, Manager, State};
 use tauri_plugin_dialog::DialogExt;
 
 #[derive(Default)]
 pub struct UsageState {
-    sources: Mutex<HashMap<String, (String, PathBuf)>>,
+    sources: Mutex<Option<HashMap<String, (String, PathBuf)>>>,
     next: AtomicU64,
 }
 #[derive(Serialize)]
@@ -23,6 +23,106 @@ pub struct UsageSource {
     id: String,
     agent: String,
     name: String,
+}
+
+type SourceMap = HashMap<String, (String, PathBuf)>;
+
+fn source_list_path(app: &AppHandle) -> Result<PathBuf, String> {
+    Ok(app
+        .path()
+        .app_local_data_dir()
+        .map_err(|_| "Data directory unavailable")?
+        .join("usage")
+        .join("sources.json"))
+}
+
+fn load_sources(app: &AppHandle, slot: &mut Option<SourceMap>) -> Result<(), String> {
+    if slot.is_some() {
+        return Ok(());
+    }
+    let path = source_list_path(app)?;
+    let sources = match std::fs::symlink_metadata(&path) {
+        Ok(meta) if meta.file_type().is_symlink() || !meta.is_file() => {
+            return Err("Source list invalid".into());
+        }
+        Ok(meta) if meta.len() > 1024 * 1024 => return Err("Source list too large".into()),
+        Ok(_) => {
+            let bytes = std::fs::read(&path).map_err(|_| "Source list unavailable")?;
+            serde_json::from_slice(&bytes).map_err(|_| "Source list invalid")?
+        }
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => HashMap::new(),
+        Err(_) => return Err("Source list unavailable".into()),
+    };
+    *slot = Some(sources);
+    Ok(())
+}
+
+fn save_sources(app: &AppHandle, sources: &SourceMap) -> Result<(), String> {
+    let path = source_list_path(app)?;
+    let parent = path.parent().ok_or("Source directory unavailable")?;
+    std::fs::create_dir_all(parent).map_err(|_| "Source directory unavailable")?;
+    let bytes = serde_json::to_vec(sources).map_err(|_| "Source list invalid")?;
+    let timestamp = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_err(|_| "Clock unavailable")?
+        .as_nanos();
+    let temp = parent.join(format!("sources-{timestamp}.tmp"));
+    let mut file = std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&temp)
+        .map_err(|_| "Source list unavailable")?;
+    file.write_all(&bytes).map_err(|_| "Source list unavailable")?;
+    file.sync_all().map_err(|_| "Source list unavailable")?;
+    drop(file);
+    std::fs::rename(temp, path).map_err(|_| "Source list unavailable")
+}
+
+#[tauri::command]
+pub fn usage_list_sources(
+    app: AppHandle,
+    state: State<'_, UsageState>,
+) -> Result<Vec<UsageSource>, String> {
+    let mut slot = state
+        .sources
+        .lock()
+        .map_err(|_| "Source state unavailable")?;
+    load_sources(&app, &mut slot)?;
+    let sources = slot.as_ref().ok_or("Source state unavailable")?;
+    let mut result: Vec<UsageSource> = sources
+        .iter()
+        .map(|(id, (agent, path))| UsageSource {
+            id: id.clone(),
+            agent: agent.clone(),
+            name: path
+                .file_name()
+                .and_then(|s| s.to_str())
+                .unwrap_or("source")
+                .to_owned(),
+        })
+        .collect();
+    result.sort_by(|a, b| a.id.cmp(&b.id));
+    Ok(result)
+}
+
+#[tauri::command]
+pub fn usage_remove_source(
+    app: AppHandle,
+    state: State<'_, UsageState>,
+    id: String,
+) -> Result<(), String> {
+    let mut slot = state
+        .sources
+        .lock()
+        .map_err(|_| "Source state unavailable")?;
+    load_sources(&app, &mut slot)?;
+    let sources = slot.as_mut().ok_or("Source state unavailable")?;
+    let removed = sources.remove(&id).ok_or("Source not approved")?;
+    if let Err(error) = save_sources(&app, sources) {
+        sources.insert(id, removed);
+        return Err(error);
+    }
+    Ok(())
 }
 
 fn safe_source(path: &Path, agent: &str) -> Result<PathBuf, String> {
@@ -126,11 +226,12 @@ pub async fn usage_select_source(
     if choose_folder && agent != "codex" {
         return Err("Only Codex supports folders".into());
     }
+    let picker_app = app.clone();
     let selected = tauri::async_runtime::spawn_blocking(move || {
         if choose_folder {
-            app.dialog().file().blocking_pick_folder()
+            picker_app.dialog().file().blocking_pick_folder()
         } else {
-            app.dialog().file().blocking_pick_file()
+            picker_app.dialog().file().blocking_pick_file()
         }
     })
     .await
@@ -145,12 +246,25 @@ pub async fn usage_select_source(
         .and_then(|s| s.to_str())
         .unwrap_or("source")
         .to_owned();
-    let id = format!("source-{}", state.next.fetch_add(1, Ordering::Relaxed));
-    state
+    let timestamp = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_err(|_| "Clock unavailable")?
+        .as_nanos();
+    let id = format!(
+        "source-{timestamp}-{}",
+        state.next.fetch_add(1, Ordering::Relaxed)
+    );
+    let mut slot = state
         .sources
         .lock()
-        .map_err(|_| "Source state unavailable")?
-        .insert(id.clone(), (agent.clone(), canonical));
+        .map_err(|_| "Source state unavailable")?;
+    load_sources(&app, &mut slot)?;
+    let sources = slot.as_mut().ok_or("Source state unavailable")?;
+    sources.insert(id.clone(), (agent.clone(), canonical));
+    if let Err(error) = save_sources(&app, sources) {
+        sources.remove(&id);
+        return Err(error);
+    }
     Ok(Some(UsageSource { id, agent, name }))
 }
 
@@ -232,13 +346,17 @@ pub async fn usage_scan(
     force: bool,
     offset: Option<usize>,
 ) -> Result<Value, String> {
-    let (agent, source) = state
+    let (agent, source) = {
+        let mut slot = state
         .sources
         .lock()
-        .map_err(|_| "Source state unavailable")?
-        .get(&id)
-        .cloned()
-        .ok_or("Source not approved")?;
+        .map_err(|_| "Source state unavailable")?;
+        load_sources(&app, &mut slot)?;
+        slot.as_ref()
+            .and_then(|sources| sources.get(&id))
+            .cloned()
+            .ok_or("Source not approved")?
+    };
     tauri::async_runtime::spawn_blocking(move || {
         execute(app, source, agent, force, offset.unwrap_or(0))
     })

@@ -73,6 +73,41 @@ fn safe_source(path: &Path, agent: &str) -> Result<PathBuf, String> {
     std::fs::canonicalize(path).map_err(|_| "Source unavailable".into())
 }
 
+#[derive(Serialize)]
+pub struct UsageSuggestion {
+    agent: &'static str,
+    path: PathBuf,
+    kind: &'static str,
+}
+
+// The locations are suggestions from docs/log-formats.md; no files are opened here.
+#[tauri::command]
+pub fn usage_suggest_sources() -> Result<Vec<UsageSuggestion>, String> {
+    let home = super::user_home()?;
+    Ok(vec![
+        UsageSuggestion {
+            agent: "codex",
+            path: home.join(".codex").join("sessions"),
+            kind: "folder",
+        },
+        UsageSuggestion {
+            agent: "codex",
+            path: home.join(".codex").join("archived_sessions"),
+            kind: "folder",
+        },
+        UsageSuggestion {
+            agent: "grok-build",
+            path: home.join(".grok").join("logs").join("unified.jsonl"),
+            kind: "file",
+        },
+        UsageSuggestion {
+            agent: "opencode",
+            path: home.join(".local").join("share").join("opencode").join("opencode.db"),
+            kind: "file",
+        },
+    ])
+}
+
 #[tauri::command]
 pub async fn usage_select_source(
     app: AppHandle,

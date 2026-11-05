@@ -841,6 +841,7 @@ pub fn run() {
             agent_hook_url,
             load_app_settings,
             save_app_settings,
+            usage::usage_suggest_sources,
             usage::usage_select_source,
             usage::usage_scan
         ])

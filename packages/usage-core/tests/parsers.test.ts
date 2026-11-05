@@ -86,6 +86,17 @@ describe('codex', () => {
     }));
 });
 describe('grok', () => {
+  it('reports an oversized synthetic line as a partial scan', () =>
+    temp(async (dir) => {
+      const file = join(dir, 'grok.jsonl');
+      await writeFile(file, 'x'.repeat(1024 * 1024 + 1));
+      const result = await grokBuildParser.parse(file);
+      expect(result.records).toEqual([]);
+      expect(result.warnings).toBe(1);
+      expect(result.partial).toBe(true);
+      const response = await handleRequest({ version: 1, requestId: 'synthetic', method: 'scan', params: { agent: 'grok-build', path: file } });
+      expect(response.result.status).toBe('partial');
+    }));
   it('links only within sid and counts duplicate and broken lines correctly', () =>
     temp(async (dir) => {
       const file = join(dir, 'grok.jsonl');

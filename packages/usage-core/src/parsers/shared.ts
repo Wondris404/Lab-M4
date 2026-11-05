@@ -18,6 +18,11 @@ export const time = (v: unknown): string | undefined => {
   return Number.isFinite(d.getTime()) ? d.toISOString() : undefined;
 };
 const forbidden = /auth|credential|token|secret|key|login|\.env/i;
+export class LineLimitError extends Error {
+  constructor() {
+    super('Usage log line exceeds 1 MiB');
+  }
+}
 export async function assertSafeFile(path: string): Promise<void> {
   const absolute = resolve(path);
   const root = parse(absolute).root;
@@ -26,7 +31,8 @@ export async function assertSafeFile(path: string): Promise<void> {
   for (const part of parts) {
     if (forbidden.test(part)) throw new Error('Nepovolená cesta.');
     parent = join(parent, part);
-    if ((await lstat(parent)).isSymbolicLink()) throw new Error('Nepovolený odkaz.');
+    if ((await lstat(parent)).isSymbolicLink())
+      throw new Error('Nepovolený odkaz.');
   }
   if (forbidden.test(basename(path)))
     throw new Error('Nepovolený názov súboru.');
@@ -78,15 +84,29 @@ export async function* lines(path: string): AsyncGenerator<string> {
     : stream;
   if (decompressed !== stream)
     stream.on('error', (error) => decompressed.destroy(error));
+  let lineBytes = 0;
+  const bounded = decompressed.pipe(
+    new Transform({
+      transform(chunk: Buffer, _encoding, callback) {
+        for (const byte of chunk) {
+          lineBytes = byte === 10 ? 0 : lineBytes + 1;
+          if (lineBytes > 1024 * 1024) return callback(new LineLimitError());
+        }
+        callback(null, chunk);
+      },
+    }),
+  );
+  decompressed.on('error', (error: Error) => bounded.destroy(error));
   try {
     for await (const line of createInterface({
-      input: decompressed,
+      input: bounded,
       crlfDelay: Infinity,
     }))
       yield line;
   } finally {
     stream.destroy();
     decompressed.destroy();
+    bounded.destroy();
   }
 }
 export async function* findCodexFiles(path: string): AsyncGenerator<string> {

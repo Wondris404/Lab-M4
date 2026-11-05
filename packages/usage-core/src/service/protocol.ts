@@ -32,7 +32,7 @@ export async function handleRequest(input: unknown) {
   return {
     version: 1, requestId: request.requestId,
     result: {
-      status: 'ok', totalRecords: parsed.records.length, offset, warnings: [
+      status: parsed.partial ? 'partial' : 'ok', totalRecords: parsed.records.length, offset, warnings: [
         ...(parsed.warnings ? [`${parsed.warnings} parser warnings`] : []),
         ...Object.entries(parsed.mismatchFields).map(([kind, count]) => `${kind}: ${count}`),
       ],

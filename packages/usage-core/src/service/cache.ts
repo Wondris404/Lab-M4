@@ -25,16 +25,16 @@ export async function scanCached(parser: Parser, source: string, cachePath: stri
       await assertSafeFile(file);
       const info = await lstat(file);
       const fileId = createHash('sha256').update(file).digest('hex');
-      files.push(JSON.stringify([fileId, info.size, info.mtimeMs]));
+      files.push(JSON.stringify([fileId, info.dev, info.ino, info.size, info.mtimeMs, info.ctimeMs]));
     }
-    signature = JSON.stringify([3, files.sort()]);
+    signature = JSON.stringify([4, files.sort()]);
   } else {
     await assertSafeFile(source);
     const info = await lstat(canonical);
     const wal = await lstatIfExists(`${canonical}-wal`);
     const shm = await lstatIfExists(`${canonical}-shm`);
     if (parser.provider === 'opencode' && (wal || shm)) throw new Error('Live WAL database requires a closed snapshot.');
-    signature = JSON.stringify([3, info.size, info.mtimeMs, wal?.size ?? null, wal?.mtimeMs ?? null]);
+    signature = JSON.stringify([4, info.dev, info.ino, info.size, info.mtimeMs, info.ctimeMs, wal?.size ?? null, wal?.mtimeMs ?? null]);
   }
   if (/auth|credential|token|secret|api.?key|login|\.env/i.test(basename(cachePath))) {
     throw new Error('Nepovolená cache.');

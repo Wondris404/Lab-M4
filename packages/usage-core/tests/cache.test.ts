@@ -1,4 +1,4 @@
-import { rm, writeFile } from 'node:fs/promises';
+import { rename, rm, stat, utimes, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { testTempDir } from './test-temp.js';
 import { expect, it, vi } from 'vitest';
@@ -19,8 +19,17 @@ it('reuses unchanged sources and rescans a changed source', async () => {
     await writeFile(source, 'one\ntwo\n');
     await scanCached(parser, source, cache);
     expect(parse).toHaveBeenCalledTimes(2);
+    const stableTime = new Date('2025-01-01T00:00:00.000Z');
+    await utimes(source, stableTime, stableTime);
     await scanCached(parser, source, cache, true);
     expect(parse).toHaveBeenCalledTimes(3);
+    const original = await stat(source);
+    const replacement = join(dir, 'replacement.jsonl');
+    await writeFile(replacement, 'two\none\n');
+    await utimes(replacement, original.atime, original.mtime);
+    await rename(replacement, source);
+    await scanCached(parser, source, cache);
+    expect(parse).toHaveBeenCalledTimes(4);
   } finally {
     await rm(dir, { recursive: true, force: true });
   }

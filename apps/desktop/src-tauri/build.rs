@@ -15,6 +15,9 @@ fn main() {
             "agent_hook_url",
             "load_app_settings",
             "save_app_settings",
+            "usage_list_sources",
+            "usage_select_source",
+            "usage_scan",
         ]),
     ))
     .expect("failed to run tauri-build");

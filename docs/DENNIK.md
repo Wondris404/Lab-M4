@@ -67,3 +67,11 @@
 - Problémy / rozhodnutia: Zmeny F3 hardening zatiaľ nie sú na `main`; po ich používateľskom zlúčení bude potrebné `main` znova zlúčiť do F4. Vnorený `agent-usage/` aj generované Tauri permissions zostali nesledované a nedotknuté.
 - NEOVERENÉ: F4 je stále iba počiatočné UI; napojenie a požadované stavy treba dokončiť. CI po odoslaní.
 - Ďalší krok: Odoslať merge, nastaviť základ PR #9 na `main` a preskúmať reálne Tauri rozhranie.
+
+## 2026-11-05 20:30 – Napojenie Usage na backend
+- Branch / commit SHA: `feat/usage-ui` / `ec033d4` (merge a denník odoslané; UI zmena pripravená).
+- Čo som spravil: PR #9 má základ `main`. Usage používa reálne Tauri príkazy na výber zdrojov, zoznam a stránkované skenovanie; zobrazuje filtre, denné hodnoty, súčty, triediteľnú tabuľku, upozornenia, načítanie/prázdny/chybový stav a CSV aktuálneho výberu. Oprávnenia AppManifest a capability obsahujú iba tri používané Usage príkazy.
+- Ako som to otestoval (príkazy + výsledok, lokálne na PC aj CI): `pnpm test` 41/41 vrátane `usage-ui.test.ts`, `format.test.ts`, `csv.test.ts`; `pnpm typecheck`, `pnpm lint`, `cargo fmt --all -- --check`, `cargo check` a `cargo clippy --all-targets -- -D warnings` úspešné. Test sidecaru používa skôr zabalenú verziu z `main`. CI PR #9 pre `ec033d4`: node úspešné, desktop prebieha.
+- Problémy / rozhodnutia: Backend neposkytuje overenú cenu v EUR; UI ju nevymýšľa. UI testy overujú stavovú a dátovú logiku, nie vykreslenie vo WebView. Opätovné balenie alebo `pnpm tauri dev` by zmazalo existujúci generovaný sidecar, čo vyžaduje povolenie podľa zadania.
+- NEOVERENÉ: Skutočná aplikácia, zhoda reálnych súčtov, CSP vo WebView a F3 hardening po zlúčení do `main`.
+- Ďalší krok: Odoslať a overiť CI, dokončiť F3 a po jeho zlúčení preniesť `main` do F4.

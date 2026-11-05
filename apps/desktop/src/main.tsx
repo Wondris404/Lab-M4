@@ -11,7 +11,7 @@ function Root() {
       <button aria-selected={view === 'usage'} onClick={() => setView('usage')}>Usage</button>
     </nav>
     <div className="lab-terminal" style={{ display: view === 'terminal' ? undefined : 'none' }}><App /></div>
-    {view === 'usage' && <UsageTab records={[]} connected={false} />}
+    {view === 'usage' && <UsageTab />}
   </>;
 }
 ReactDOM.createRoot(document.getElementById("root") as HTMLElement).render(<React.StrictMode><Root /></React.StrictMode>);

@@ -14,6 +14,9 @@
     "core:window:allow-set-position",
     "core:window:allow-set-size",
     "dialog:allow-open",
-    "opener:allow-open-url"
+    "opener:allow-open-url",
+    "allow-usage-list-sources",
+    "allow-usage-select-source",
+    "allow-usage-scan"
   ]
 }

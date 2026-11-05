@@ -1,8 +1,6 @@
 name: CI
 on:
   pull_request:
-  push:
-    branches: [feat/wraith-base, feat/rebrand, feat/usage-backend, feat/usage-ui, feat/orchestrator-core, feat/orchestrator-ui, feat/orchestrator-more-agents]
 permissions:
   contents: read
 jobs:

@@ -2,6 +2,7 @@ import { lstat } from 'node:fs/promises';
 import { scanCached } from './cache.js';
 import { parserRegistry, type Parser } from '../parsers/index.js';
 import { providers, type Provider } from '../core/types.js';
+import { normalizeRecord } from './normalize.js';
 
 export interface ScanRequest {
   version: 1;
@@ -27,7 +28,7 @@ export async function handleRequest(input: unknown) {
   const info = await lstat(path);
   const parsed = (info.isFile() || (agent === 'codex' && info.isDirectory())) && request.params.cachePath
     ? await scanCached(parser, path, request.params.cachePath, request.params.force ?? false)
-    : await parser.parse(path);
+    : await parser.parse(path).then((result) => ({ ...result, records: result.records.map(normalizeRecord) }));
   return {
     version: 1, requestId: request.requestId,
     result: {

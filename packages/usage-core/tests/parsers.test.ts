@@ -127,6 +127,9 @@ describe('grok', () => {
       );
       const r = await grokBuildParser.parse(file);
       expect(r.records.map((x) => x.model)).toEqual(['model-test', 'unknown']);
+      const response = await handleRequest({ version: 1, requestId: 'synthetic', method: 'scan', params: { agent: 'grok-build', path: file } });
+      expect(response.result.records.map((item) => item.model)).toEqual(['unknown', 'unknown']);
+      expect(response.result.records[0]?.warnings).toContain('MODEL_UNVERIFIED');
       expect(r.records).toHaveLength(2);
       expect(r.warnings).toBe(1);
     }));

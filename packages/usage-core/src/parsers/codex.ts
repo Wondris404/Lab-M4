@@ -1,17 +1,33 @@
 import { emptyResult, type Parser, type LimitWindow } from './contracts.js';
-import { count, findCodexFiles, lines, obj, str, time } from './shared.js';
+import {
+  count,
+  ExpansionLimitError,
+  findCodexFiles,
+  lines,
+  newExpansionBudget,
+  obj,
+  str,
+  time,
+} from './shared.js';
 
 export const codexParser: Parser = {
   provider: 'codex',
   async parse(path) {
     const result = emptyResult();
     const seen = new Map<string, Set<string>>();
+    const budget = newExpansionBudget();
     for await (const file of findCodexFiles(path)) {
+      const recordsBefore = result.records.length;
+      const limitsBefore = result.limits.length;
+      const warningsBefore = result.warnings;
+      const seenBefore = new Map(
+        [...seen].map(([id, values]) => [id, new Set(values)]),
+      );
       let sessionId: string | undefined;
       let model = 'unknown';
       let speed: 'standard' | 'fast' | 'unknown' = 'unknown';
       try {
-        for await (const line of lines(file)) {
+        for await (const line of lines(file, budget)) {
           if (!line.trim()) continue;
           let event: Record<string, unknown>;
           try {
@@ -101,7 +117,14 @@ export const codexParser: Parser = {
             costSource: 'neznáme',
           });
         }
-      } catch {
+      } catch (error) {
+        if (error instanceof ExpansionLimitError) {
+          result.records.length = recordsBefore;
+          result.limits.length = limitsBefore;
+          result.warnings = warningsBefore;
+          seen.clear();
+          for (const [id, values] of seenBefore) seen.set(id, values);
+        }
         result.warnings++;
         result.partial = true;
       }

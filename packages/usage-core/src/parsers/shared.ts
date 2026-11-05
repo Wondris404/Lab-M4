@@ -23,6 +23,21 @@ export class LineLimitError extends Error {
     super('Usage log line exceeds 1 MiB');
   }
 }
+export class ExpansionLimitError extends Error {
+  constructor() {
+    super('Compressed usage log exceeds the decompression limit');
+  }
+}
+
+/** Shared by all compressed files in a scan; bytes are charged even on failure. */
+export interface ExpansionBudget {
+  remaining: number;
+  perFile: number;
+}
+export const newExpansionBudget = (): ExpansionBudget => ({
+  remaining: 1024 * 1024 * 1024,
+  perFile: 256 * 1024 * 1024,
+});
 export async function assertSafeFile(path: string): Promise<void> {
   const absolute = resolve(path);
   const root = parse(absolute).root;
@@ -44,15 +59,30 @@ export async function assertSafeFile(path: string): Promise<void> {
   )
     throw new Error('Nepovolený zdroj.');
 }
-export async function* lines(path: string): AsyncGenerator<string> {
+export async function* lines(
+  path: string,
+  budget = newExpansionBudget(),
+): AsyncGenerator<string> {
   await assertSafeFile(path);
+  let expanded = 0;
+  const compressed = /\.zst$/i.test(path);
+  if (compressed && budget.remaining <= 0) throw new ExpansionLimitError();
   const stream = createReadStream(path);
-  const decompressed = path.endsWith('.zst')
+  const decompressed = compressed
     ? stream.pipe(
         new Transform({
           construct(callback) {
             const state = this as Transform & { decoder?: Decompress };
             state.decoder = new Decompress((data) => {
+              expanded += data.byteLength;
+              const exceedsScan = data.byteLength > budget.remaining;
+              budget.remaining = Math.max(
+                0,
+                budget.remaining - data.byteLength,
+              );
+              if (expanded > budget.perFile || exceedsScan) {
+                throw new ExpansionLimitError();
+              }
               state.push(Buffer.from(data));
             });
             callback();

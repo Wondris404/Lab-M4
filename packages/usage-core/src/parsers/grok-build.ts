@@ -1,5 +1,13 @@
 import { emptyResult, type Parser } from './contracts.js';
-import { count, LineLimitError, lines, obj, str, time } from './shared.js';
+import {
+  count,
+  ExpansionLimitError,
+  LineLimitError,
+  lines,
+  obj,
+  str,
+  time,
+} from './shared.js';
 
 export const grokBuildParser: Parser = {
   provider: 'grok-build',
@@ -75,7 +83,16 @@ export const grokBuildParser: Parser = {
         });
       }
     } catch (error) {
-      if (!(error instanceof LineLimitError)) throw error;
+      if (
+        !(error instanceof LineLimitError) &&
+        !(error instanceof ExpansionLimitError)
+      )
+        throw error;
+      if (error instanceof ExpansionLimitError) {
+        result.records.length = 0;
+        result.limits.length = 0;
+        result.warnings = 0;
+      }
       result.warnings++;
       result.partial = true;
     }

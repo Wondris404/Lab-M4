@@ -44,7 +44,7 @@ export function useAppSettings() {
   const [ready, setReady] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [settingsTab, setSettingsTab] = useState<
-    "appearance" | "terminal" | "ai" | "general"
+    "appearance" | "terminal" | "ai" | "general" | "about"
   >("appearance");
 
   const settingsRef = useRef(settings);
@@ -354,7 +354,7 @@ export function useAppSettings() {
   );
 
   const openSettings = useCallback(
-    (tab: "appearance" | "terminal" | "ai" | "general" = "appearance") => {
+    (tab: "appearance" | "terminal" | "ai" | "general" | "about" = "appearance") => {
       setSettingsTab(tab);
       setSettingsOpen(true);
     },

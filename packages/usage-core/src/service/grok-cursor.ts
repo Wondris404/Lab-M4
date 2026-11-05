@@ -22,7 +22,9 @@ export interface JsonlAccumulator {
   result: ParseResult;
   consume(line: string): void;
   state(): unknown;
+  fingerprints?: string[];
 }
+export type CursorResult = ParseResult & { _fingerprints?: string[] };
 
 async function tailHash(file: FileHandle, offset: number): Promise<string> {
   const length = Math.min(offset, 4096);
@@ -39,7 +41,7 @@ export async function scanJsonlAppend(
   path: string,
   createAccumulator: (previous?: unknown) => JsonlAccumulator,
   force: boolean,
-): Promise<ParseResult> {
+): Promise<CursorResult> {
   const run = (sql: string, values: unknown[] = []) =>
     new Promise<void>((resolve, reject) =>
       db.run(sql, values, (error) => (error ? reject(error) : resolve())),
@@ -68,7 +70,7 @@ export async function scanJsonlAppend(
       row.mtime === info.mtimeMs &&
       row.ctime === info.ctimeMs
     )
-      return JSON.parse(row.result) as ParseResult;
+      return JSON.parse(row.result) as CursorResult;
     const append =
       !force &&
       sameFile &&
@@ -76,7 +78,7 @@ export async function scanJsonlAppend(
       row.offset <= row.size &&
       (await tailHash(file, row.offset)) === row.tail;
     const oldResult = append
-      ? (JSON.parse(row.result) as ParseResult)
+      ? (JSON.parse(row.result) as CursorResult)
       : emptyResult();
     const previous: unknown = append ? JSON.parse(row.state) : undefined;
     const accumulator = createAccumulator(previous);
@@ -129,11 +131,17 @@ export async function scanJsonlAppend(
     )
       return { ...emptyResult(), warnings: 1, partial: true };
     const fresh = accumulator.result;
-    const result: ParseResult = {
+    const result: CursorResult = {
       ...oldResult,
       records: [...oldResult.records, ...fresh.records.map(normalizeRecord)],
       limits: [...oldResult.limits, ...fresh.limits],
       warnings: oldResult.warnings + fresh.warnings,
+      ...(accumulator.fingerprints && {
+        _fingerprints: [
+          ...((oldResult as CursorResult)._fingerprints ?? []),
+          ...accumulator.fingerprints,
+        ],
+      }),
     };
     const tail = await tailHash(file, offset);
     await run(

@@ -18,6 +18,7 @@ export function codexAccumulator(
   let model = previous?.model ?? 'unknown';
   let speed = previous?.speed ?? 'unknown';
   const seen = new Set(previous?.seen);
+  const fingerprints: string[] = [];
   function consume(line: string) {
     if (!line.trim()) return;
     let event: Record<string, unknown>;
@@ -94,6 +95,7 @@ export function codexAccumulator(
       .digest('hex');
     if (seen.has(fingerprint)) return;
     seen.add(fingerprint);
+    fingerprints.push(fingerprint);
     result.records.push({
       provider: 'codex',
       sessionId,
@@ -110,6 +112,7 @@ export function codexAccumulator(
   return {
     result,
     consume,
+    fingerprints,
     state: (): CodexCursorState => ({
       ...(sessionId && { sessionId }),
       model,

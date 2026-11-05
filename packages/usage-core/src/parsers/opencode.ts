@@ -70,7 +70,7 @@ async function readDatabase(path: string): Promise<ParseResult> {
   for (const suffix of ['-wal', '-shm']) {
     try {
       await lstat(`${path}${suffix}`);
-      throw new Error('Live WAL database requires a closed snapshot.');
+      return { ...emptyResult(), warnings: 1, partial: true };
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
     }

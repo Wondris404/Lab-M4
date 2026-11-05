@@ -2,13 +2,14 @@ import { createHash, createHmac, randomBytes } from 'node:crypto';
 import { lstat, realpath } from 'node:fs/promises';
 import { basename } from 'node:path';
 import sqlite3 from 'sqlite3';
-import type { Parser, ParseResult } from '../parsers/contracts.js';
+import { emptyResult, type Parser, type ParseResult } from '../parsers/contracts.js';
 import { assertSafeFile, findCodexFiles } from '../parsers/shared.js';
 import { normalizeRecord } from './normalize.js';
 import { grokAccumulator, grokBuildParser, type GrokCursorState } from '../parsers/grok-build.js';
 import { codexParser } from '../parsers/codex.js';
 import { codexAccumulator, type CodexCursorState } from '../parsers/codex-cursor.js';
 import { scanJsonlAppend } from './grok-cursor.js';
+import { scanCodexDirectory } from './codex-directory.js';
 
 async function lstatIfExists(path: string) {
   try { return await lstat(path); } catch (error) {
@@ -38,7 +39,7 @@ export async function scanCached(parser: Parser, source: string, cachePath: stri
     const info = await lstat(canonical);
     const wal = await lstatIfExists(`${canonical}-wal`);
     const shm = await lstatIfExists(`${canonical}-shm`);
-    if (parser.provider === 'opencode' && (wal || shm)) throw new Error('Live WAL database requires a closed snapshot.');
+    if (parser.provider === 'opencode' && (wal || shm)) return { ...emptyResult(), warnings: 1, partial: true };
     signature = JSON.stringify([7, info.dev, info.ino, info.size, info.mtimeMs, info.ctimeMs, wal?.size ?? null, wal?.mtimeMs ?? null]);
   }
   if (/auth|credential|token|secret|key|login|\.env/i.test(basename(cachePath))) {
@@ -57,10 +58,12 @@ export async function scanCached(parser: Parser, source: string, cachePath: stri
     await exec('INSERT OR IGNORE INTO cache_meta (name, value) VALUES (?, ?)', ['session_salt', randomBytes(32).toString('hex')]);
     const metadata = await new Promise<{ value: string }>((resolve, reject) => db.get('SELECT value FROM cache_meta WHERE name = ?', ['session_salt'], (e, value) => e ? reject(e) : resolve(value as { value: string })));
     const pseudonym = (sessionId: string) => createHmac('sha256', metadata.value).update(`${parser.provider}\0${sessionId}`).digest('hex');
+    if (parser === codexParser && original.isDirectory())
+      return await scanCodexDirectory(db, key, canonical, pseudonym, force);
     if (parser === grokBuildParser && original.isFile() && !/\.zst$/i.test(canonical))
       return await scanJsonlAppend(db, key, canonical, (previous) => grokAccumulator(previous as GrokCursorState | undefined, pseudonym), force);
     if (parser === codexParser && original.isFile() && /\.jsonl$/i.test(canonical))
-      return await scanJsonlAppend(db, key, canonical, (previous) => codexAccumulator(previous as CodexCursorState | undefined, pseudonym), force);
+      return await scanJsonlAppend(db, `${key}:v2`, canonical, (previous) => codexAccumulator(previous as CodexCursorState | undefined, pseudonym), force);
     const row = await new Promise<{ signature: string; result: string } | undefined>((resolve, reject) => db.get('SELECT signature, result FROM scan_cache WHERE id = ?', [key], (e, value) => e ? reject(e) : resolve(value as { signature: string; result: string } | undefined)));
     if (!force && row?.signature === signature) return JSON.parse(row.result) as ParseResult;
     const parsed = await parser.parse(canonical);

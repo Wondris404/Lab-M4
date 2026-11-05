@@ -55,3 +55,19 @@
 - Problémy / rozhodnutia: Samostatný inkrementálny parser má porovnávací test proti existujúcemu plnému parseru. Obmedzenie kontroly 4 KiB z predchádzajúceho zápisu stále platí. Adresárový Codex sken a komprimované súbory sa naďalej spracúvajú celé.
 - NEOVERENÉ: Integračný test nového zabaleného sidecaru, živé WAL a skutočné logy mimo povoleného priečinka.
 - Ďalší krok: Overiť lint, odoslať krok, pokračovať v riešení adresárov a WAL.
+
+## 2026-11-05 20:37 – Inkrementálne adresáre Codex
+- Branch / commit SHA: `feat/usage-hardening` / `f4ed11c` (odoslané; adresárové rozšírenie pripravené).
+- Čo som spravil: Codex adresár uchováva kurzory jednotlivých JSONL súborov a spája výsledky s deduplikáciou podľa pseudonymnej relácie a kumulatívneho podpisu. Zstd archívy číta celé s hranicami rozbalenia; medzi archívmi a JSONL sa duplicitné spotreby nezapočítajú.
+- Ako som to otestoval (príkazy + výsledok, lokálne na PC aj CI): `pnpm test` 44/44 vrátane `codex-directory.test.ts` (append, neúplný riadok, presun súboru, duplicita JSONL/zstd, porovnanie s úplným parserom); `pnpm exec tsc --noEmit`, `pnpm lint` úspešné. CI PR #10 pre `f4ed11c`: node úspešné, desktop prebieha.
+- Problémy / rozhodnutia: Cache ukladá iba odtlačky a pseudonymy, nie zdrojové relácie. Vzorkovanie predchádzajúceho úseku má obmedzenie uvedené vyššie; komprimované súbory sa vždy znova dekódujú.
+- NEOVERENÉ: Nový zabalený sidecar, reálne logy a bezvýhradné no-write čítanie živého WAL.
+- Ďalší krok: Odoslať krok, dokončiť bezpečné WAL a vyčkať na povolenie pre manuálne testovanie.
+
+## 2026-11-05 20:38 – Upozornenie na živé WAL
+- Branch / commit SHA: `feat/usage-hardening` / `f4ed11c` (ďalšie zmeny pripravené).
+- Čo som spravil: Ak sú pri SQLite prítomné WAL alebo SHM súbory, parser aj cache vrátia čiastočný výsledok s upozornením namiesto chyby; zdroj sa neotvára a čiastočný výsledok sa neukladá do cache.
+- Ako som to otestoval (príkazy + výsledok, lokálne na PC aj CI): `pnpm test` 44/44 vrátane syntetického testu so súbežným zapisovačom a kontroly obsahu DB/WAL/SHM a zoznamu súborov pred a po; `pnpm lint` a `pnpm exec tsc --noEmit` úspešné. CI posledného odoslaného commitu: node úspešné, desktop prebieha.
+- Problémy / rozhodnutia: Živé WAL sa zámerne nezapočíta, pretože stále neexistuje preukázaný bezvýhradný no-write postup; pretek medzi kontrolou súborov a otvorením DB zostáva. Nejde o plné dokončenie A.c.
+- NEOVERENÉ: Úplné čítanie živého WAL, reálne lokálne logy a GUI.
+- Ďalší krok: Dokončiť lokálne testy, odoslať zmeny a pokračovať v bezpečnom riešení SQLite.

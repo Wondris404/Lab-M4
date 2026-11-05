@@ -258,7 +258,7 @@ describe('opencode', () => {
         r.records.filter((x) => x.sessionId === 'sess-test-2'),
       ).toHaveLength(1);
     }));
-  it('refuses a synthetic live WAL without changing its files', () =>
+  it('reports a synthetic live WAL as partial without changing its files', () =>
     temp(async (dir) => {
       const path = join(dir, 'opencode.db');
       await makeDb(path);
@@ -271,8 +271,12 @@ describe('opencode', () => {
         const walBefore = await readFile(`${path}-wal`);
         const shmBefore = await readFile(`${path}-shm`);
         const names = (await readdir(dir)).sort();
-        await expect(opencodeParser.parse(path)).rejects.toThrow('Live WAL database requires a closed snapshot.');
-        await expect(scanCached(opencodeParser, path, join(dir, 'cache.sqlite'))).rejects.toThrow('Live WAL database requires a closed snapshot.');
+        const direct = await opencodeParser.parse(path);
+        const cached = await scanCached(opencodeParser, path, join(dir, 'cache.sqlite'));
+        expect(direct.partial).toBe(true);
+        expect(direct.warnings).toBe(1);
+        expect(cached.partial).toBe(true);
+        expect(cached.warnings).toBe(1);
         expect(await readFile(path)).toEqual(dbBefore);
         expect(await readFile(`${path}-wal`)).toEqual(walBefore);
         expect(await readFile(`${path}-shm`)).toEqual(shmBefore);

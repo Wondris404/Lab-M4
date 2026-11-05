@@ -7,7 +7,7 @@ export interface ScanRequest {
   version: 1;
   requestId: string;
   method: 'scan';
-  params: { agent: Provider; path: string; cachePath?: string; force?: boolean };
+  params: { agent: Provider; path: string; cachePath?: string; force?: boolean; offset?: number; limit?: number };
 }
 
 /** NEOVERENÉ: live SQLite WAL access may create SQLite shared-memory files. */
@@ -19,6 +19,9 @@ export async function handleRequest(input: unknown) {
     throw new Error('Invalid request');
   }
   const { agent, path } = request.params;
+  const offset = request.params.offset ?? 0;
+  const limit = request.params.limit ?? 500;
+  if (!Number.isSafeInteger(offset) || offset < 0 || !Number.isSafeInteger(limit) || limit < 1 || limit > 500) throw new Error('Invalid page');
   if (agent === 'antigravity') return { version: 1, requestId: request.requestId, result: { status: 'not-supported', records: [], warnings: ['NEOVERENÉ'] } };
   const parser: Parser = parserRegistry[agent];
   const info = await lstat(path);
@@ -28,8 +31,8 @@ export async function handleRequest(input: unknown) {
   return {
     version: 1, requestId: request.requestId,
     result: {
-      status: 'ok', warnings: parsed.warnings ? [`${parsed.warnings} parser warnings`] : [],
-      records: parsed.records.map((r) => ({
+      status: 'ok', totalRecords: parsed.records.length, offset, warnings: parsed.warnings ? [`${parsed.warnings} parser warnings`] : [],
+      records: parsed.records.slice(offset, offset + limit).map((r) => ({
         agent: r.provider, model: r.model, session: r.sessionId, timestamp: r.timestamp,
         input: r.inputTokens, output: r.outputTokens, cached: r.cachedInputTokens,
         reasoning: r.reasoningTokens, ...(r.costUsd !== undefined && { cost: r.costUsd }), warnings: [],

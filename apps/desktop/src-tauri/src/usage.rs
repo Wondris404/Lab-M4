@@ -154,7 +154,13 @@ pub async fn usage_select_source(
     Ok(Some(UsageSource { id, agent, name }))
 }
 
-fn execute(app: AppHandle, source: PathBuf, agent: String, force: bool) -> Result<Value, String> {
+fn execute(
+    app: AppHandle,
+    source: PathBuf,
+    agent: String,
+    force: bool,
+    offset: usize,
+) -> Result<Value, String> {
     let source = safe_source(&source, &agent)?;
     // NEOVERENÉ: Windows resource resolution requires installed-app testing.
     let resources = app
@@ -169,7 +175,7 @@ fn execute(app: AppHandle, source: PathBuf, agent: String, force: bool) -> Resul
         .map_err(|_| "Data directory unavailable")?
         .join("usage");
     std::fs::create_dir_all(&cache_dir).map_err(|_| "Cache unavailable")?;
-    let request = json!({"version":1,"requestId":"scan","method":"scan","params":{"agent":agent,"path":source,"cachePath":cache_dir.join("cache.sqlite"),"force":force}});
+    let request = json!({"version":1,"requestId":"scan","method":"scan","params":{"agent":agent,"path":source,"cachePath":cache_dir.join("cache.sqlite"),"force":force,"offset":offset,"limit":500}});
     let mut command = Command::new(runtime);
     command
         .arg(sidecar.join("main.cjs"))
@@ -221,6 +227,7 @@ pub async fn usage_scan(
     state: State<'_, UsageState>,
     id: String,
     force: bool,
+    offset: Option<usize>,
 ) -> Result<Value, String> {
     let (agent, source) = state
         .sources
@@ -229,7 +236,7 @@ pub async fn usage_scan(
         .get(&id)
         .cloned()
         .ok_or("Source not approved")?;
-    tauri::async_runtime::spawn_blocking(move || execute(app, source, agent, force))
+    tauri::async_runtime::spawn_blocking(move || execute(app, source, agent, force, offset.unwrap_or(0)))
         .await
         .map_err(|_| "Scan failed")?
 }

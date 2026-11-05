@@ -23,4 +23,6 @@ export interface UsageRecord {
   speed: 'standard' | 'fast' | 'unknown';
   costUsd?: number;
   costSource: 'skutočné' | 'odhad' | 'neznáme';
+  /** Machine-readable uncertainty markers, without source contents. */
+  warnings?: string[];
 }

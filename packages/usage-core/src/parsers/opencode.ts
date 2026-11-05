@@ -30,12 +30,14 @@ function consume(row: Row, result: ParseResult): void {
     return;
   }
   const expected = input + cache + write + output + reasoning;
+  const warnings: string[] = [];
   if (
     row.total !== null &&
     row.total !== undefined &&
     (typeof row.total !== 'number' || row.total !== expected)
   ) {
     result.warnings++;
+    warnings.push('TOTAL_MISMATCH');
     mismatch(result, 'total');
     if (typeof row.total === 'number')
       mismatch(
@@ -58,6 +60,7 @@ function consume(row: Row, result: ParseResult): void {
     reasoningTokens: reasoning,
     speed: 'unknown',
     costSource: 'neznáme',
+    ...(warnings.length > 0 && { warnings }),
   });
 }
 export const opencodeParser: Parser = {

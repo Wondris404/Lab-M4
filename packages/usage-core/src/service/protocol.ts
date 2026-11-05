@@ -31,11 +31,14 @@ export async function handleRequest(input: unknown) {
   return {
     version: 1, requestId: request.requestId,
     result: {
-      status: 'ok', totalRecords: parsed.records.length, offset, warnings: parsed.warnings ? [`${parsed.warnings} parser warnings`] : [],
+      status: 'ok', totalRecords: parsed.records.length, offset, warnings: [
+        ...(parsed.warnings ? [`${parsed.warnings} parser warnings`] : []),
+        ...Object.entries(parsed.mismatchFields).map(([kind, count]) => `${kind}: ${count}`),
+      ],
       records: parsed.records.slice(offset, offset + limit).map((r) => ({
         agent: r.provider, model: r.model, session: r.sessionId, timestamp: r.timestamp,
         input: r.inputTokens, output: r.outputTokens, cached: r.cachedInputTokens,
-        reasoning: r.reasoningTokens, ...(r.costUsd !== undefined && { cost: r.costUsd }), warnings: [],
+        reasoning: r.reasoningTokens, ...(r.costUsd !== undefined && { cost: r.costUsd }), warnings: r.warnings ?? [],
       })),
     },
   };

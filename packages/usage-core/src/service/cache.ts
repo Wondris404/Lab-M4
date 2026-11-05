@@ -27,14 +27,14 @@ export async function scanCached(parser: Parser, source: string, cachePath: stri
       const fileId = createHash('sha256').update(file).digest('hex');
       files.push(JSON.stringify([fileId, info.size, info.mtimeMs]));
     }
-    signature = JSON.stringify([2, files.sort()]);
+    signature = JSON.stringify([3, files.sort()]);
   } else {
     await assertSafeFile(source);
     const info = await lstat(canonical);
     const wal = await lstatIfExists(`${canonical}-wal`);
     const shm = await lstatIfExists(`${canonical}-shm`);
     if (parser.provider === 'opencode' && (wal || shm)) throw new Error('Live WAL database requires a closed snapshot.');
-    signature = JSON.stringify([2, info.size, info.mtimeMs, wal?.size ?? null, wal?.mtimeMs ?? null]);
+    signature = JSON.stringify([3, info.size, info.mtimeMs, wal?.size ?? null, wal?.mtimeMs ?? null]);
   }
   if (/auth|credential|token|secret|api.?key|login|\.env/i.test(basename(cachePath))) {
     throw new Error('Nepovolená cache.');

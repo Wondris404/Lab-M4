@@ -7,6 +7,7 @@ import { codexParser } from '../src/parsers/codex.js';
 import { grokBuildParser } from '../src/parsers/grok-build.js';
 import { opencodeParser } from '../src/parsers/opencode.js';
 import { scanCached } from '../src/service/cache.js';
+import { handleRequest } from '../src/service/protocol.js';
 import { summarize } from '../src/server/summary.js';
 import { settingsSchema } from '../src/core/settings.js';
 import example from '../config/settings.example.json';
@@ -222,6 +223,10 @@ describe('opencode', () => {
       expect(first.costUsd).toBeUndefined();
       expect(first.costSource).toBe('neznáme');
       expect(r.mismatchFields.total).toBe(1);
+      expect(r.records[1]?.warnings).toEqual(['TOTAL_MISMATCH']);
+      const response = await handleRequest({ version: 1, requestId: 'synthetic', method: 'scan', params: { agent: 'opencode', path } });
+      expect(response.result.records[1]?.warnings).toEqual(['TOTAL_MISMATCH']);
+      expect(response.result.warnings).toContain('total: 1');
       expect(r.mismatchFields.total_less_than_components).toBe(1);
       expect(r.warnings).toBe(2);
       expect(

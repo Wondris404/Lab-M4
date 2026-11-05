@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { readFile, readdir, rm, writeFile } from 'node:fs/promises';
+import { appendFile, readFile, readdir, rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { testTempDir } from './test-temp.js';
 import sqlite3 from 'sqlite3';
@@ -81,8 +81,19 @@ describe('codex', () => {
       const f = join(dir, 'empty.jsonl');
       await writeFile(f, '');
       expect((await codexParser.parse(f)).records).toEqual([]);
-      await writeFile(f, record(event(usage(10, 3), usage(10, 3))));
+      await writeFile(f, record(event(usage(10, 3), usage(10, 3))) + '\n');
       expect((await codexParser.parse(f)).warnings).toBe(1);
+    }));
+  it('waits for a newline before parsing a complete trailing JSON object', () =>
+    temp(async (dir) => {
+      const file = join(dir, 'session.jsonl');
+      const row = event(usage(10, 3), usage(10, 3));
+      await writeFile(file, record({ type: 'session_meta', payload: { id: 'sess-test-1' } }) + '\n' + record(row));
+      const incomplete = await codexParser.parse(file);
+      expect(incomplete.records).toEqual([]);
+      expect(incomplete.warnings).toBe(0);
+      await appendFile(file, '\n');
+      expect((await codexParser.parse(file)).records).toHaveLength(1);
     }));
 });
 describe('grok', () => {
@@ -134,7 +145,7 @@ describe('grok', () => {
       ];
       await writeFile(
         file,
-        lines.map((x) => (typeof x === 'string' ? x : record(x))).join('\n'),
+        lines.map((x) => (typeof x === 'string' ? x : record(x))).join('\n') + '\n',
       );
       const r = await grokBuildParser.parse(file);
       expect(r.records.map((x) => x.model)).toEqual(['model-test', 'unknown']);
@@ -162,7 +173,7 @@ describe('grok', () => {
         { sid: 'trace-test', ctx: { session_id: 'sess-test-2' } },
         { sid: 'trace-test', ts: stamp, msg: 'shell.turn.inference_done', ctx },
       ];
-      await writeFile(f, rows.map(record).join('\n'));
+      await writeFile(f, rows.map(record).join('\n') + '\n');
       const r = await grokBuildParser.parse(f);
       expect(r.records[0]?.sessionId).toBe('sess-test-2');
       expect(r.records[0]?.model).toBe('unknown');
@@ -291,7 +302,7 @@ it('summarizes only enabled agents and leaves unknown costs empty', () =>
           completion_tokens: 10,
           reasoning_tokens: 4,
         },
-      }),
+      }) + '\n',
     );
     const config = structuredClone(example);
     config.agents['grok-build'] = { enabled: true, path: f };
@@ -320,7 +331,7 @@ it('prices a known speed via settings and keeps warnings in the summary', () =>
       },
       event(counts, counts),
     ];
-    await writeFile(f, events.map(record).join('\n') + '\n{bad}');
+    await writeFile(f, events.map(record).join('\n') + '\n{bad}\n');
     const config = structuredClone(example);
     config.agents.codex = { enabled: true, path: f };
     const price = {

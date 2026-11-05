@@ -235,9 +235,11 @@ export async function* lines(
   if (decompressed !== stream)
     stream.on('error', (error) => decompressed.destroy(error));
   let lineBytes = 0;
+  let endsWithNewline = false;
   const bounded = decompressed.pipe(
     new Transform({
       transform(chunk: Buffer, _encoding, callback) {
+        if (chunk.length) endsWithNewline = chunk[chunk.length - 1] === 10;
         for (const byte of chunk) {
           lineBytes = byte === 10 ? 0 : lineBytes + 1;
           if (lineBytes > 1024 * 1024) return callback(new LineLimitError());
@@ -248,11 +250,15 @@ export async function* lines(
   );
   decompressed.on('error', (error: Error) => bounded.destroy(error));
   try {
+    let pending: string | undefined;
     for await (const line of createInterface({
       input: bounded,
       crlfDelay: Infinity,
-    }))
-      yield line;
+    })) {
+      if (pending !== undefined) yield pending;
+      pending = line;
+    }
+    if (endsWithNewline && pending !== undefined) yield pending;
   } finally {
     stream.destroy();
     decompressed.destroy();

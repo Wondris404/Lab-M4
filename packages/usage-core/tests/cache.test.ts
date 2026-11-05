@@ -1,4 +1,4 @@
-import { rename, rm, stat, utimes, writeFile } from 'node:fs/promises';
+import { readFile, rename, rm, stat, utimes, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { testTempDir } from './test-temp.js';
 import { expect, it, vi } from 'vitest';
@@ -51,6 +51,24 @@ it('invalidates a Codex directory when a synthetic session changes', async () =>
     await writeFile(join(source, 'session.jsonl'), 'one\ntwo\n');
     await scanCached(parser, source, cache);
     expect(parse).toHaveBeenCalledTimes(2);
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+it('stores stable pseudonyms instead of synthetic session identifiers', async () => {
+  const dir = await testTempDir('usage-private-');
+  try {
+    const source = join(dir, 'source.jsonl');
+    const cache = join(dir, 'cache.sqlite');
+    await writeFile(source, 'synthetic\n');
+    const parse = vi.fn(async () => ({ ...emptyResult(), records: [{ provider: 'codex' as const, sessionId: 'synthetic-session-id', model: 'unknown', timestamp: '2025-01-01T00:00:00.000Z', inputTokens: 1, cachedInputTokens: 0, outputTokens: 1, reasoningTokens: 0, speed: 'unknown' as const, costSource: 'neznáme' as const }] }));
+    const parser: Parser = { provider: 'codex', parse };
+    const first = await scanCached(parser, source, cache);
+    const second = await scanCached(parser, source, cache, true);
+    expect(first.records[0]?.sessionId).toEqual(second.records[0]?.sessionId);
+    expect(first.records[0]?.sessionId).not.toEqual('synthetic-session-id');
+    expect((await readFile(cache)).includes(Buffer.from('synthetic-session-id'))).toBe(false);
   } finally {
     await rm(dir, { recursive: true, force: true });
   }

@@ -1,4 +1,4 @@
-import { createHash } from 'node:crypto';
+import { createHash, createHmac, randomBytes } from 'node:crypto';
 import { lstat, realpath } from 'node:fs/promises';
 import { basename } from 'node:path';
 import sqlite3 from 'sqlite3';
@@ -27,14 +27,14 @@ export async function scanCached(parser: Parser, source: string, cachePath: stri
       const fileId = createHash('sha256').update(file).digest('hex');
       files.push(JSON.stringify([fileId, info.dev, info.ino, info.size, info.mtimeMs, info.ctimeMs]));
     }
-    signature = JSON.stringify([4, files.sort()]);
+    signature = JSON.stringify([5, files.sort()]);
   } else {
     await assertSafeFile(source);
     const info = await lstat(canonical);
     const wal = await lstatIfExists(`${canonical}-wal`);
     const shm = await lstatIfExists(`${canonical}-shm`);
     if (parser.provider === 'opencode' && (wal || shm)) throw new Error('Live WAL database requires a closed snapshot.');
-    signature = JSON.stringify([4, info.dev, info.ino, info.size, info.mtimeMs, info.ctimeMs, wal?.size ?? null, wal?.mtimeMs ?? null]);
+    signature = JSON.stringify([5, info.dev, info.ino, info.size, info.mtimeMs, info.ctimeMs, wal?.size ?? null, wal?.mtimeMs ?? null]);
   }
   if (/auth|credential|token|secret|api.?key|login|\.env/i.test(basename(cachePath))) {
     throw new Error('Nepovolená cache.');
@@ -47,9 +47,15 @@ export async function scanCached(parser: Parser, source: string, cachePath: stri
   const exec = (sql: string, values: unknown[] = []) => new Promise<void>((resolve, reject) => db.run(sql, values, (e) => e ? reject(e) : resolve()));
   try {
     await exec('CREATE TABLE IF NOT EXISTS scan_cache (id TEXT PRIMARY KEY, signature TEXT NOT NULL, result TEXT NOT NULL)');
+    await exec('CREATE TABLE IF NOT EXISTS cache_meta (name TEXT PRIMARY KEY, value TEXT NOT NULL)');
+    // A random local salt is used only to pseudonymize session IDs; it is not agent auth.
+    await exec('INSERT OR IGNORE INTO cache_meta (name, value) VALUES (?, ?)', ['session_salt', randomBytes(32).toString('hex')]);
+    const metadata = await new Promise<{ value: string }>((resolve, reject) => db.get('SELECT value FROM cache_meta WHERE name = ?', ['session_salt'], (e, value) => e ? reject(e) : resolve(value as { value: string })));
     const row = await new Promise<{ signature: string; result: string } | undefined>((resolve, reject) => db.get('SELECT signature, result FROM scan_cache WHERE id = ?', [key], (e, value) => e ? reject(e) : resolve(value as { signature: string; result: string } | undefined)));
     if (!force && row?.signature === signature) return JSON.parse(row.result) as ParseResult;
-    const result = await parser.parse(canonical);
+    const parsed = await parser.parse(canonical);
+    const pseudonym = (sessionId: string) => createHmac('sha256', metadata.value).update(`${parser.provider}\0${sessionId}`).digest('hex');
+    const result = { ...parsed, records: parsed.records.map((record) => ({ ...record, sessionId: pseudonym(record.sessionId) })), limits: parsed.limits.map((limit) => ({ ...limit, sessionId: pseudonym(limit.sessionId) })) };
     // Cache replacement is atomic; no original file is written.
     await exec('INSERT OR REPLACE INTO scan_cache (id, signature, result) VALUES (?, ?, ?)', [key, signature, JSON.stringify(result)]);
     return result;

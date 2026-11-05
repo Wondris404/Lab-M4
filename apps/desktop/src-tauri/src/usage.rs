@@ -77,7 +77,7 @@ fn save_sources(app: &AppHandle, sources: &SourceMap) -> Result<(), String> {
         .map_err(|_| "Source list unavailable")?;
     file.sync_all().map_err(|_| "Source list unavailable")?;
     drop(file);
-    std::fs::rename(temp, path).map_err(|_| "Source list unavailable")
+    std::fs::rename(temp, path).map_err(|_| "Source list unavailable".to_owned())
 }
 
 #[tauri::command]

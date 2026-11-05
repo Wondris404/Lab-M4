@@ -1,4 +1,5 @@
 mod usage;
+mod usage_integrity;
 
 use std::collections::HashMap;
 use std::io::{Read, Write};

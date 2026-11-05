@@ -301,6 +301,7 @@ fn execute(
         .resource_dir()
         .map_err(|_| "Resources unavailable")?
         .join("usage-service");
+    super::usage_integrity::verify(&sidecar)?;
     let runtime = sidecar.join(if cfg!(windows) { "node.exe" } else { "node" });
     let cache_dir = app
         .path()

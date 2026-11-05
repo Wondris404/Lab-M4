@@ -72,7 +72,8 @@ fn save_sources(app: &AppHandle, sources: &SourceMap) -> Result<(), String> {
         .create_new(true)
         .open(&temp)
         .map_err(|_| "Source list unavailable")?;
-    file.write_all(&bytes).map_err(|_| "Source list unavailable")?;
+    file.write_all(&bytes)
+        .map_err(|_| "Source list unavailable")?;
     file.sync_all().map_err(|_| "Source list unavailable")?;
     drop(file);
     std::fs::rename(temp, path).map_err(|_| "Source list unavailable")
@@ -348,9 +349,9 @@ pub async fn usage_scan(
 ) -> Result<Value, String> {
     let (agent, source) = {
         let mut slot = state
-        .sources
-        .lock()
-        .map_err(|_| "Source state unavailable")?;
+            .sources
+            .lock()
+            .map_err(|_| "Source state unavailable")?;
         load_sources(&app, &mut slot)?;
         slot.as_ref()
             .and_then(|sources| sources.get(&id))

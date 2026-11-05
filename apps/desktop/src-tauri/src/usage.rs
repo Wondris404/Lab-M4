@@ -243,3 +243,16 @@ pub async fn usage_scan(
         .await
         .map_err(|_| "Scan failed")?
 }
+
+#[cfg(test)]
+mod tests {
+    use super::safe_source;
+    use std::path::Path;
+
+    #[test]
+    fn denies_sensitive_names_before_reading_files() {
+        assert!(safe_source(Path::new("auth.jsonl"), "codex").is_err());
+        assert!(safe_source(Path::new("credentials/usage.jsonl"), "codex").is_err());
+        assert!(safe_source(Path::new("usage.jsonl"), "unknown").is_err());
+    }
+}

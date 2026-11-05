@@ -47,3 +47,11 @@
 - Problémy / rozhodnutia: Overenie posledných 4 KiB pred offsetom nepreukazuje nezmenenosť celej staršej časti pri súčasnej úprave súboru a jeho zväčšení. Stav obsahuje iba pseudonymy relácií; test kontroluje neprítomnosť syntetických identifikátorov v cache. Kurzory pre Codex a komprimované súbory zatiaľ chýbajú.
 - NEOVERENÉ: Balený sidecar, GUI, živé WAL a reálne logy mimo povoleného priečinka.
 - Ďalší krok: Dokončiť regresné testy a odoslať čiastkový krok; pokračovať ostatnými zdrojmi.
+
+## 2026-11-05 20:34 – Kurzor pre samostatný Codex JSONL
+- Branch / commit SHA: `feat/usage-hardening` / `41cf6fb` (odoslané; rozšírenie kurzora pripravené).
+- Čo som spravil: Rovnaký mechanizmus kurzora teraz používa aj samostatný nekomprimovaný Codex JSONL. Stav používa pseudonym relácie a odtlačky deduplikácie; výpočet zachováva `last_token_usage` a rate-limit záznamy.
+- Ako som to otestoval (príkazy + výsledok, lokálne na PC aj CI): `pnpm test` 43/43 vrátane `codex-cursor.test.ts`, `grok-cursor.test.ts`, parserov a zámku SQLite; `pnpm exec tsc --noEmit` úspešné. Prvý `pnpm lint` odhalil nepoužité premenné v teste, upravené pred odoslaním. CI PR #10 pre `41cf6fb`: node úspešné, desktop prebieha.
+- Problémy / rozhodnutia: Samostatný inkrementálny parser má porovnávací test proti existujúcemu plnému parseru. Obmedzenie kontroly 4 KiB z predchádzajúceho zápisu stále platí. Adresárový Codex sken a komprimované súbory sa naďalej spracúvajú celé.
+- NEOVERENÉ: Integračný test nového zabaleného sidecaru, živé WAL a skutočné logy mimo povoleného priečinka.
+- Ďalší krok: Overiť lint, odoslať krok, pokračovať v riešení adresárov a WAL.

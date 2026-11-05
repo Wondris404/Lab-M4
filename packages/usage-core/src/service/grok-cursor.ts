@@ -3,10 +3,6 @@ import { lstat, open } from 'node:fs/promises';
 import type { FileHandle } from 'node:fs/promises';
 import sqlite3 from 'sqlite3';
 import { emptyResult, type ParseResult } from '../parsers/contracts.js';
-import {
-  grokAccumulator,
-  type GrokCursorState,
-} from '../parsers/grok-build.js';
 import { assertSafeFile, LineLimitError } from '../parsers/shared.js';
 import { normalizeRecord } from './normalize.js';
 
@@ -22,6 +18,12 @@ interface CursorRow {
   result: string;
 }
 
+export interface JsonlAccumulator {
+  result: ParseResult;
+  consume(line: string): void;
+  state(): unknown;
+}
+
 async function tailHash(file: FileHandle, offset: number): Promise<string> {
   const length = Math.min(offset, 4096);
   const buffer = Buffer.alloc(length);
@@ -31,11 +33,11 @@ async function tailHash(file: FileHandle, offset: number): Promise<string> {
 }
 
 /** Persist only normalized records, pseudonymous parser state and file metadata. */
-export async function scanGrokAppend(
+export async function scanJsonlAppend(
   db: sqlite3.Database,
   key: string,
   path: string,
-  pseudonym: (id: string) => string,
+  createAccumulator: (previous?: unknown) => JsonlAccumulator,
   force: boolean,
 ): Promise<ParseResult> {
   const run = (sql: string, values: unknown[] = []) =>
@@ -76,10 +78,8 @@ export async function scanGrokAppend(
     const oldResult = append
       ? (JSON.parse(row.result) as ParseResult)
       : emptyResult();
-    const previous = append
-      ? (JSON.parse(row.state) as GrokCursorState)
-      : undefined;
-    const accumulator = grokAccumulator(previous, pseudonym);
+    const previous: unknown = append ? JSON.parse(row.state) : undefined;
+    const accumulator = createAccumulator(previous);
     let offset = append ? row.offset : 0;
     let position = offset;
     let carry = Buffer.alloc(0);
@@ -132,6 +132,7 @@ export async function scanGrokAppend(
     const result: ParseResult = {
       ...oldResult,
       records: [...oldResult.records, ...fresh.records.map(normalizeRecord)],
+      limits: [...oldResult.limits, ...fresh.limits],
       warnings: oldResult.warnings + fresh.warnings,
     };
     const tail = await tailHash(file, offset);

@@ -1,11 +1,13 @@
 import { describe, expect, it } from 'vitest';
-import { mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises';
+import { readFile, readdir, rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
-import { tmpdir } from 'node:os';
+import { testTempDir } from './test-temp.js';
 import sqlite3 from 'sqlite3';
 import { codexParser } from '../src/parsers/codex.js';
 import { grokBuildParser } from '../src/parsers/grok-build.js';
 import { opencodeParser } from '../src/parsers/opencode.js';
+import { scanCached } from '../src/service/cache.js';
+import { handleRequest } from '../src/service/protocol.js';
 import { summarize } from '../src/server/summary.js';
 import { settingsSchema } from '../src/core/settings.js';
 import example from '../config/settings.example.json';
@@ -30,7 +32,7 @@ const event = (total: unknown, last: unknown) => ({
   },
 });
 async function temp<T>(fn: (dir: string) => Promise<T>): Promise<T> {
-  const dir = await mkdtemp(join(tmpdir(), 'agent-parsers-'));
+  const dir = await testTempDir('agent-parsers-');
   try {
     return await fn(dir);
   } finally {
@@ -84,6 +86,17 @@ describe('codex', () => {
     }));
 });
 describe('grok', () => {
+  it('reports an oversized synthetic line as a partial scan', () =>
+    temp(async (dir) => {
+      const file = join(dir, 'grok.jsonl');
+      await writeFile(file, 'x'.repeat(1024 * 1024 + 1));
+      const result = await grokBuildParser.parse(file);
+      expect(result.records).toEqual([]);
+      expect(result.warnings).toBe(1);
+      expect(result.partial).toBe(true);
+      const response = await handleRequest({ version: 1, requestId: 'synthetic', method: 'scan', params: { agent: 'grok-build', path: file } });
+      expect(response.result.status).toBe('partial');
+    }));
   it('links only within sid and counts duplicate and broken lines correctly', () =>
     temp(async (dir) => {
       const file = join(dir, 'grok.jsonl');
@@ -125,6 +138,9 @@ describe('grok', () => {
       );
       const r = await grokBuildParser.parse(file);
       expect(r.records.map((x) => x.model)).toEqual(['model-test', 'unknown']);
+      const response = await handleRequest({ version: 1, requestId: 'synthetic', method: 'scan', params: { agent: 'grok-build', path: file } });
+      expect(response.result.records.map((item) => item.model)).toEqual(['unknown', 'unknown']);
+      expect(response.result.records[0]?.warnings).toContain('MODEL_UNVERIFIED');
       expect(r.records).toHaveLength(2);
       expect(r.warnings).toBe(1);
     }));
@@ -221,11 +237,38 @@ describe('opencode', () => {
       expect(first.costUsd).toBeUndefined();
       expect(first.costSource).toBe('neznáme');
       expect(r.mismatchFields.total).toBe(1);
+      expect(r.records[1]?.warnings).toEqual(['TOTAL_MISMATCH']);
+      const response = await handleRequest({ version: 1, requestId: 'synthetic', method: 'scan', params: { agent: 'opencode', path } });
+      expect(response.result.records[1]?.warnings).toEqual(['TOTAL_MISMATCH']);
+      expect(response.result.warnings).toContain('total: 1');
       expect(r.mismatchFields.total_less_than_components).toBe(1);
       expect(r.warnings).toBe(2);
       expect(
         r.records.filter((x) => x.sessionId === 'sess-test-2'),
       ).toHaveLength(1);
+    }));
+  it('refuses a synthetic live WAL without changing its files', () =>
+    temp(async (dir) => {
+      const path = join(dir, 'opencode.db');
+      await makeDb(path);
+      const writer = new sqlite3.Database(path);
+      try {
+        await run(writer, 'PRAGMA journal_mode=WAL');
+        await run(writer, 'PRAGMA wal_autocheckpoint=0');
+        await run(writer, "INSERT INTO session VALUES ('sess-test-wal',1735725600000,7,1,0,3,1,NULL)");
+        const dbBefore = await readFile(path);
+        const walBefore = await readFile(`${path}-wal`);
+        const shmBefore = await readFile(`${path}-shm`);
+        const names = (await readdir(dir)).sort();
+        await expect(opencodeParser.parse(path)).rejects.toThrow('Live WAL database requires a closed snapshot.');
+        await expect(scanCached(opencodeParser, path, join(dir, 'cache.sqlite'))).rejects.toThrow('Live WAL database requires a closed snapshot.');
+        expect(await readFile(path)).toEqual(dbBefore);
+        expect(await readFile(`${path}-wal`)).toEqual(walBefore);
+        expect(await readFile(`${path}-shm`)).toEqual(shmBefore);
+        expect((await readdir(dir)).sort()).toEqual(names);
+      } finally {
+        await close(writer);
+      }
     }));
   it('fails safely for prohibited names and missing databases', async () => {
     await expect(opencodeParser.parse('auth.db')).rejects.toThrow();

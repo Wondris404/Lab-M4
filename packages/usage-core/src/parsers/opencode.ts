@@ -1,4 +1,5 @@
 import sqlite3 from 'sqlite3';
+import { lstat } from 'node:fs/promises';
 import { pathToFileURL } from 'node:url';
 import { emptyResult, type Parser, type ParseResult } from './contracts.js';
 import { assertSafeFile, count, str, time } from './shared.js';
@@ -29,12 +30,14 @@ function consume(row: Row, result: ParseResult): void {
     return;
   }
   const expected = input + cache + write + output + reasoning;
+  const warnings: string[] = [];
   if (
     row.total !== null &&
     row.total !== undefined &&
     (typeof row.total !== 'number' || row.total !== expected)
   ) {
     result.warnings++;
+    warnings.push('TOTAL_MISMATCH');
     mismatch(result, 'total');
     if (typeof row.total === 'number')
       mismatch(
@@ -57,12 +60,23 @@ function consume(row: Row, result: ParseResult): void {
     reasoningTokens: reasoning,
     speed: 'unknown',
     costSource: 'neznáme',
+    ...(warnings.length > 0 && { warnings }),
   });
 }
 export const opencodeParser: Parser = {
   provider: 'opencode',
   async parse(path) {
     await assertSafeFile(path);
+    // Live WAL readers may write SHM even when the DB is opened read-only.
+    // NEOVERENÉ: a concurrent writer could create WAL after this check.
+    for (const suffix of ['-wal', '-shm']) {
+      try {
+        await lstat(`${path}${suffix}`);
+        throw new Error('Live WAL database requires a closed snapshot.');
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+      }
+    }
     const result = emptyResult();
     const uri = pathToFileURL(path).href + '?mode=ro';
     const db = await new Promise<sqlite3.Database>((resolve, reject) => {
@@ -86,7 +100,13 @@ export const opencodeParser: Parser = {
           (err) => (err ? reject(err) : resolve()),
         );
       });
+    const exec = (sql: string) => new Promise<void>((resolve, reject) => {
+      db.exec(sql, (error) => error ? reject(error) : resolve());
+    });
     try {
+      // query_only is connection-local; the transaction keeps both reads consistent.
+      // https://www.sqlite.org/pragma.html#pragma_query_only
+      await exec('PRAGMA query_only = ON; BEGIN');
       await query(`SELECT session_id AS sessionId, time_created AS timestamp, json_extract(data,'$.modelID') AS model,
        json_extract(data,'$.tokens.input') AS input, json_extract(data,'$.tokens.cache.read') AS cache, json_extract(data,'$.tokens.cache.write') AS cacheWrite,
        json_extract(data,'$.tokens.output') AS output, json_extract(data,'$.tokens.reasoning') AS reasoning,
@@ -103,6 +123,7 @@ export const opencodeParser: Parser = {
         ),
       );
       result.warnings += invalid;
+      await exec('COMMIT');
     } finally {
       await new Promise<void>((resolve, reject) =>
         db.close((err) => (err ? reject(err) : resolve())),

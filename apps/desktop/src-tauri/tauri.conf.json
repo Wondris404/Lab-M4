@@ -4,9 +4,9 @@
   "version": "0.2.0",
   "identifier": "com.wondris.labm4",
   "build": {
-    "beforeDevCommand": "pnpm dev",
+    "beforeDevCommand": "pnpm --dir ../.. package:usage-sidecar && pnpm dev",
     "devUrl": "http://localhost:1430",
-    "beforeBuildCommand": "pnpm build",
+    "beforeBuildCommand": "pnpm --dir ../.. package:usage-sidecar && pnpm build",
     "frontendDist": "../dist"
   },
   "app": {
@@ -18,7 +18,7 @@
       }
     ],
     "security": {
-      "csp": null
+      "csp": "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' asset: http://asset.localhost data: blob:; font-src 'self' data:; connect-src 'self' ipc: http://ipc.localhost; object-src 'none'; base-uri 'self'; frame-src 'none'; form-action 'self'"
     }
   },
   "bundle": {
@@ -30,6 +30,9 @@
       "icons/128x128@2x.png",
       "icons/icon.icns",
       "icons/icon.ico"
-    ]
+    ],
+    "resources": {
+      "../usage-service/": "usage-service/"
+    }
   }
 }

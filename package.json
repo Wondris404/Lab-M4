@@ -13,7 +13,8 @@
     "build": "pnpm --filter wraith build",
     "typecheck": "tsc --noEmit && pnpm --filter wraith build",
     "test": "vitest run",
-    "lint": "eslint packages/usage-core/src packages/usage-core/tests"
+    "lint": "eslint packages/usage-core/src packages/usage-core/tests",
+    "package:usage-sidecar": "node scripts/package-usage-sidecar.mjs"
   },
   "dependencies": {
     "@hono/node-server": "^1.19.0",
@@ -33,6 +34,7 @@
     "@types/react-dom": "^19.1.0",
     "@vitejs/plugin-react": "^4.7.0",
     "concurrently": "^9.2.0",
+    "esbuild": "0.25.12",
     "eslint": "^9.34.0",
     "eslint-config-prettier": "^10.1.0",
     "globals": "^16.3.0",

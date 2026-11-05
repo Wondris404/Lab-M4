@@ -117,3 +117,7 @@ Grok číta JSONL po riadkoch; lokálne overený typ s počtami je shell.turn.in
 Server číta config/settings.json, spúšťa iba enabled zdroje a pri chýbajúcej zaznamenanej cene skúsi cenník podľa známej rýchlosti; bez platnej sadzby je cena neznáme. V EUR použije nastavený kurz. Čiastočný súčet ceny je označený costIncomplete. Žiadne správy alebo prompty sa nevracajú ani neukladajú. Antigravity ostáva prázdny stub.
 
 Pri šiestich lokálnych nezhodách OpenCode je celkové pole total vždy menšie ako súčet input, output, reasoning, cache.read a cache.write. Všetkých šesť má nenulové reasoning, štyri nenulové cache.read, žiadny nenulové cache.write. Odčítanie iba jediného z týchto piatich komponentov nesúlad nevysvetlilo; konkrétne chybné pole nemožno z uvedených agregátov určiť.
+
+## F3: prístup k OpenCode WAL (syntetický test)
+
+F3 používa `mode=ro` bez `immutable=1`. Pri syntetickej databáze v aktívnom WAL režime sa napriek tomu zmenil byte súboru `-shm`, hoci databáza a WAL zostali nezmenené. Preto parser pred otvorením odmietne zdroj, ak existuje `-wal` alebo `-shm`, a vyžaduje uzavretý snapshot. **NEOVERENÉ:** medzi kontrolou a otvorením môže vzniknúť nový WAL; plná ochrana proti súbehu a úplnosť živej histórie ešte nie sú potvrdené. Toto pozorovanie je zo syntetického testu, nie z používateľských dát.

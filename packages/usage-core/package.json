@@ -2,5 +2,10 @@
   "name": "@lab-m4/usage-core",
   "version": "0.0.0",
   "private": true,
-  "type": "module"
+  "type": "module",
+  "dependencies": {
+    "fzstd": "^0.1.1",
+    "sqlite3": "^5.1.7",
+    "zod": "^3.25.0"
+  }
 }

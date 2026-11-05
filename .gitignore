@@ -7,3 +7,5 @@ config/settings.json
 .local-corepack/
 .pnpm-store/
 .lab-m4/
+
+apps/desktop/usage-service/

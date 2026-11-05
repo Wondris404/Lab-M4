@@ -6,6 +6,7 @@ import sqlite3 from 'sqlite3';
 import { codexParser } from '../src/parsers/codex.js';
 import { grokBuildParser } from '../src/parsers/grok-build.js';
 import { opencodeParser } from '../src/parsers/opencode.js';
+import { scanCached } from '../src/service/cache.js';
 import { summarize } from '../src/server/summary.js';
 import { settingsSchema } from '../src/core/settings.js';
 import example from '../config/settings.example.json';
@@ -241,6 +242,7 @@ describe('opencode', () => {
         const shmBefore = await readFile(`${path}-shm`);
         const names = (await readdir(dir)).sort();
         await expect(opencodeParser.parse(path)).rejects.toThrow('Live WAL database requires a closed snapshot.');
+        await expect(scanCached(opencodeParser, path, join(dir, 'cache.sqlite'))).rejects.toThrow('Live WAL database requires a closed snapshot.');
         expect(await readFile(path)).toEqual(dbBefore);
         expect(await readFile(`${path}-wal`)).toEqual(walBefore);
         expect(await readFile(`${path}-shm`)).toEqual(shmBefore);

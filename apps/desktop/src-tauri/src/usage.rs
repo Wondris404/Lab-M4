@@ -239,9 +239,11 @@ pub async fn usage_scan(
         .get(&id)
         .cloned()
         .ok_or("Source not approved")?;
-    tauri::async_runtime::spawn_blocking(move || execute(app, source, agent, force, offset.unwrap_or(0)))
-        .await
-        .map_err(|_| "Scan failed")?
+    tauri::async_runtime::spawn_blocking(move || {
+        execute(app, source, agent, force, offset.unwrap_or(0))
+    })
+    .await
+    .map_err(|_| "Scan failed")?
 }
 
 #[cfg(test)]

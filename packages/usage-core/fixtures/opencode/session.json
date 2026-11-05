@@ -1,0 +1,9 @@
+{
+  "time_created": 1735725600000,
+  "time_updated": 1735725600000,
+  "tokens_input": 100,
+  "tokens_output": 10,
+  "tokens_reasoning": 4,
+  "tokens_cache_read": 20,
+  "tokens_cache_write": 0
+}

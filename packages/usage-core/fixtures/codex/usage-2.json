@@ -1,0 +1,25 @@
+{
+  "timestamp": "2025-01-01T10:00:00.000Z",
+  "type": "event_msg",
+  "payload": {
+    "type": "token_count",
+    "info": {
+      "total_token_usage": {
+        "input_tokens": 150,
+        "cached_input_tokens": 30,
+        "cache_write_input_tokens": 0,
+        "output_tokens": 15,
+        "reasoning_output_tokens": 6,
+        "total_tokens": 165
+      },
+      "last_token_usage": {
+        "input_tokens": 50,
+        "cached_input_tokens": 10,
+        "cache_write_input_tokens": 0,
+        "output_tokens": 5,
+        "reasoning_output_tokens": 2,
+        "total_tokens": 55
+      }
+    }
+  }
+}

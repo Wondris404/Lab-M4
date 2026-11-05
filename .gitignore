@@ -1,0 +1,9 @@
+node_modules/
+dist/
+coverage/
+config/settings.json
+*.log
+
+.local-corepack/
+.pnpm-store/
+.lab-m4/

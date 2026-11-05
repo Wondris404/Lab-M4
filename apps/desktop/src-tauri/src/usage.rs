@@ -102,7 +102,11 @@ pub fn usage_suggest_sources() -> Result<Vec<UsageSuggestion>, String> {
         },
         UsageSuggestion {
             agent: "opencode",
-            path: home.join(".local").join("share").join("opencode").join("opencode.db"),
+            path: home
+                .join(".local")
+                .join("share")
+                .join("opencode")
+                .join("opencode.db"),
             kind: "file",
         },
     ])

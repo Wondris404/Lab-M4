@@ -25,3 +25,24 @@ it('reuses unchanged sources and rescans a changed source', async () => {
     await rm(dir, { recursive: true, force: true });
   }
 });
+
+it('invalidates a Codex directory when a synthetic session changes', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'usage-folder-'));
+  try {
+    const source = join(dir, 'sessions');
+    const cache = join(dir, 'cache.sqlite');
+    const { mkdir } = await import('node:fs/promises');
+    await mkdir(source);
+    await writeFile(join(source, 'session.jsonl'), 'one\n');
+    const parse = vi.fn(async () => emptyResult());
+    const parser: Parser = { provider: 'codex', parse };
+    await scanCached(parser, source, cache);
+    await scanCached(parser, source, cache);
+    expect(parse).toHaveBeenCalledTimes(1);
+    await writeFile(join(source, 'session.jsonl'), 'one\ntwo\n');
+    await scanCached(parser, source, cache);
+    expect(parse).toHaveBeenCalledTimes(2);
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});

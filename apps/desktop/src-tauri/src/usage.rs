@@ -31,10 +31,6 @@ fn safe_source(path: &Path, agent: &str) -> Result<PathBuf, String> {
         "opencode" => ["db", "sqlite"].as_slice(),
         _ => return Err("Unsupported source".into()),
     };
-    let extension = path.extension().and_then(|x| x.to_str()).unwrap_or("");
-    if !allowed.iter().any(|x| extension.eq_ignore_ascii_case(x)) {
-        return Err("Unsupported source".into());
-    }
     for component in path.ancestors() {
         if let Some(name) = component.file_name().and_then(|x| x.to_str()) {
             let lower = name.to_ascii_lowercase();
@@ -62,8 +58,17 @@ fn safe_source(path: &Path, agent: &str) -> Result<PathBuf, String> {
         }
     }
     let metadata = std::fs::metadata(path).map_err(|_| "Source unavailable")?;
-    if !metadata.is_file() {
-        return Err("Expected a file".into());
+    if metadata.is_dir() {
+        if agent != "codex" {
+            return Err("Only Codex supports folders".into());
+        }
+    } else if metadata.is_file() {
+        let extension = path.extension().and_then(|x| x.to_str()).unwrap_or("");
+        if !allowed.iter().any(|x| extension.eq_ignore_ascii_case(x)) {
+            return Err("Unsupported source".into());
+        }
+    } else {
+        return Err("Unsupported source".into());
     }
     std::fs::canonicalize(path).map_err(|_| "Source unavailable".into())
 }
@@ -73,14 +78,24 @@ pub async fn usage_select_source(
     app: AppHandle,
     state: State<'_, UsageState>,
     agent: String,
+    folder: Option<bool>,
 ) -> Result<Option<UsageSource>, String> {
     if !["codex", "grok-build", "opencode"].contains(&agent.as_str()) {
         return Err("Unsupported source".into());
     }
-    let selected =
-        tauri::async_runtime::spawn_blocking(move || app.dialog().file().blocking_pick_file())
-            .await
-            .map_err(|_| "Picker failed")?;
+    let choose_folder = folder.unwrap_or(false);
+    if choose_folder && agent != "codex" {
+        return Err("Only Codex supports folders".into());
+    }
+    let selected = tauri::async_runtime::spawn_blocking(move || {
+        if choose_folder {
+            app.dialog().file().blocking_pick_folder()
+        } else {
+            app.dialog().file().blocking_pick_file()
+        }
+    })
+    .await
+    .map_err(|_| "Picker failed")?;
     let Some(selected) = selected else {
         return Ok(None);
     };
@@ -102,6 +117,7 @@ pub async fn usage_select_source(
 
 fn execute(app: AppHandle, source: PathBuf, agent: String, force: bool) -> Result<Value, String> {
     let source = safe_source(&source, &agent)?;
+    // NEOVERENÉ: Windows resource resolution requires installed-app testing.
     let resources = app
         .path()
         .resource_dir()

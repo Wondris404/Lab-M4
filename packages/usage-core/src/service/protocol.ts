@@ -22,7 +22,7 @@ export async function handleRequest(input: unknown) {
   if (agent === 'antigravity') return { version: 1, requestId: request.requestId, result: { status: 'not-supported', records: [], warnings: ['NEOVERENÉ'] } };
   const parser: Parser = parserRegistry[agent];
   const info = await lstat(path);
-  const parsed = info.isFile() && request.params.cachePath
+  const parsed = (info.isFile() || (agent === 'codex' && info.isDirectory())) && request.params.cachePath
     ? await scanCached(parser, path, request.params.cachePath, request.params.force ?? false)
     : await parser.parse(path);
   return {

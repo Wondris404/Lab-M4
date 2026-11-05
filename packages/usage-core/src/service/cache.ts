@@ -2,16 +2,30 @@ import { createHash } from 'node:crypto';
 import { lstat, realpath } from 'node:fs/promises';
 import sqlite3 from 'sqlite3';
 import type { Parser, ParseResult } from '../parsers/contracts.js';
-import { assertSafeFile } from '../parsers/shared.js';
+import { assertSafeFile, findCodexFiles } from '../parsers/shared.js';
 
 /** Cache normalized data only. Caller must select an application-owned cache path. */
 export async function scanCached(parser: Parser, source: string, cachePath: string, force = false): Promise<ParseResult> {
-  await assertSafeFile(source);
+  const original = await lstat(source);
+  if (original.isSymbolicLink()) throw new Error('Nepovolený odkaz.');
   const canonical = await realpath(source);
-  const info = await lstat(canonical);
-  const wal = await lstat(`${canonical}-wal`).catch(() => undefined);
   const key = createHash('sha256').update(`${parser.provider}\0${canonical}`).digest('hex');
-  const signature = JSON.stringify([1, info.size, info.mtimeMs, wal?.size ?? null, wal?.mtimeMs ?? null]);
+  let signature: string;
+  if (original.isDirectory() && parser.provider === 'codex') {
+    const files: string[] = [];
+    for await (const file of findCodexFiles(canonical)) {
+      await assertSafeFile(file);
+      const info = await lstat(file);
+      const fileId = createHash('sha256').update(file).digest('hex');
+      files.push(JSON.stringify([fileId, info.size, info.mtimeMs]));
+    }
+    signature = JSON.stringify([2, files.sort()]);
+  } else {
+    await assertSafeFile(source);
+    const info = await lstat(canonical);
+    const wal = await lstat(`${canonical}-wal`).catch(() => undefined);
+    signature = JSON.stringify([2, info.size, info.mtimeMs, wal?.size ?? null, wal?.mtimeMs ?? null]);
+  }
   const db = await new Promise<sqlite3.Database>((resolve, reject) => {
     const instance = new sqlite3.Database(cachePath, (error) => error ? reject(error) : resolve(instance));
   });

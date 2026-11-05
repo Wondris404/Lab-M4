@@ -845,7 +845,8 @@ pub fn run() {
             usage::usage_list_sources,
             usage::usage_remove_source,
             usage::usage_select_source,
-            usage::usage_scan
+            usage::usage_scan,
+            usage::usage_cancel_scan
         ])
         .on_window_event(|window, event| {
             if let tauri::WindowEvent::CloseRequested { .. } = event {

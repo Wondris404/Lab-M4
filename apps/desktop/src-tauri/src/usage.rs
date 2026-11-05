@@ -5,8 +5,8 @@ use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::sync::{
-    atomic::{AtomicU64, Ordering},
-    Mutex,
+    atomic::{AtomicBool, AtomicU64, Ordering},
+    Arc, Mutex,
 };
 use std::thread;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
@@ -17,6 +17,7 @@ use tauri_plugin_dialog::DialogExt;
 pub struct UsageState {
     sources: Mutex<Option<HashMap<String, (String, PathBuf)>>>,
     next: AtomicU64,
+    active: Mutex<HashMap<String, Arc<AtomicBool>>>,
 }
 #[derive(Serialize)]
 pub struct UsageSource {
@@ -269,13 +270,27 @@ pub async fn usage_select_source(
     Ok(Some(UsageSource { id, agent, name }))
 }
 
+// Always reap the sidecar, including failures while setting up pipes.
+struct SidecarChild(std::process::Child);
+
+impl Drop for SidecarChild {
+    fn drop(&mut self) {
+        let _ = self.0.kill();
+        let _ = self.0.wait();
+    }
+}
+
 fn execute(
     app: AppHandle,
     source: PathBuf,
     agent: String,
     force: bool,
     offset: usize,
+    cancelled: Arc<AtomicBool>,
 ) -> Result<Value, String> {
+    if cancelled.load(Ordering::Acquire) {
+        return Err("Scan cancelled".into());
+    }
     let source = safe_source(&source, &agent)?;
     // NEOVERENÉ: Windows resource resolution requires installed-app testing.
     #[cfg(debug_assertions)]
@@ -305,11 +320,15 @@ fn execute(
     if let Some(root) = std::env::var_os("SystemRoot") {
         command.env("SystemRoot", root);
     }
-    let mut child = command.spawn().map_err(|_| "Usage sidecar unavailable")?;
-    let mut input = child.stdin.take().ok_or("Sidecar input unavailable")?;
-    writeln!(input, "{request}").map_err(|_| "Sidecar input failed")?;
+    let mut child = SidecarChild(command.spawn().map_err(|_| "Usage sidecar unavailable")?);
+    let mut input = child.0.stdin.take().ok_or("Sidecar input unavailable")?;
+    if writeln!(input, "{request}").is_err() {
+        let _ = child.0.kill();
+        let _ = child.0.wait();
+        return Err("Sidecar input failed".into());
+    }
     drop(input);
-    let output = child.stdout.take().ok_or("Sidecar output unavailable")?;
+    let output = child.0.stdout.take().ok_or("Sidecar output unavailable")?;
     let reader = thread::spawn(move || {
         let mut bytes = Vec::new();
         output
@@ -319,16 +338,24 @@ fn execute(
     });
     let deadline = Instant::now() + Duration::from_secs(60);
     let status = loop {
-        if let Some(status) = child.try_wait().map_err(|_| "Sidecar failed")? {
+        if cancelled.load(Ordering::Acquire) {
+            let _ = child.0.kill();
+            let _ = child.0.wait();
+            return Err("Scan cancelled".into());
+        }
+        if let Some(status) = child.0.try_wait().map_err(|_| "Sidecar failed")? {
             break status;
         }
         if Instant::now() >= deadline {
-            let _ = child.kill();
-            let _ = child.wait();
+            let _ = child.0.kill();
+            let _ = child.0.wait();
             return Err("Sidecar timed out".into());
         }
         thread::sleep(Duration::from_millis(25));
     };
+    if cancelled.load(Ordering::Acquire) {
+        return Err("Scan cancelled".into());
+    }
     let bytes = reader
         .join()
         .map_err(|_| "Sidecar output failed")?
@@ -358,11 +385,36 @@ pub async fn usage_scan(
             .cloned()
             .ok_or("Source not approved")?
     };
-    tauri::async_runtime::spawn_blocking(move || {
-        execute(app, source, agent, force, offset.unwrap_or(0))
+    let cancelled = Arc::new(AtomicBool::new(false));
+    {
+        let mut active = state.active.lock().map_err(|_| "Scan state unavailable")?;
+        if active.len() >= 2 || active.contains_key(&id) {
+            return Err("Scan already active or limit reached".into());
+        }
+        active.insert(id.clone(), cancelled.clone());
+    }
+    let result = tauri::async_runtime::spawn_blocking(move || {
+        execute(app, source, agent, force, offset.unwrap_or(0), cancelled)
     })
     .await
-    .map_err(|_| "Scan failed")?
+    .map_err(|_| "Scan failed");
+    state
+        .active
+        .lock()
+        .map_err(|_| "Scan state unavailable")?
+        .remove(&id);
+    result?
+}
+
+#[tauri::command]
+pub fn usage_cancel_scan(state: State<'_, UsageState>, id: String) -> Result<bool, String> {
+    let active = state.active.lock().map_err(|_| "Scan state unavailable")?;
+    if let Some(cancelled) = active.get(&id) {
+        cancelled.store(true, Ordering::Release);
+        Ok(true)
+    } else {
+        Ok(false)
+    }
 }
 
 #[cfg(test)]

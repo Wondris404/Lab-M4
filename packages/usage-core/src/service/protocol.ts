@@ -1,3 +1,5 @@
+import { lstat } from 'node:fs/promises';
+import { scanCached } from './cache.js';
 import { parserRegistry, type Parser } from '../parsers/index.js';
 import { providers, type Provider } from '../core/types.js';
 
@@ -5,7 +7,7 @@ export interface ScanRequest {
   version: 1;
   requestId: string;
   method: 'scan';
-  params: { agent: Provider; path: string };
+  params: { agent: Provider; path: string; cachePath?: string; force?: boolean };
 }
 
 /** NEOVERENÉ: live SQLite WAL access may create SQLite shared-memory files. */
@@ -19,7 +21,10 @@ export async function handleRequest(input: unknown) {
   const { agent, path } = request.params;
   if (agent === 'antigravity') return { version: 1, requestId: request.requestId, result: { status: 'not-supported', records: [], warnings: ['NEOVERENÉ'] } };
   const parser: Parser = parserRegistry[agent];
-  const parsed = await parser.parse(path);
+  const info = await lstat(path);
+  const parsed = info.isFile() && request.params.cachePath
+    ? await scanCached(parser, path, request.params.cachePath, request.params.force ?? false)
+    : await parser.parse(path);
   return {
     version: 1, requestId: request.requestId,
     result: {

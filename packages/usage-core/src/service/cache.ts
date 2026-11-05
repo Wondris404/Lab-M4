@@ -4,6 +4,13 @@ import sqlite3 from 'sqlite3';
 import type { Parser, ParseResult } from '../parsers/contracts.js';
 import { assertSafeFile, findCodexFiles } from '../parsers/shared.js';
 
+async function lstatIfExists(path: string) {
+  try { return await lstat(path); } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return undefined;
+    throw error;
+  }
+}
+
 /** Cache normalized data only. Caller must select an application-owned cache path. */
 export async function scanCached(parser: Parser, source: string, cachePath: string, force = false): Promise<ParseResult> {
   const original = await lstat(source);
@@ -23,7 +30,9 @@ export async function scanCached(parser: Parser, source: string, cachePath: stri
   } else {
     await assertSafeFile(source);
     const info = await lstat(canonical);
-    const wal = await lstat(`${canonical}-wal`).catch(() => undefined);
+    const wal = await lstatIfExists(`${canonical}-wal`);
+    const shm = await lstatIfExists(`${canonical}-shm`);
+    if (parser.provider === 'opencode' && (wal || shm)) throw new Error('Live WAL database requires a closed snapshot.');
     signature = JSON.stringify([2, info.size, info.mtimeMs, wal?.size ?? null, wal?.mtimeMs ?? null]);
   }
   const db = await new Promise<sqlite3.Database>((resolve, reject) => {

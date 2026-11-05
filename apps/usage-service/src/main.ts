@@ -9,8 +9,9 @@ async function main(): Promise<void> {
       const request = JSON.parse(line) as unknown;
       const result = await handleRequest(request);
       process.stdout.write(`${JSON.stringify(result)}\n`);
-    } catch {
-      process.stdout.write(`${JSON.stringify({ version: 1, error: 'Invalid or unreadable request' })}\n`);
+    } catch (error) {
+      const code = error instanceof Error && error.message === 'Live WAL database requires a closed snapshot.' ? 'LIVE_WAL' : 'INVALID_OR_UNREADABLE';
+      process.stdout.write(`${JSON.stringify({ version: 1, error: code })}\n`);
     }
   }
 }

@@ -1,5 +1,7 @@
 packages:
   - apps/desktop
+  - apps/usage-service
   - packages/usage-core
+  - packages/contracts
 onlyBuiltDependencies:
   - sqlite3

@@ -134,7 +134,25 @@ importers:
         specifier: ^7.0.4
         version: 7.3.7(@types/node@20.19.43)(jiti@2.7.0)(lightningcss@1.33.0)(tsx@4.23.15)
 
-  packages/usage-core: {}
+  apps/usage-service:
+    dependencies:
+      '@lab-m4/usage-core':
+        specifier: workspace:*
+        version: link:../../packages/usage-core
+
+  packages/contracts: {}
+
+  packages/usage-core:
+    dependencies:
+      fzstd:
+        specifier: ^0.1.1
+        version: 0.1.1
+      sqlite3:
+        specifier: ^5.1.7
+        version: 5.1.7
+      zod:
+        specifier: ^3.25.0
+        version: 3.25.76
 
 packages:
 

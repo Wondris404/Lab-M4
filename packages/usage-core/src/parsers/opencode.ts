@@ -1,4 +1,5 @@
 import sqlite3 from 'sqlite3';
+import { lstat } from 'node:fs/promises';
 import { pathToFileURL } from 'node:url';
 import { emptyResult, type Parser, type ParseResult } from './contracts.js';
 import { assertSafeFile, count, str, time } from './shared.js';
@@ -63,6 +64,16 @@ export const opencodeParser: Parser = {
   provider: 'opencode',
   async parse(path) {
     await assertSafeFile(path);
+    // Live WAL readers may write SHM even when the DB is opened read-only.
+    // NEOVERENÉ: a concurrent writer could create WAL after this check.
+    for (const suffix of ['-wal', '-shm']) {
+      try {
+        await lstat(`${path}${suffix}`);
+        throw new Error('Live WAL database requires a closed snapshot.');
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+      }
+    }
     const result = emptyResult();
     const uri = pathToFileURL(path).href + '?mode=ro';
     const db = await new Promise<sqlite3.Database>((resolve, reject) => {

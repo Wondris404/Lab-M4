@@ -227,6 +227,28 @@ describe('opencode', () => {
         r.records.filter((x) => x.sessionId === 'sess-test-2'),
       ).toHaveLength(1);
     }));
+  it('refuses a synthetic live WAL without changing its files', () =>
+    temp(async (dir) => {
+      const path = join(dir, 'opencode.db');
+      await makeDb(path);
+      const writer = new sqlite3.Database(path);
+      try {
+        await run(writer, 'PRAGMA journal_mode=WAL');
+        await run(writer, 'PRAGMA wal_autocheckpoint=0');
+        await run(writer, "INSERT INTO session VALUES ('sess-test-wal',1735725600000,7,1,0,3,1,NULL)");
+        const dbBefore = await readFile(path);
+        const walBefore = await readFile(`${path}-wal`);
+        const shmBefore = await readFile(`${path}-shm`);
+        const names = (await readdir(dir)).sort();
+        await expect(opencodeParser.parse(path)).rejects.toThrow('Live WAL database requires a closed snapshot.');
+        expect(await readFile(path)).toEqual(dbBefore);
+        expect(await readFile(`${path}-wal`)).toEqual(walBefore);
+        expect(await readFile(`${path}-shm`)).toEqual(shmBefore);
+        expect((await readdir(dir)).sort()).toEqual(names);
+      } finally {
+        await close(writer);
+      }
+    }));
   it('fails safely for prohibited names and missing databases', async () => {
     await expect(opencodeParser.parse('auth.db')).rejects.toThrow();
     await expect(opencodeParser.parse('missing.db')).rejects.toThrow();

@@ -58,7 +58,8 @@ export async function scanCached(parser: Parser, source: string, cachePath: stri
     const pseudonym = (sessionId: string) => createHmac('sha256', metadata.value).update(`${parser.provider}\0${sessionId}`).digest('hex');
     const result = { ...parsed, records: parsed.records.map((record) => ({ ...normalizeRecord(record), sessionId: pseudonym(record.sessionId) })), limits: parsed.limits.map((limit) => ({ ...limit, sessionId: pseudonym(limit.sessionId) })) };
     // Cache replacement is atomic; no original file is written.
-    await exec('INSERT OR REPLACE INTO scan_cache (id, signature, result) VALUES (?, ?, ?)', [key, signature, JSON.stringify(result)]);
+    if (!result.partial)
+      await exec('INSERT OR REPLACE INTO scan_cache (id, signature, result) VALUES (?, ?, ?)', [key, signature, JSON.stringify(result)]);
     return result;
   } finally {
     await new Promise<void>((resolve, reject) => db.close((e) => e ? reject(e) : resolve()));

@@ -89,7 +89,7 @@ export interface AppSettings {
   general: GeneralSettings;
 }
 
-export type SettingsTab = "appearance" | "terminal" | "ai" | "general";
+export type SettingsTab = "appearance" | "terminal" | "ai" | "general" | "about";
 
 export const DEFAULT_FONT_SIZE = 13;
 export const MIN_FONT_SIZE = 8;

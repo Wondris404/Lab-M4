@@ -2166,6 +2166,31 @@ body,
   line-height: 1.4;
 }
 
+.about-panel {
+  padding: 12px 14px 16px;
+}
+
+.about-name {
+  margin: 8px 0 0;
+  font-size: 22px;
+  font-weight: 650;
+}
+
+.about-attribution {
+  margin: 8px 0 0;
+  font-size: 14px;
+}
+
+.about-links {
+  display: flex;
+  gap: 16px;
+  margin: 12px 0 0;
+}
+
+.about-links a {
+  color: var(--accent);
+}
+
 .settings-panel-footer {
   border-top: none;
   justify-content: flex-start;

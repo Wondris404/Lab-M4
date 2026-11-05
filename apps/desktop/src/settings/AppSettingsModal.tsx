@@ -19,6 +19,7 @@ import {
   type FontPreset,
 } from "./fonts";
 import { getTheme, THEME_LIST } from "./themes";
+import { AboutPanel } from "./AboutPanel";
 
 interface AppSettingsModalProps {
   api: AppSettingsApi;
@@ -124,6 +125,7 @@ export function AppSettingsModal({ api }: AppSettingsModalProps) {
     // Lab-M4: credential-backed AI is disabled; original implementation retained.
     // { id: "ai", label: "AI" },
     { id: "general", label: "General" },
+    { id: "about", label: "About" },
   ];
 
   return (
@@ -161,7 +163,7 @@ export function AppSettingsModal({ api }: AppSettingsModalProps) {
           </nav>
 
           <div className="settings-panel">
-            <p className="settings-section-hint">Lab-M4 — Based on Wraith (MIT).</p>
+            {settingsTab === "about" && <AboutPanel />}
             {settingsTab === "appearance" && (
               <div className="settings-section">
                 <p className="settings-section-hint">

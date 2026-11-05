@@ -1,3 +1,6 @@
+mod usage;
+mod usage_integrity;
+
 use std::collections::HashMap;
 use std::io::{Read, Write};
 use std::net::{TcpListener, TcpStream};
@@ -818,6 +821,7 @@ pub fn run() {
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
         .manage(AppState::default())
+        .manage(usage::UsageState::default())
         .setup(|app| {
             let url =
                 start_agent_hook_server(app.handle().clone()).map_err(std::io::Error::other)?;
@@ -837,7 +841,13 @@ pub fn run() {
             save_sessions,
             agent_hook_url,
             load_app_settings,
-            save_app_settings
+            save_app_settings,
+            usage::usage_suggest_sources,
+            usage::usage_list_sources,
+            usage::usage_remove_source,
+            usage::usage_select_source,
+            usage::usage_scan,
+            usage::usage_cancel_scan
         ])
         .on_window_event(|window, event| {
             if let tauri::WindowEvent::CloseRequested { .. } = event {

@@ -103,6 +103,7 @@ export const codexParser: Parser = {
         }
       } catch {
         result.warnings++;
+        result.partial = true;
       }
     }
     return result;

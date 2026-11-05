@@ -1,0 +1,9 @@
+{
+  "name": "@lab-m4/usage-service",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "@lab-m4/usage-core": "workspace:*"
+  }
+}

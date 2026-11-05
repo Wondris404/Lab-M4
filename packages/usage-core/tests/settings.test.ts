@@ -1,5 +1,5 @@
-import { mkdtemp, writeFile, rm } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
+import { writeFile, rm } from 'node:fs/promises';
+import { testTempDir } from './test-temp.js';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import example from '../config/settings.example.json';
@@ -30,7 +30,7 @@ describe('settings', () => {
     );
   });
   it('loads only an explicitly supplied settings file', async () => {
-    const directory = await mkdtemp(join(tmpdir(), 'lab-m4-test-'));
+    const directory = await testTempDir('lab-m4-test-');
     try {
       const path = join(directory, 'settings.json');
       await writeFile(path, JSON.stringify(example));

@@ -1,0 +1,14 @@
+.lab-tabs { display: flex; height: 40px; align-items: center; gap: 8px; padding: 0 12px; background: var(--sidebar-bg); }
+.lab-tabs button { color: var(--text); background: var(--btn-bg); border: 1px solid var(--border); padding: 5px 12px; }
+.lab-tabs button[aria-selected="true"] { border-color: var(--accent); }
+.lab-terminal .app-shell { height: calc(100vh - 40px); }
+.usage-tab { padding: 24px; height: calc(100vh - 88px); overflow: auto; }
+.usage-filters, .usage-cards { display: flex; gap: 12px; flex-wrap: wrap; }
+.usage-filters label, .usage-cards div { display: flex; flex-direction: column; gap: 6px; }
+.usage-cards { margin: 20px 0; }
+.usage-cards div { min-width: 120px; padding: 14px; background: var(--surface); }
+.usage-cards strong { font-size: 22px; }
+.usage-chart div { display: flex; gap: 12px; align-items: center; }
+.usage-chart meter { width: 240px; }
+.usage-tab table { width: 100%; border-collapse: collapse; }
+.usage-tab th, .usage-tab td { text-align: left; padding: 8px; border-bottom: 1px solid var(--border); }

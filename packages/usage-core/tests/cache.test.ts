@@ -1,12 +1,12 @@
-import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
-import { tmpdir } from 'node:os';
+import { testTempDir } from './test-temp.js';
 import { expect, it, vi } from 'vitest';
 import { scanCached } from '../src/service/cache.js';
 import { emptyResult, type Parser } from '../src/parsers/contracts.js';
 
 it('reuses unchanged sources and rescans a changed source', async () => {
-  const dir = await mkdtemp(join(tmpdir(), 'usage-cache-'));
+  const dir = await testTempDir('usage-cache-');
   try {
     const source = join(dir, 'source.jsonl');
     const cache = join(dir, 'cache.sqlite');
@@ -27,7 +27,7 @@ it('reuses unchanged sources and rescans a changed source', async () => {
 });
 
 it('invalidates a Codex directory when a synthetic session changes', async () => {
-  const dir = await mkdtemp(join(tmpdir(), 'usage-folder-'));
+  const dir = await testTempDir('usage-folder-');
   try {
     const source = join(dir, 'sessions');
     const cache = join(dir, 'cache.sqlite');

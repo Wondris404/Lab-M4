@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
-import { mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises';
+import { readFile, readdir, rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
-import { tmpdir } from 'node:os';
+import { testTempDir } from './test-temp.js';
 import sqlite3 from 'sqlite3';
 import { codexParser } from '../src/parsers/codex.js';
 import { grokBuildParser } from '../src/parsers/grok-build.js';
@@ -31,7 +31,7 @@ const event = (total: unknown, last: unknown) => ({
   },
 });
 async function temp<T>(fn: (dir: string) => Promise<T>): Promise<T> {
-  const dir = await mkdtemp(join(tmpdir(), 'agent-parsers-'));
+  const dir = await testTempDir('agent-parsers-');
   try {
     return await fn(dir);
   } finally {

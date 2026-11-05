@@ -1,11 +1,11 @@
-import { mkdtemp, rm } from 'node:fs/promises';
+import { rm } from 'node:fs/promises';
 import { spawnSync } from 'node:child_process';
 import { join, resolve } from 'node:path';
-import { tmpdir } from 'node:os';
+import { testTempDir } from './test-temp.js';
 import { expect, it } from 'vitest';
 
 it('scans the compressed synthetic fixture through the packaged JSON-lines service', async () => {
-  const dir = await mkdtemp(join(tmpdir(), 'sidecar-'));
+  const dir = await testTempDir('sidecar-');
   try {
     const request = { version: 1, requestId: 'synthetic', method: 'scan', params: { agent: 'codex', path: resolve('packages/usage-core/fixtures/synthetic/codex.jsonl.zst'), cachePath: join(dir, 'cache.sqlite') } };
     const run = spawnSync(process.execPath, [resolve('apps/desktop/usage-service/main.cjs')], { input: `${JSON.stringify(request)}\n`, encoding: 'utf8', env: { ...(process.env.SystemRoot && { SystemRoot: process.env.SystemRoot }) } });

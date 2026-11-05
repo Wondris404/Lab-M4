@@ -75,3 +75,11 @@
 - Problémy / rozhodnutia: Backend neposkytuje overenú cenu v EUR; UI ju nevymýšľa. UI testy overujú stavovú a dátovú logiku, nie vykreslenie vo WebView. Opätovné balenie alebo `pnpm tauri dev` by zmazalo existujúci generovaný sidecar, čo vyžaduje povolenie podľa zadania.
 - NEOVERENÉ: Skutočná aplikácia, zhoda reálnych súčtov, CSP vo WebView a F3 hardening po zlúčení do `main`.
 - Ďalší krok: Odoslať a overiť CI, dokončiť F3 a po jeho zlúčení preniesť `main` do F4.
+
+## 2026-11-05 20:43 – Spustenie desktopu
+- Branch / commit SHA: `feat/usage-ui` / `9e76de8`.
+- Čo som spravil: Po povolení opätovného vytvorenia generovaného sidecaru som spustil `pnpm tauri dev` s aplikačným profilom v repozitári.
+- Ako som to otestoval (príkazy + výsledok, lokálne na PC aj CI): Vite a Rust build prešli, proces sa spustil a zoznam okien uviedol jedno okno s titulkom `Lab-M4`. PR #9: node úspešné, desktop CI ešte beží.
+- Problémy / rozhodnutia: Automatická kontrola computer-use odmietla prístup k aplikácii Wraith/Lab-M4; nástroj neuviedol podrobnejší dôvod. Z toho dôvodu neboli vykonané ďalšie GUI akcie.
+- NEOVERENÉ: Obsah okna, terminálový príkaz `Get-Date`, About, Usage, zhoda súčtov a CSP konzola. Backendové súčty a ich obmedzenia sú zapísané na vetve F3.
+- Ďalší krok: Dokončiť F3 a po používateľskom zlúčení `main` doťahovať do F4; manuálnu kontrolu GUI vykonať po sprístupnení aplikácie computer-use alebo používateľom.

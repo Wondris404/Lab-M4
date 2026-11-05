@@ -125,6 +125,12 @@ pub fn verify(root: &Path) -> Result<(), String> {
 #[cfg(all(test, windows))]
 mod tests {
     #[test]
+    fn staged_artifacts_match_embedded_manifest() {
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../usage-service");
+        super::verify(&root).unwrap();
+    }
+
+    #[test]
     fn sha256_matches_known_synthetic_vector() {
         assert_eq!(
             super::digest(b"abc").unwrap(),

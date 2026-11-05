@@ -819,8 +819,8 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .manage(AppState::default())
         .setup(|app| {
-            let url = start_agent_hook_server(app.handle().clone())
-                .map_err(std::io::Error::other)?;
+            let url =
+                start_agent_hook_server(app.handle().clone()).map_err(std::io::Error::other)?;
             let state = app.state::<AppState>();
             if let Ok(mut slot) = state.agent_hook_url.lock() {
                 *slot = Some(url);

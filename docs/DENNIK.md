@@ -71,3 +71,11 @@
 - Problémy / rozhodnutia: Živé WAL sa zámerne nezapočíta, pretože stále neexistuje preukázaný bezvýhradný no-write postup; pretek medzi kontrolou súborov a otvorením DB zostáva. Nejde o plné dokončenie A.c.
 - NEOVERENÉ: Úplné čítanie živého WAL, reálne lokálne logy a GUI.
 - Ďalší krok: Dokončiť lokálne testy, odoslať zmeny a pokračovať v bezpečnom riešení SQLite.
+
+## 2026-11-05 20:40 – Lokálne súčty a zabalený sidecar
+- Branch / commit SHA: `feat/usage-hardening` / `0eca0d2`.
+- Čo som spravil: Po výslovnom povolení som znovu vytvoril generovaný sidecar a jednorazovo otestoval miestne zdroje; zaznamenávam len číselné súčty. Hodnoty sú okamžitý stav v čase testu, pričom cache a reasoning sú podmnožiny, nie ďalšie tokeny na sčítanie.
+- Ako som to otestoval (príkazy + výsledok, lokálne na PC aj CI): `pnpm package:usage-sidecar` úspešné; `sidecar.test.ts`, `codex-directory.test.ts`, `locked-database.test.ts` 3/3. Codex: 3207 záznamov, vstup 614258289, výstup 868177, cache 593283840, reasoning 272234; výsledok čiastočný, 1 kategória upozornení. Grok: 1107 záznamov, vstup 203555613, výstup 932624, cache 190199808, reasoning 573882; bez upozornení. CI pre `0eca0d2`: node úspešné, desktop prebieha.
+- Problémy / rozhodnutia: OpenCode má aktívny SQLite žurnál, preto som zdroj neotvoril a súčet nevypočítal; neuvádzam ho ako nulu. Pri čiastočnom výsledku Codex sa stránkovanie môže medzi volaniami zmeniť, preto čísla nemožno považovať za úplné alebo nemenné.
+- NEOVERENÉ: OpenCode a úplnosť Codex súčtu; GUI, CSP a živé WAL no-write.
+- Ďalší krok: Overiť desktop na vetve F4 v izolovanom aplikačnom profile a dokončiť F3.

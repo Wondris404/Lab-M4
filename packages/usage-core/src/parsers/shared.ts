@@ -17,7 +17,7 @@ export const time = (v: unknown): string | undefined => {
   const d = new Date(v);
   return Number.isFinite(d.getTime()) ? d.toISOString() : undefined;
 };
-const forbidden = /auth|credential|token|secret|api.?key|login|\.env/i;
+const forbidden = /auth|credential|token|secret|key|login|\.env/i;
 export async function assertSafeFile(path: string): Promise<void> {
   const absolute = resolve(path);
   const root = parse(absolute).root;

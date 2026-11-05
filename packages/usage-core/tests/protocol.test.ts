@@ -9,6 +9,7 @@ describe('usage protocol', () => {
   });
   it('rejects sensitive directory names before opening the source', async () => {
     await expect(assertSafeFile('credentials/usage.jsonl')).rejects.toThrow('Nepovolená cesta');
+    await expect(assertSafeFile('keys.jsonl')).rejects.toThrow('Nepovolená cesta');
   });
   it('rejects unsupported protocol versions', async () => {
     await expect(handleRequest({ version: 2 })).rejects.toThrow();

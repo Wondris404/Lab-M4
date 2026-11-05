@@ -36,7 +36,7 @@ export async function scanCached(parser: Parser, source: string, cachePath: stri
     if (parser.provider === 'opencode' && (wal || shm)) throw new Error('Live WAL database requires a closed snapshot.');
     signature = JSON.stringify([5, info.dev, info.ino, info.size, info.mtimeMs, info.ctimeMs, wal?.size ?? null, wal?.mtimeMs ?? null]);
   }
-  if (/auth|credential|token|secret|api.?key|login|\.env/i.test(basename(cachePath))) {
+  if (/auth|credential|token|secret|key|login|\.env/i.test(basename(cachePath))) {
     throw new Error('Nepovolená cache.');
   }
   const cacheInfo = await lstatIfExists(cachePath);

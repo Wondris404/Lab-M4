@@ -163,11 +163,14 @@ fn execute(
 ) -> Result<Value, String> {
     let source = safe_source(&source, &agent)?;
     // NEOVERENÉ: Windows resource resolution requires installed-app testing.
-    let resources = app
+    #[cfg(debug_assertions)]
+    let sidecar = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../usage-service");
+    #[cfg(not(debug_assertions))]
+    let sidecar = app
         .path()
         .resource_dir()
-        .map_err(|_| "Resources unavailable")?;
-    let sidecar = resources.join("usage-service");
+        .map_err(|_| "Resources unavailable")?
+        .join("usage-service");
     let runtime = sidecar.join(if cfg!(windows) { "node.exe" } else { "node" });
     let cache_dir = app
         .path()

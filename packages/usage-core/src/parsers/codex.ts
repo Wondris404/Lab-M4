@@ -20,9 +20,7 @@ export const codexParser: Parser = {
       const recordsBefore = result.records.length;
       const limitsBefore = result.limits.length;
       const warningsBefore = result.warnings;
-      const seenBefore = new Map(
-        [...seen].map(([id, values]) => [id, new Set(values)]),
-      );
+      const addedSignatures: [string, string][] = [];
       let sessionId: string | undefined;
       let model = 'unknown';
       let speed: 'standard' | 'fast' | 'unknown' = 'unknown';
@@ -104,6 +102,7 @@ export const codexParser: Parser = {
           if (signatures.has(signature)) continue;
           signatures.add(signature);
           seen.set(sessionId, signatures);
+          addedSignatures.push([sessionId, signature]);
           result.records.push({
             provider: 'codex',
             sessionId,
@@ -122,8 +121,11 @@ export const codexParser: Parser = {
           result.records.length = recordsBefore;
           result.limits.length = limitsBefore;
           result.warnings = warningsBefore;
-          seen.clear();
-          for (const [id, values] of seenBefore) seen.set(id, values);
+          for (const [id, signature] of addedSignatures) {
+            const signatures = seen.get(id);
+            signatures?.delete(signature);
+            if (signatures?.size === 0) seen.delete(id);
+          }
         }
         result.warnings++;
         result.partial = true;

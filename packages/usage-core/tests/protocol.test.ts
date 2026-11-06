@@ -1,12 +1,24 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { appendFile, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { handleRequest, scanSnapshotId } from '../src/service/protocol.js';
 import { emptyResult } from '../src/parsers/contracts.js';
 import { assertSafeFile } from '../src/parsers/shared.js';
 import { testTempDir } from './test-temp.js';
+import { codexParser } from '../src/parsers/codex.js';
 
 describe('usage protocol', () => {
+  it('exposes known costs as USD, without relabeling or conversion', async () => {
+    const dir = await testTempDir('cost-');
+    const path = join(dir, 'synthetic.jsonl');
+    await writeFile(path, '');
+    const parse = vi.spyOn(codexParser, 'parse').mockResolvedValue({ ...emptyResult(), records: [{ provider: 'codex', sessionId: 'synthetic', model: 'm', timestamp: '2025-01-01T00:00:00Z', inputTokens: 1, cachedInputTokens: 0, outputTokens: 1, reasoningTokens: 0, speed: 'unknown', costSource: 'odhad', costUsd: 1.25 }] });
+    try {
+      const response = await handleRequest({ version: 1, requestId: 'cost', method: 'scan', params: { agent: 'codex', path } });
+      expect(response.result.records?.[0]).toMatchObject({ costUsd: 1.25 });
+      expect(response.result.records?.[0]).not.toHaveProperty('costEur');
+    } finally { parse.mockRestore(); }
+  });
   it('reports unsupported Antigravity without reading files', async () => {
     const result = await handleRequest({ version: 1, requestId: 'test', method: 'scan', params: { agent: 'antigravity', path: '' } });
     expect(result.result.status).toBe('not-supported');

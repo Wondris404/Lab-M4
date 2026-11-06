@@ -76,6 +76,38 @@
 - NEOVERENÉ: Skutočná aplikácia, zhoda reálnych súčtov, CSP vo WebView a F3 hardening po zlúčení do `main`.
 - Ďalší krok: Odoslať a overiť CI, dokončiť F3 a po jeho zlúčení preniesť `main` do F4.
 
+## 2026-11-05 20:34 – Kurzor pre samostatný Codex JSONL
+- Branch / commit SHA: `feat/usage-hardening` / `41cf6fb` (odoslané; rozšírenie kurzora pripravené).
+- Čo som spravil: Rovnaký mechanizmus kurzora teraz používa aj samostatný nekomprimovaný Codex JSONL. Stav používa pseudonym relácie a odtlačky deduplikácie; výpočet zachováva `last_token_usage` a rate-limit záznamy.
+- Ako som to otestoval (príkazy + výsledok, lokálne na PC aj CI): `pnpm test` 43/43 vrátane `codex-cursor.test.ts`, `grok-cursor.test.ts`, parserov a zámku SQLite; `pnpm exec tsc --noEmit` úspešné. Prvý `pnpm lint` odhalil nepoužité premenné v teste, upravené pred odoslaním. CI PR #10 pre `41cf6fb`: node úspešné, desktop prebieha.
+- Problémy / rozhodnutia: Samostatný inkrementálny parser má porovnávací test proti existujúcemu plnému parseru. Obmedzenie kontroly 4 KiB z predchádzajúceho zápisu stále platí. Adresárový Codex sken a komprimované súbory sa naďalej spracúvajú celé.
+- NEOVERENÉ: Integračný test nového zabaleného sidecaru, živé WAL a skutočné logy mimo povoleného priečinka.
+- Ďalší krok: Overiť lint, odoslať krok, pokračovať v riešení adresárov a WAL.
+
+## 2026-11-05 20:37 – Inkrementálne adresáre Codex
+- Branch / commit SHA: `feat/usage-hardening` / `f4ed11c` (odoslané; adresárové rozšírenie pripravené).
+- Čo som spravil: Codex adresár uchováva kurzory jednotlivých JSONL súborov a spája výsledky s deduplikáciou podľa pseudonymnej relácie a kumulatívneho podpisu. Zstd archívy číta celé s hranicami rozbalenia; medzi archívmi a JSONL sa duplicitné spotreby nezapočítajú.
+- Ako som to otestoval (príkazy + výsledok, lokálne na PC aj CI): `pnpm test` 44/44 vrátane `codex-directory.test.ts` (append, neúplný riadok, presun súboru, duplicita JSONL/zstd, porovnanie s úplným parserom); `pnpm exec tsc --noEmit`, `pnpm lint` úspešné. CI PR #10 pre `f4ed11c`: node úspešné, desktop prebieha.
+- Problémy / rozhodnutia: Cache ukladá iba odtlačky a pseudonymy, nie zdrojové relácie. Vzorkovanie predchádzajúceho úseku má obmedzenie uvedené vyššie; komprimované súbory sa vždy znova dekódujú.
+- NEOVERENÉ: Nový zabalený sidecar, reálne logy a bezvýhradné no-write čítanie živého WAL.
+- Ďalší krok: Odoslať krok, dokončiť bezpečné WAL a vyčkať na povolenie pre manuálne testovanie.
+
+## 2026-11-05 20:38 – Upozornenie na živé WAL
+- Branch / commit SHA: `feat/usage-hardening` / `f4ed11c` (ďalšie zmeny pripravené).
+- Čo som spravil: Ak sú pri SQLite prítomné WAL alebo SHM súbory, parser aj cache vrátia čiastočný výsledok s upozornením namiesto chyby; zdroj sa neotvára a čiastočný výsledok sa neukladá do cache.
+- Ako som to otestoval (príkazy + výsledok, lokálne na PC aj CI): `pnpm test` 44/44 vrátane syntetického testu so súbežným zapisovačom a kontroly obsahu DB/WAL/SHM a zoznamu súborov pred a po; `pnpm lint` a `pnpm exec tsc --noEmit` úspešné. CI posledného odoslaného commitu: node úspešné, desktop prebieha.
+- Problémy / rozhodnutia: Živé WAL sa zámerne nezapočíta, pretože stále neexistuje preukázaný bezvýhradný no-write postup; pretek medzi kontrolou súborov a otvorením DB zostáva. Nejde o plné dokončenie A.c.
+- NEOVERENÉ: Úplné čítanie živého WAL, reálne lokálne logy a GUI.
+- Ďalší krok: Dokončiť lokálne testy, odoslať zmeny a pokračovať v bezpečnom riešení SQLite.
+
+## 2026-11-05 20:40 – Lokálne súčty a zabalený sidecar
+- Branch / commit SHA: `feat/usage-hardening` / `0eca0d2`.
+- Čo som spravil: Po výslovnom povolení som znovu vytvoril generovaný sidecar a jednorazovo otestoval miestne zdroje; zaznamenávam len číselné súčty. Hodnoty sú okamžitý stav v čase testu, pričom cache a reasoning sú podmnožiny, nie ďalšie tokeny na sčítanie.
+- Ako som to otestoval (príkazy + výsledok, lokálne na PC aj CI): `pnpm package:usage-sidecar` úspešné; `sidecar.test.ts`, `codex-directory.test.ts`, `locked-database.test.ts` 3/3. Codex: 3207 záznamov, vstup 614258289, výstup 868177, cache 593283840, reasoning 272234; výsledok čiastočný, 1 kategória upozornení. Grok: 1107 záznamov, vstup 203555613, výstup 932624, cache 190199808, reasoning 573882; bez upozornení. CI pre `0eca0d2`: node úspešné, desktop prebieha.
+- Problémy / rozhodnutia: OpenCode má aktívny SQLite žurnál, preto som zdroj neotvoril a súčet nevypočítal; neuvádzam ho ako nulu. Pri čiastočnom výsledku Codex sa stránkovanie môže medzi volaniami zmeniť, preto čísla nemožno považovať za úplné alebo nemenné.
+- NEOVERENÉ: OpenCode a úplnosť Codex súčtu; GUI, CSP a živé WAL no-write.
+- Ďalší krok: Overiť desktop na vetve F4 v izolovanom aplikačnom profile a dokončiť F3.
+
 ## 2026-11-05 20:43 – Spustenie desktopu
 - Branch / commit SHA: `feat/usage-ui` / `9e76de8`.
 - Čo som spravil: Po povolení opätovného vytvorenia generovaného sidecaru som spustil `pnpm tauri dev` s aplikačným profilom v repozitári.
@@ -92,3 +124,51 @@
 - Problémy / rozhodnutia: F3 kontroluje len posledných 4 KiB pred kurzorom, čo nedokazuje nemennosť celého staršieho obsahu. Aktívne WAL sa nezapočíta; zostáva pretek medzi kontrolou WAL a otvorením databázy. Používateľ povolil opätovné vytvorenie generovaného sidecaru a čítanie miestnych súčtov. Vnorený `agent-usage/` a automaticky generované Tauri permissions zostali nesledované a nedotknuté.
 - NEOVERENÉ: Kompletný Codex súčet (sken čiastočný), OpenCode (aktívny žurnál), skutočný obsah okna, PowerShell `Get-Date`, About, Usage a CSP konzola. Automatická kontrola computer-use odmietla prístup k oknu Wraith/Lab-M4 bez podrobnejšieho dôvodu.
 - Ďalší krok: Dokončiť no-write správanie SQLite/WAL, presnejšie overenie zmien pred kurzorom a výsledky CI; po schválení a používateľskom zlúčení F3 znova zlúčiť `main` do F4. V `C:\Users\ondre\Desktop\Lab-M4` spustiť `corepack pnpm install --frozen-lockfile` a `corepack pnpm tauri dev`; v okne overiť PowerShell `Get-Date`, About „Based on Wraith“, potom Usage → pridať zdroj → skontrolovať čísla, filtre, graf, triedenie, CSV a konzolu CSP. Až po zelenom F3/F4 začať F5–F7.
+
+## 2026-11-06 08:35 +01:00 (Europe/Bratislava) – Inventúra a poškodený archív
+- Vetva: `feat/usage-hardening`; predchádzajúci implementačný HEAD `83d147d1096cad2e5ab3879d0df135c5badc466f`. Predbežný lokálny remote-tracking ukazoval rovnaké SHA; aktuálny serverový stav sa nedal načítať.
+- Zmena: Plný Codex parser pri chybe súboru zahodí všetky jeho už prečítané záznamy, limity a deduplikačné podpisy a označí výsledok ako čiastočný. Doplnený syntetický test zreťazeného platného a skráteného zstd rámca.
+- Kontroly: `pnpm.cmd exec eslint packages/usage-core/src packages/usage-core/tests`, `pnpm.cmd exec tsc --noEmit`, `cargo fmt --manifest-path apps/desktop/src-tauri/Cargo.toml --check` a `git diff --check` prešli. Samostatne preložený parser na natívnom Windows prešiel syntetickou skúškou platného a skráteného archívu. `pnpm.cmd test` zlyhal pri načítaní konfigurácie: esbuild hlásil `Access is denied` k nadradenému adresáru; celá sada teda neprešla. Node 24.22.1, pnpm 10.29.3, Rust/Cargo 1.97.1, Codex 0.166.0, Grok Build 1.0.70.
+- Problémy / rozhodnutia: `git fetch origin` aj `gh` odmietlo sieťové oprávnenie; aktuálne PR a CI nemožno overiť, starý stav CI sa nepovažuje za aktuálny. `feat/usage-ui` má lokálny HEAD `6aa95cfc72e091245fb7ddc29e6c5b11bfb14278`; simulovaný merge s hardening indikuje konflikt v denníku. Nesledovaný vnorený `agent-usage/` a generované Tauri permissions zostali zachované. Pred buildom treba zabrániť prepísaniu týchto existujúcich súborov.
+- Audit: SQLite stále obsahuje pretek medzi kontrolou a vznikom WAL; kurzor kontroluje len koncových 4 KiB pred offsetom. Codex deduplikácia závisí od poradia kľúčov JSON. UI môže duplicitne zarátať prekrývajúce sa zdroje a stránkovanie bez snapshotu môže pri zmenách vynechať alebo zopakovať záznamy. Grok `agent stdio` a Codex app-server sú kandidátne transporty; ich požadované approval hranice nie sú dokázané. Žiadny worker nebol spustený.
+- NEOVERENÉ: úplné testy a build, živé WAL bez zápisov, tri chránené Wraith súbory, runtime terminálu/About/CSP, aktuálne GitHub PR/CI, licencia a pripnutá verzia upstreamu, orchestrátor, approval/STOP/budget a skutočný manažérsky cyklus.
+- Ďalší krok: Po obnovení prístupov najprv dokončiť syntetické testy a overiť stav GitHubu; potom opraviť WAL, kurzory a deduplikáciu, zosúladiť UI pri zachovaní oboch denníkov a vykonať bezpečnostný spike orchestrácie.
+
+### Pokračovanie
+- Aktuálna vetva `feat/usage-hardening`; posledné lokálne známe odoslané SHA `83d147d1096cad2e5ab3879d0df135c5badc466f`. Stav servera a prípadný nový commit treba znovu overiť.
+- V `<repo>`: `git status --short --branch`, `git fetch origin`, `pnpm.cmd test`, `pnpm.cmd exec eslint packages/usage-core/src packages/usage-core/tests`, `pnpm.cmd exec tsc --noEmit`; potom skontrolovať PR #10 a CI pre presné SHA. Nevykonávať destruktívne čistenie ani neprepisovať existujúce nesledované súbory.
+
+## 2026-11-06 08:40 +01:00 (Europe/Bratislava) – Podpisy Codex súčtov
+- Vetva `feat/usage-hardening`; predchádzajúci lokálny commit `a69e7a4191a7ff5feae84db4e0597b98128404c0` opravuje neúplné archívy. Posledný známy remote-tracking SHA je `83d147d1096cad2e5ab3879d0df135c5badc466f`; serverový stav je NEOVERENÝ pre sieťový blok.
+- Zmena: Podpisy kumulatívnych Codex údajov nezávisia od poradia kľúčov JSON. Plný aj inkrementálny parser používajú rovnakú kanonizáciu; verzia kurzorov a cache sa zvýšila, takže staré podpisy neostanú v používaní. Pridaný syntetický regresný test pre append aj dva súbory.
+- Kontroly: `pnpm.cmd exec eslint packages/usage-core/src packages/usage-core/tests`, `pnpm.cmd exec tsc --noEmit` a `git diff --check` prešli. Samostatne preložený parser a cache prešli na Windows syntetickou skúškou opakovaného snapshotu s prehodeným poradím kľúčov, appendu a deduplikácie medzi súbormi. Úplná sada `pnpm.cmd test`, CI a aplikácia ostávajú NEOVERENÉ z dôvodov v predošlom zázname.
+- Ďalší krok: Po obnovení prístupov overiť aktuálne vetvy a CI, spustiť úplnú sadu testov, následne dokončiť bezpečný WAL, spoľahlivé rozpoznanie zmien pred kurzorom a zostávajúce body zadania. Aktuálny stav a lokálne commity overiť cez `git status --short --branch` a `git log -2 --oneline`; pred pushom overiť cieľovú feature vetvu a nezasiahnuť `main`.
+
+## 2026-11-06 08:44 +01:00 (Europe/Bratislava) – Overenie prefixu kurzora
+- Vetva `feat/usage-hardening`; predchádzajúci lokálny commit `5096b5229fab3cd3b0c6d6bdaba0f413d9d481d7` opravil deduplikáciu snapshotov. Posledný známy vzdialený tracking SHA `83d147d1096cad2e5ab3879d0df135c5badc466f`; skutočný serverový stav a CI NEOVERENÉ pre sieťový blok.
+- Zmena: Pred použitím výsledkov kurzora sa teraz streamovo kontroluje hash celého spracovaného prefixu namiesto posledných 4 KiB; zmena staršieho obsahu vynúti nové parsovanie. Staré kurzory majú nové verzie. Pribudol syntetický test prepisu staršej časti s následným appendom.
+- Kontroly: `pnpm.cmd exec eslint packages/usage-core/src packages/usage-core/tests`, `pnpm.cmd exec tsc --noEmit`, `git diff --check` a samostatná syntetická Windows skúška prepisu, appendu a opakovaného čítania prešli. Celý `pnpm.cmd test` zostáva NEOVERENÝ pre vyššie uvedenú chybu prístupu esbuildu.
+- Rozhodnutie: Bez dôveryhodného dôkazu append-only nemožno kontrolou samotných metadát a malej vzorky dokázať nezmenený prefix. Parser pri bezpečnom raste znovu parsuje iba príponu, ale predtým číta celý starý prefix na výpočet hashu; požiadavka čítať iba nové bajty preto nie je úplne splnená. Výkonnosť veľkých logov a súbežné zmeny počas čítania treba ďalej testovať.
+- NEOVERENÉ: SQLite WAL/no-write pretek, kompletné testy, balenie a beh aplikácie, GitHub CI a celý orchestrátor. Pôvodné nesledované dáta zostávajú zachované.
+- Ďalší krok: V `<repo>` spustiť `git status --short --branch`, po obnovení GitHub prístupu `git fetch origin`, `pnpm.cmd test`, `pnpm.cmd exec eslint packages/usage-core/src packages/usage-core/tests`, `pnpm.cmd exec tsc --noEmit`; overiť lokálny HEAD a serverový SHA, potom poslať iba feature vetvu. Pokračovať WAL, UI a overením approval protokolov.
+
+## 2026-11-06 09:48 +01:00 (Europe/Bratislava) – Bezpečná hranica SQLite
+- Vetva `feat/usage-hardening`; predchádzajúci lokálny commit `5259701a3bd81f6e948587cd96974c39e5d848c2`. Posledný známy tracking SHA `83d147d1096cad2e5ab3879d0df135c5badc466f`; `git fetch` a `gh` opäť odmietlo sieťové oprávnenie, aktuálny server a CI sú NEOVERENÉ.
+- Zmena: OpenCode parser aj cache dočasne odmietajú čítať všetky SQLite databázy a vrátia čiastočný stav s vysvetlením, pretože otvorenie read-only môže vytvoriť alebo zmeniť SHM a kontrola WAL pred otvorením má pretek. Starý úplný výsledok cache sa nesmie vydávať za aktuálny. Súhrn označuje agregáty obsahujúce čiastočné zdroje ako neúplné.
+- Kontroly: `pnpm.cmd exec vitest run --configLoader runner` prešlo 50/50 vrátane syntetických testov zámku a WAL, `pnpm.cmd exec eslint packages/usage-core/src packages/usage-core/tests` a `pnpm.cmd exec tsc --noEmit` prešli. Predvolený `pnpm.cmd test` stále zlyháva na prístupovej chybe esbuild loadera. Existujúci sidecar používaný integračným testom nemusí obsahovať najnovší kód.
+- NEOVERENÉ: podložený konzistentný no-write snapshot živého WAL, retry a cancellation SQLite, kompletná funkčnosť OpenCode, runtime aplikácie, aktuálne PR a CI. OpenCode je zámerne nedostupný, nie dokončený.
+- Ďalší krok: Nájsť a otestovať podporovaný snapshot alebo VFS bez zápisov do zdroja; pokračovať v terminálovom CLI a syntetickom lifecycle orchestrácie. V `<repo>` opätovne overiť `git status --short --branch`, sieť, úplné testy a presné SHA pred pushom feature vetvy.
+
+## 2026-11-06 09:50 +01:00 (Europe/Bratislava) – Terminálový Usage príkaz
+- Vetva `feat/usage-hardening`; predchádzajúci lokálny commit `1ceb136adbbfa12d79c4db82598ab305825e3c95` zavádza bezpečné odmietnutie OpenCode. Posledný známy tracking SHA `83d147d1096cad2e5ab3879d0df135c5badc466f`; GitHub a CI zostávajú nedostupné.
+- Zmena: `pnpm.cmd usage <agent> <zdroj>` preloží aktuálny kód parsera do projektového ignorovaného build adresára a zobrazí súhrn v JSON bez jednotlivých relácií. Subsety cache/reasoning nie sú pripočítané druhýkrát, cena je označená ako neznáma, čiastočný výsledok je výslovný. Príkaz nepoužíva potenciálne starý zabalený sidecar.
+- Kontroly: Syntetický komprimovaný Codex zdroj v CLI vrátil jeden záznam a očakávané počty; OpenCode syntetický zdroj bol označený partial s vysvetlením. Súprava `pnpm.cmd exec vitest run --configLoader runner` prešla 50/50 vrátane regresného CLI testu; ESLint a TypeScript prešli. Frontend Vite build v novom izolovanom build adresári prešiel, nejde však o Tauri runtime.
+- NEOVERENÉ: Živý SQLite WAL, aktuálny zabalený sidecar, Tauri aplikácia, CI a reálna orchestrácia. Žiadne používateľské logy ani prihlasovacie údaje tu nie sú zapísané.
+- Ďalší krok: Skontrolovať syntetický orchestration harness a jeho testy, potom pokračovať synchronizáciou Usage UI a overením bezpečných worker protokolov. Sieť GitHub a plné runtime overenie ostávajú potrebné pred odovzdaním.
+
+## 2026-11-06 09:53 +01:00 (Europe/Bratislava) – Zlúčenie hardening do Usage UI
+- Vetva `feat/usage-ui`; predchádzajúci UI commit `6aa95cfc72e091245fb7ddc29e6c5b11bfb14278`, zlúčený lokálny hardening commit `34ab71066f422f1e703ab84109c9f681fa480ac9`. Ide o riadny merge bez prepisovania histórie; stav servera a CI nie je dostupný.
+- Zmena: Zachované oba vývojové smery aj všetky rozdielne záznamy denníka. Jediný merge konflikt bol v denníku, kde sa spojilo 10 UI a 16 hardening sekcií do 19 odlišných sekcií. Vopred existujúce nesledované dáta zostali nedotknuté.
+- Kontroly: Po merge prešlo `pnpm.cmd exec vitest run --configLoader runner` 56/56; ESLint, koreňový TypeScript a samostatný TypeScript desktopu prešli. Sada sidecar testovala predchádzajúci staging, nie novozabalený kód.
+- NEOVERENÉ: skutočný vzdialený stav oboch vetiev, ich CI, runtime Tauri/CSP, no-write SQLite snapshot a správnosť stránkovania pri súbežnej zmene zdroja.
+- Ďalší krok: Opraviť bezpečné stránkovanie UI a preveriť prekrývajúce sa zdroje, potom samostatne zapísať fake-only orchestration harness a pokračovať v natívnych approval protokoloch.

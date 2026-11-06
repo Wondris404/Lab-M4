@@ -23,6 +23,132 @@ export class LineLimitError extends Error {
     super('Usage log line exceeds 1 MiB');
   }
 }
+export class ExpansionLimitError extends Error {
+  constructor() {
+    super('Compressed usage log exceeds the decompression limit');
+  }
+}
+
+/** Shared by all compressed files in a scan; bytes are charged even on failure. */
+export interface ExpansionBudget {
+  remaining: number;
+  perFile: number;
+}
+export const newExpansionBudget = (): ExpansionBudget => ({
+  remaining: 1024 * 1024 * 1024,
+  perFile: 256 * 1024 * 1024,
+});
+
+/** Check every frame before fzstd allocates its declared history window. */
+export class ZstdFrameGuard {
+  private stage: 'frame' | 'block' | 'payload' | 'checksum' | 'skip' = 'frame';
+  private header: number[] = [];
+  private pending = 0;
+  private last = false;
+  private checksum = false;
+  constructor(private readonly maxWindow: number) {}
+
+  push(chunk: Uint8Array, emit: (data: Uint8Array) => void): void {
+    let pos = 0;
+    while (pos < chunk.length) {
+      if (
+        this.stage === 'payload' ||
+        this.stage === 'checksum' ||
+        this.stage === 'skip'
+      ) {
+        const amount = Math.min(this.pending, chunk.length - pos);
+        if (amount) emit(chunk.subarray(pos, pos + amount));
+        pos += amount;
+        this.pending -= amount;
+        if (!this.pending) {
+          if (this.stage === 'checksum' || this.stage === 'skip')
+            this.stage = 'frame';
+          else if (!this.last) this.stage = 'block';
+          else if (this.checksum) {
+            this.stage = 'checksum';
+            this.pending = 4;
+          } else this.stage = 'frame';
+        }
+        continue;
+      }
+      this.header.push(chunk[pos++]!);
+      if (this.stage === 'block') {
+        if (this.header.length < 3) continue;
+        const block =
+          this.header[0]! | (this.header[1]! << 8) | (this.header[2]! << 16);
+        const type = (block >> 1) & 3;
+        if (type === 3) throw new Error('Invalid zstd block');
+        this.last = (block & 1) !== 0;
+        this.pending = type === 1 ? 1 : block >>> 3;
+        emit(Uint8Array.from(this.header));
+        this.header = [];
+        this.stage = 'payload';
+        if (!this.pending) {
+          if (!this.last) this.stage = 'block';
+          else if (this.checksum) {
+            this.stage = 'checksum';
+            this.pending = 4;
+          } else this.stage = 'frame';
+        }
+        continue;
+      }
+      if (this.header.length < 5) continue;
+      if (
+        (this.header[0]! & 0xf0) === 0x50 &&
+        this.header[1] === 0x2a &&
+        this.header[2] === 0x4d &&
+        this.header[3] === 0x18
+      ) {
+        if (this.header.length < 8) continue;
+        this.pending =
+          (this.header[4]! |
+            (this.header[5]! << 8) |
+            (this.header[6]! << 16) |
+            (this.header[7]! << 24)) >>>
+          0;
+        emit(Uint8Array.from(this.header));
+        this.header = [];
+        this.stage = this.pending ? 'skip' : 'frame';
+        continue;
+      }
+      if (
+        this.header[0] !== 0x28 ||
+        this.header[1] !== 0xb5 ||
+        this.header[2] !== 0x2f ||
+        this.header[3] !== 0xfd
+      )
+        throw new Error('Unsupported zstd frame');
+      const flags = this.header[4]!;
+      if (flags & 8) throw new Error('Invalid zstd frame');
+      const single = (flags & 32) !== 0;
+      const dictionaryBytes = [0, 1, 2, 4][flags & 3]!;
+      const sizeFlag = flags >>> 6;
+      const sizeBytes = sizeFlag === 0 ? (single ? 1 : 0) : 1 << sizeFlag;
+      const sizeOffset = 5 + (single ? 0 : 1) + dictionaryBytes;
+      if (this.header.length < sizeOffset + sizeBytes) continue;
+      let window = 0n;
+      if (single) {
+        for (let i = 0; i < sizeBytes; i++)
+          window |= BigInt(this.header[sizeOffset + i]!) << BigInt(8 * i);
+        if (sizeFlag === 1) window += 256n;
+      } else {
+        const descriptor = this.header[5]!;
+        const base = 1n << BigInt(10 + (descriptor >>> 3));
+        window = base + (base >> 3n) * BigInt(descriptor & 7);
+      }
+      if (window > BigInt(this.maxWindow)) throw new ExpansionLimitError();
+      this.checksum = (flags & 4) !== 0;
+      emit(Uint8Array.from(this.header));
+      this.header = [];
+      this.stage = 'block';
+    }
+  }
+
+  finish(): void {
+    if (this.stage !== 'frame' || this.header.length)
+      throw new Error('Incomplete zstd frame');
+  }
+}
 export async function assertSafeFile(path: string): Promise<void> {
   const absolute = resolve(path);
   const root = parse(absolute).root;
@@ -44,24 +170,46 @@ export async function assertSafeFile(path: string): Promise<void> {
   )
     throw new Error('Nepovolený zdroj.');
 }
-export async function* lines(path: string): AsyncGenerator<string> {
+export async function* lines(
+  path: string,
+  budget = newExpansionBudget(),
+): AsyncGenerator<string> {
   await assertSafeFile(path);
+  let expanded = 0;
+  const compressed = /\.zst$/i.test(path);
+  if (compressed && budget.remaining <= 0) throw new ExpansionLimitError();
   const stream = createReadStream(path);
-  const decompressed = path.endsWith('.zst')
+  const decompressed = compressed
     ? stream.pipe(
         new Transform({
           construct(callback) {
-            const state = this as Transform & { decoder?: Decompress };
+            const state = this as Transform & {
+              decoder?: Decompress;
+              guard?: ZstdFrameGuard;
+            };
+            state.guard = new ZstdFrameGuard(budget.perFile);
             state.decoder = new Decompress((data) => {
+              expanded += data.byteLength;
+              const exceedsScan = data.byteLength > budget.remaining;
+              budget.remaining = Math.max(
+                0,
+                budget.remaining - data.byteLength,
+              );
+              if (expanded > budget.perFile || exceedsScan) {
+                throw new ExpansionLimitError();
+              }
               state.push(Buffer.from(data));
             });
             callback();
           },
           transform(chunk: Buffer, _encoding, callback) {
             try {
-              (this as Transform & { decoder: Decompress }).decoder.push(
-                chunk,
-                false,
+              const state = this as Transform & {
+                decoder: Decompress;
+                guard: ZstdFrameGuard;
+              };
+              state.guard.push(chunk, (data) =>
+                state.decoder.push(data, false),
               );
               callback();
             } catch (e) {
@@ -70,10 +218,12 @@ export async function* lines(path: string): AsyncGenerator<string> {
           },
           flush(callback) {
             try {
-              (this as Transform & { decoder: Decompress }).decoder.push(
-                new Uint8Array(),
-                true,
-              );
+              const state = this as Transform & {
+                decoder: Decompress;
+                guard: ZstdFrameGuard;
+              };
+              state.guard.finish();
+              state.decoder.push(new Uint8Array(), true);
               callback();
             } catch (e) {
               callback(e as Error);
@@ -85,9 +235,11 @@ export async function* lines(path: string): AsyncGenerator<string> {
   if (decompressed !== stream)
     stream.on('error', (error) => decompressed.destroy(error));
   let lineBytes = 0;
+  let endsWithNewline = false;
   const bounded = decompressed.pipe(
     new Transform({
       transform(chunk: Buffer, _encoding, callback) {
+        if (chunk.length) endsWithNewline = chunk[chunk.length - 1] === 10;
         for (const byte of chunk) {
           lineBytes = byte === 10 ? 0 : lineBytes + 1;
           if (lineBytes > 1024 * 1024) return callback(new LineLimitError());
@@ -98,11 +250,15 @@ export async function* lines(path: string): AsyncGenerator<string> {
   );
   decompressed.on('error', (error: Error) => bounded.destroy(error));
   try {
+    let pending: string | undefined;
     for await (const line of createInterface({
       input: bounded,
       crlfDelay: Infinity,
-    }))
-      yield line;
+    })) {
+      if (pending !== undefined) yield pending;
+      pending = line;
+    }
+    if (endsWithNewline && pending !== undefined) yield pending;
   } finally {
     stream.destroy();
     decompressed.destroy();

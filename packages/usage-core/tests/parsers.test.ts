@@ -1,11 +1,12 @@
 import { describe, expect, it } from 'vitest';
-import { readFile, readdir, rm, writeFile } from 'node:fs/promises';
+import { appendFile, readFile, readdir, rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { testTempDir } from './test-temp.js';
 import sqlite3 from 'sqlite3';
 import { codexParser } from '../src/parsers/codex.js';
 import { grokBuildParser } from '../src/parsers/grok-build.js';
-import { opencodeParser } from '../src/parsers/opencode.js';
+import { consumeOpenCodeRow, opencodeParser } from '../src/parsers/opencode.js';
+import { emptyResult } from '../src/parsers/contracts.js';
 import { scanCached } from '../src/service/cache.js';
 import { handleRequest } from '../src/service/protocol.js';
 import { summarize } from '../src/server/summary.js';
@@ -81,8 +82,19 @@ describe('codex', () => {
       const f = join(dir, 'empty.jsonl');
       await writeFile(f, '');
       expect((await codexParser.parse(f)).records).toEqual([]);
-      await writeFile(f, record(event(usage(10, 3), usage(10, 3))));
+      await writeFile(f, record(event(usage(10, 3), usage(10, 3))) + '\n');
       expect((await codexParser.parse(f)).warnings).toBe(1);
+    }));
+  it('waits for a newline before parsing a complete trailing JSON object', () =>
+    temp(async (dir) => {
+      const file = join(dir, 'session.jsonl');
+      const row = event(usage(10, 3), usage(10, 3));
+      await writeFile(file, record({ type: 'session_meta', payload: { id: 'sess-test-1' } }) + '\n' + record(row));
+      const incomplete = await codexParser.parse(file);
+      expect(incomplete.records).toEqual([]);
+      expect(incomplete.warnings).toBe(0);
+      await appendFile(file, '\n');
+      expect((await codexParser.parse(file)).records).toHaveLength(1);
     }));
 });
 describe('grok', () => {
@@ -134,7 +146,7 @@ describe('grok', () => {
       ];
       await writeFile(
         file,
-        lines.map((x) => (typeof x === 'string' ? x : record(x))).join('\n'),
+        lines.map((x) => (typeof x === 'string' ? x : record(x))).join('\n') + '\n',
       );
       const r = await grokBuildParser.parse(file);
       expect(r.records.map((x) => x.model)).toEqual(['model-test', 'unknown']);
@@ -162,7 +174,7 @@ describe('grok', () => {
         { sid: 'trace-test', ctx: { session_id: 'sess-test-2' } },
         { sid: 'trace-test', ts: stamp, msg: 'shell.turn.inference_done', ctx },
       ];
-      await writeFile(f, rows.map(record).join('\n'));
+      await writeFile(f, rows.map(record).join('\n') + '\n');
       const r = await grokBuildParser.parse(f);
       expect(r.records[0]?.sessionId).toBe('sess-test-2');
       expect(r.records[0]?.model).toBe('unknown');
@@ -217,37 +229,42 @@ async function makeDb(path: string) {
   await close(db);
 }
 describe('opencode', () => {
-  it('normalizes separate counts, retains invalid totals with warnings, falls back only for sessions without messages', () =>
+  it('normalizes synthetic separate counts and retains invalid totals with warnings', () => {
+    const r = emptyResult();
+    const row = { sessionId: 'synthetic', timestamp: 1735725600000, model: 'model-test', input: 100, cache: 20, cacheWrite: 3, output: 10, reasoning: 4, total: 137 };
+    consumeOpenCodeRow(row, r);
+    consumeOpenCodeRow({ ...row, total: 1 }, r);
+    expect(r.records).toHaveLength(2);
+    const first = r.records[0]!;
+    expect([first.inputTokens, first.cachedInputTokens, first.outputTokens, first.reasoningTokens]).toEqual([123, 20, 14, 4]);
+    expect(first.costUsd).toBeUndefined();
+    expect(first.costSource).toBe('nezn\u00e1me');
+    expect(r.mismatchFields.total).toBe(1);
+    expect(r.records[1]?.warnings).toEqual(['TOTAL_MISMATCH']);
+    expect(r.mismatchFields.total_less_than_components).toBe(1);
+    expect(r.warnings).toBe(1);
+  });
+  it('reports non-WAL source unavailable and does not serve stale cache', () =>
     temp(async (dir) => {
       const path = join(dir, 'opencode.db');
       await makeDb(path);
+      const cache = join(dir, 'cache.sqlite');
+      await writeFile(cache, 'synthetic old cache');
       const before = await readFile(path);
-      const namesBefore = await readdir(dir);
+      const cacheBefore = await readFile(cache);
+      const namesBefore = (await readdir(dir)).sort();
       const r = await opencodeParser.parse(path);
       expect(await readFile(path)).toEqual(before);
-      expect(await readdir(dir)).toEqual(namesBefore);
-      expect(r.records).toHaveLength(3);
-      const first = r.records[0]!;
-      expect([
-        first.inputTokens,
-        first.cachedInputTokens,
-        first.outputTokens,
-        first.reasoningTokens,
-      ]).toEqual([123, 20, 14, 4]);
-      expect(first.costUsd).toBeUndefined();
-      expect(first.costSource).toBe('neznáme');
-      expect(r.mismatchFields.total).toBe(1);
-      expect(r.records[1]?.warnings).toEqual(['TOTAL_MISMATCH']);
-      const response = await handleRequest({ version: 1, requestId: 'synthetic', method: 'scan', params: { agent: 'opencode', path } });
-      expect(response.result.records[1]?.warnings).toEqual(['TOTAL_MISMATCH']);
-      expect(response.result.warnings).toContain('total: 1');
-      expect(r.mismatchFields.total_less_than_components).toBe(1);
-      expect(r.warnings).toBe(2);
-      expect(
-        r.records.filter((x) => x.sessionId === 'sess-test-2'),
-      ).toHaveLength(1);
+      expect(r.records).toEqual([]);
+      expect(r.partial).toBe(true);
+      expect(await scanCached(opencodeParser, path, cache)).toEqual(r);
+      expect(await readFile(cache)).toEqual(cacheBefore);
+      expect((await readdir(dir)).sort()).toEqual(namesBefore);
+      const response = await handleRequest({ version: 1, requestId: 'synthetic', method: 'scan', params: { agent: 'opencode', path, cachePath: cache } });
+      expect(response.result.status).toBe('partial');
+      expect(response.result.warnings.some((warning) => warning.includes('do zdroja'))).toBe(true);
     }));
-  it('refuses a synthetic live WAL without changing its files', () =>
+  it('reports a synthetic live WAL as partial without changing its files', () =>
     temp(async (dir) => {
       const path = join(dir, 'opencode.db');
       await makeDb(path);
@@ -260,8 +277,12 @@ describe('opencode', () => {
         const walBefore = await readFile(`${path}-wal`);
         const shmBefore = await readFile(`${path}-shm`);
         const names = (await readdir(dir)).sort();
-        await expect(opencodeParser.parse(path)).rejects.toThrow('Live WAL database requires a closed snapshot.');
-        await expect(scanCached(opencodeParser, path, join(dir, 'cache.sqlite'))).rejects.toThrow('Live WAL database requires a closed snapshot.');
+        const direct = await opencodeParser.parse(path);
+        const cached = await scanCached(opencodeParser, path, join(dir, 'cache.sqlite'));
+        expect(direct.partial).toBe(true);
+        expect(direct.warnings).toBe(1);
+        expect(cached.partial).toBe(true);
+        expect(cached.warnings).toBe(1);
         expect(await readFile(path)).toEqual(dbBefore);
         expect(await readFile(`${path}-wal`)).toEqual(walBefore);
         expect(await readFile(`${path}-shm`)).toEqual(shmBefore);
@@ -291,7 +312,7 @@ it('summarizes only enabled agents and leaves unknown costs empty', () =>
           completion_tokens: 10,
           reasoning_tokens: 4,
         },
-      }),
+      }) + '\n',
     );
     const config = structuredClone(example);
     config.agents['grok-build'] = { enabled: true, path: f };
@@ -320,7 +341,7 @@ it('prices a known speed via settings and keeps warnings in the summary', () =>
       },
       event(counts, counts),
     ];
-    await writeFile(f, events.map(record).join('\n') + '\n{bad}');
+    await writeFile(f, events.map(record).join('\n') + '\n{bad}\n');
     const config = structuredClone(example);
     config.agents.codex = { enabled: true, path: f };
     const price = {

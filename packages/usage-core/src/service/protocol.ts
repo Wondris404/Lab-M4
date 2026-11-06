@@ -34,6 +34,7 @@ export async function handleRequest(input: unknown) {
     result: {
       status: parsed.partial ? 'partial' : 'ok', totalRecords: parsed.records.length, offset, warnings: [
         ...(parsed.warnings ? [`${parsed.warnings} parser warnings`] : []),
+        ...(parsed.warningDetails ?? []),
         ...Object.entries(parsed.mismatchFields).map(([kind, count]) => `${kind}: ${count}`),
       ],
       records: parsed.records.slice(offset, offset + limit).map((r) => ({

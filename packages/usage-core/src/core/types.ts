@@ -9,6 +9,8 @@ export type Provider = (typeof providers)[number];
 export interface UsageRecord {
   provider: Provider;
   sessionId: string;
+  /** False when a record cannot be linked to a confirmed provider session. */
+  sessionKnown?: boolean;
   model: string;
   /** ISO 8601 timestamp with timezone. */
   timestamp: string;

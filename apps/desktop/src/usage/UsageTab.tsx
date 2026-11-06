@@ -2,7 +2,7 @@ import { useMemo, useState } from 'react';
 import { formatFull, formatShort } from './format';
 import { usageCsv } from './csv';
 import { useUsage } from './useUsage';
-import { selectUsage, usageState, type SortField } from './viewModel';
+import { addUsageTokens, selectUsage, usageState, type SortField } from './viewModel';
 import './usage.css';
 
 export interface UsageItem {
@@ -35,20 +35,21 @@ export function UsageTab() {
     [records, agent, model, day, session, sort, descending],
   );
   const status = usageState(loading, error, sources.length, shown.length);
-  const tokens = shown.reduce((sum, r) => sum + r.input + r.output, 0);
+  const tokens = shown.reduce<number | undefined>(addUsageTokens, 0);
   const known = shown.filter((r) => r.costUsd !== undefined);
   const cost = known.length
     ? `${formatFull(Math.round(known.reduce((sum, r) => sum + (r.costUsd ?? 0), 0) * 100) / 100)} USD`
     : '—';
   const days = useMemo(() => {
-    const result = new Map<string, number>();
+    const result = new Map<string, number | undefined>();
     shown.forEach((r) => {
       const date = r.timestamp.slice(0, 10);
-      result.set(date, (result.get(date) ?? 0) + r.input + r.output);
+      const previous = result.has(date) ? result.get(date) : 0;
+      result.set(date, addUsageTokens(previous, r));
     });
     return [...result.entries()].sort(([a], [b]) => a.localeCompare(b));
   }, [shown]);
-  const max = Math.max(1, ...days.map(([, n]) => n));
+  const max = days.reduce((value, [, n]) => n === undefined ? value : Math.max(value, n), 1);
   const toggleSort = (field: SortField) => {
     if (sort === field) setDescending(!descending);
     else {
@@ -155,7 +156,8 @@ export function UsageTab() {
           <div className="usage-cards">
             <div>
               Tokeny{' '}
-              <strong title={formatFull(tokens)}>{formatShort(tokens)}</strong>
+              {tokens === undefined ? <><strong>—</strong><span> Súčet tokenov nemožno presne zobraziť.</span></> :
+                <strong title={formatFull(tokens)}>{formatShort(tokens)}</strong>}
             </div>
             <div>
               Známe relácie{' '}
@@ -179,8 +181,10 @@ export function UsageTab() {
             {days.map(([d, n]) => (
               <div key={d} role="listitem">
                 <span>{d}</span>
-                <meter min={0} max={max} value={n} />
-                <span>{formatFull(n)}</span>
+                {n === undefined ? <span>—</span> : <>
+                  <meter min={0} max={max} value={n} />
+                  <span>{formatFull(n)}</span>
+                </>}
               </div>
             ))}
           </div>

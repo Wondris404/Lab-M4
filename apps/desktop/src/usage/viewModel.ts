@@ -16,6 +16,16 @@ export interface Filters {
   session: string;
 }
 
+/** Avoid reporting a rounded integer when the precise token total is unknown. */
+export function addUsageTokens(total: number | undefined, record: Pick<UsageItem, 'input' | 'output'>): number | undefined {
+  if (total === undefined || !Number.isSafeInteger(record.input) || record.input < 0 ||
+      !Number.isSafeInteger(record.output) || record.output < 0) return undefined;
+  const inputTotal = total + record.input;
+  if (!Number.isSafeInteger(inputTotal)) return undefined;
+  const combined = inputTotal + record.output;
+  return Number.isSafeInteger(combined) ? combined : undefined;
+}
+
 export function usageState(
   loading: boolean,
   error: string | undefined,

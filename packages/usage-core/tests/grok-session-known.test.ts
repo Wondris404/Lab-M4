@@ -1,11 +1,13 @@
 import { createHash } from 'node:crypto';
-import { realpath, writeFile } from 'node:fs/promises';
+import { appendFile, realpath, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import sqlite3 from 'sqlite3';
 import { expect, it } from 'vitest';
 import { grokBuildParser } from '../src/parsers/grok-build.js';
 import { scanCached } from '../src/service/cache.js';
 import { handleRequest } from '../src/service/protocol.js';
+import { settingsSchema } from '../src/core/settings.js';
+import { summarize } from '../src/server/summary.js';
 import { testTempDir } from './test-temp.js';
 
 const event = (sid: string) => JSON.stringify({
@@ -52,6 +54,29 @@ it('exposes unknown session status without inventing a session from the trace', 
   expect(result.records[0]?.session).toBe(result.records[1]?.session);
   expect(result.records[2]?.session).not.toBe(result.records[0]?.session);
   expect((await handleRequest(request)).result.records.map((record) => record.sessionKnown)).toEqual([false, false, true]);
+});
+
+it('counts a real session named unknown while marking unlinked records incomplete', async () => {
+  const dir = await testTempDir('grok-summary-known-');
+  const path = join(dir, 'grok.jsonl');
+  await writeFile(path, [
+    JSON.stringify({ sid: 'linked', ctx: { session_id: 'unknown' } }),
+    event('linked'), '',
+  ].join('\n'));
+  const disabled = { enabled: false, path: '' };
+  const settings = settingsSchema.parse({
+    agents: { codex: disabled, antigravity: disabled, opencode: disabled, 'grok-build': { enabled: true, path } },
+    usdToEur: 1,
+    priceTable: {},
+  });
+  const knownOnly = await summarize(settings);
+  expect(knownOnly.totals?.sessions).toBe(1);
+  expect(knownOnly.totals?.sessionsIncomplete).toBe(false);
+  await appendFile(path, `${event('unlinked')}\n`);
+  const result = await summarize(settings);
+  expect(result.recordCount).toBe(2);
+  expect(result.totals?.sessions).toBe(1);
+  expect(result.totals?.sessionsIncomplete).toBe(true);
 });
 
 it('does not reuse v3 unmarked JSONL cursor results', async () => {

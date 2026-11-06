@@ -36,12 +36,12 @@ export async function summarize(settings: Settings) {
       ? {
           sessions: new Set(
             records
-              .filter((r) => r.sessionId !== 'unknown')
+              .filter((r) => r.sessionKnown !== false)
               .map((r) => JSON.stringify([r.provider, r.sessionId])),
           ).size,
           sessionsIncomplete:
             incomplete ||
-            records.some((r) => r.sessionId === 'unknown'),
+            records.some((r) => r.sessionKnown === false),
           totalTokens: records.reduce(
             (n, r) => n + r.inputTokens + r.outputTokens,
             0,

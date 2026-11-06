@@ -41,7 +41,7 @@ export function selectUsage(
         (!filters.agent || record.agent === filters.agent) &&
         (!filters.model || record.model === filters.model) &&
         (!filters.day || record.timestamp.startsWith(filters.day)) &&
-        (!filters.session || record.session === filters.session),
+        (!filters.session || (record.sessionKnown !== false && record.session === filters.session)),
     )
     .sort((a, b) => {
       const left = a[sort],

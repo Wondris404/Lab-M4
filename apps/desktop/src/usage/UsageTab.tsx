@@ -9,6 +9,7 @@ export interface UsageItem {
   agent: string;
   model: string;
   session: string;
+  sessionKnown?: boolean;
   timestamp: string;
   input: number;
   output: number;
@@ -142,7 +143,7 @@ export function UsageTab() {
           Relácia{' '}
           <select value={session} onChange={(e) => setSession(e.target.value)}>
             <option value="">Všetky</option>
-            {[...new Set(records.map((r) => r.session))].map((v) => (
+            {[...new Set(records.filter((r) => r.sessionKnown !== false).map((r) => r.session))].map((v) => (
               <option key={v}>{v}</option>
             ))}
           </select>
@@ -157,12 +158,13 @@ export function UsageTab() {
               <strong title={formatFull(tokens)}>{formatShort(tokens)}</strong>
             </div>
             <div>
-              Relácie{' '}
+              Známe relácie{' '}
               <strong>
                 {formatFull(
-                  new Set(shown.map((r) => `${r.agent}:${r.session}`)).size,
+                  new Set(shown.filter((r) => r.sessionKnown !== false).map((r) => `${r.agent}:${r.session}`)).size,
                 )}
               </strong>
+              {shown.some((r) => r.sessionKnown === false) && <span> Neúplné: neznáme relácie</span>}
             </div>
             <div>
               Cena (USD) <strong>{cost}</strong>
@@ -220,7 +222,7 @@ export function UsageTab() {
                   <td>{r.timestamp.slice(0, 10)}</td>
                   <td>{r.agent}</td>
                   <td>{r.model}</td>
-                  <td>{r.session}</td>
+                  <td>{r.sessionKnown === false ? 'Neznáma' : r.session}</td>
                   <td>{formatFull(r.input)}</td>
                   <td>{formatFull(r.output)}</td>
                   <td>{formatFull(r.cached)}</td>

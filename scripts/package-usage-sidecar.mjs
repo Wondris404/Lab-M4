@@ -20,6 +20,12 @@ for (const [name, source] of [['sqlite3', sqliteRoot], ['bindings', bindingsRoot
   await cp(source, join(stage, 'node_modules', name), { recursive: true, dereference: true });
 }
 await cp(process.execPath, join(stage, process.platform === 'win32' ? 'node.exe' : 'node'));
+// The bundled WebAssembly checksum implementation is MIT licensed. Keep its
+// license alongside the sidecar even though esbuild inlines the module.
+const usageRequire = createRequire(join(root, 'packages/usage-core/package.json'));
+const xxhashRoot = await realpath(join(dirname(usageRequire.resolve('xxhash-wasm')), '..'));
+await mkdir(join(stage, 'licenses'), { recursive: true });
+await cp(join(xxhashRoot, 'LICENSE.md'), join(stage, 'licenses/xxhash-wasm-LICENSE.md'));
 
 // Embed an inventory of generated resources in the desktop binary. The runtime
 // verifies it before launch; no agent paths or personal files are included.

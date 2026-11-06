@@ -1,18 +1,27 @@
 import { resolve } from 'node:path';
-import { readFile, writeFile } from 'node:fs/promises';
+import { spawnSync } from 'node:child_process';
+import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { codexParser } from '../src/parsers/codex.js';
+import { grokBuildParser } from '../src/parsers/grok-build.js';
+import { scanCached } from '../src/service/cache.js';
 import {
   ExpansionLimitError,
   lines,
   ZstdFrameGuard,
+  ZstdIntegrityError,
 } from '../src/parsers/shared.js';
 import { testTempDir } from './test-temp.js';
 
 const fixture = resolve(
   'packages/usage-core/fixtures/synthetic/codex.jsonl.zst',
 );
+
+// Synthetic frames generated with zstd --check; their checksum bytes are
+// independent of the implementation under test and require no zstd binary.
+const checkedCodex = Buffer.from('KLUv/WR5APUFANKKIR1gR+MGEWq1t7CXpfsenPw9IQyCr2bU3w3IEPhYPMR77yF1KNNlzMJLoVYSGGg0I/LyCO325aB0bpcoywPZKQR7eweUqcuCPbip1jTIcoF0TgA6Bh0DUJzi6UnD5mwsHcm1rQ+ydQ2lBdfEe0emOdss9kP6wkUMmLwcO5vSZczJT8/E0D8EFQA/XVLo3QrLhiuH2+QIjMYZ9M8U2AfhI7AfYfogwMTk+cIb6cRwleZVCyuYATJppX1Fpp5MVcgJ', 'base64');
+const checkedGrok = Buffer.from('KLUv/STARQQAIskcG4C3OsZFgeRpIh9Db0OoDVmGdH20Mr/AwsoGDICmSWTbcjwU/hjLrdU9hRXTZB3rJ1F6XC1wq34Kw/eD0hdl29RjdmfSl14/12WmdK1CJWwrFhq6cE4TJCo/H6RMAUoCJREw0nh67J+v1pr0HuLTWYtnAgYAOEuaqo5nAEvPNlHZvq17ArcGk2s=', 'base64');
 
 async function read(budget: { remaining: number; perFile: number }) {
   const result: string[] = [];
@@ -64,6 +73,21 @@ describe('compressed usage expansion limits', () => {
     expect(budget.remaining).toBe(0);
   });
 
+  it('enforces file and scan allowances on checksummed frames', async () => {
+    const dir = await testTempDir('zstd-checked-limit-');
+    const path = join(dir, 'checked.jsonl.zst');
+    await writeFile(path, checkedCodex);
+    const consume = async (budget: { remaining: number; perFile: number }) => {
+      for await (const line of lines(path, budget)) void line;
+    };
+    await expect(consume({ remaining: 100_000, perFile: 1 })).rejects.toBeInstanceOf(ExpansionLimitError);
+    const budget = { remaining: 100_000, perFile: 100_000 };
+    await consume(budget);
+    budget.remaining = 1;
+    await expect(consume(budget)).rejects.toBeInstanceOf(ExpansionLimitError);
+    expect(budget.remaining).toBe(0);
+  });
+
   it('discards a Codex file when a later compressed frame is truncated', async () => {
     const dir = await testTempDir('zstd-truncated-');
     const path = join(dir, 'truncated.jsonl.zst');
@@ -76,17 +100,102 @@ describe('compressed usage expansion limits', () => {
     expect(result.limits).toEqual([]);
   });
 
-  it('does not silently accept a frame whose checksum cannot be verified', async () => {
+  it('validates checksums independently for concatenated and skippable frames', async () => {
     const dir = await testTempDir('zstd-checksum-');
-    const path = join(dir, 'checksum.jsonl.zst');
-    const frame = await readFile(fixture);
-    const checksummed = Buffer.from(frame);
-    checksummed[4] = checksummed[4]! | 4;
-    await writeFile(path, Buffer.concat([frame, checksummed, Buffer.alloc(4)]));
+    const path = join(dir, 'checked.jsonl.zst');
+    const corrupt = Buffer.from(checkedCodex);
+    corrupt[corrupt.length - 1] = corrupt[corrupt.length - 1]! ^ 1;
+    const skip = Buffer.from([0x50, 0x2a, 0x4d, 0x18, 3, 0, 0, 0, 7, 8, 9]);
+    await writeFile(path, Buffer.concat([checkedCodex, skip, checkedCodex]));
+    expect((await codexParser.parse(path)).records).toHaveLength(1);
+    // Split checksum across createReadStream's default 64 KiB chunk boundary.
+    const padding = 65535 - (checkedCodex.length - 4) - 8;
+    const skipHeader = Buffer.from([0x50, 0x2a, 0x4d, 0x18, 0, 0, 0, 0]);
+    skipHeader.writeUInt32LE(padding, 4);
+    await writeFile(path, Buffer.concat([skipHeader, Buffer.alloc(padding), checkedCodex]));
+    expect((await codexParser.parse(path)).records).toHaveLength(1);
+    await writeFile(path, Buffer.concat([checkedCodex, skip, corrupt]));
     const result = await codexParser.parse(path);
     expect(result.partial).toBe(true);
     expect(result.warnings).toBe(1);
     expect(result.records).toEqual([]);
     expect(result.limits).toEqual([]);
+    const readBroken = async () => { for await (const line of lines(path)) void line; };
+    await expect(readBroken()).rejects.toBeInstanceOf(ZstdIntegrityError);
+    const cached = await scanCached(codexParser, path, join(dir, 'cache.sqlite'));
+    expect(cached.partial).toBe(true);
+    expect(cached.records).toEqual([]);
+  });
+
+  it('rejects a fabricated checksum on a later frame without retaining records', async () => {
+    const dir = await testTempDir('zstd-fake-checksum-');
+    const path = join(dir, 'checksum.jsonl.zst');
+    const frame = await readFile(fixture);
+    const invalid = Buffer.from(frame);
+    invalid[4] = invalid[4]! | 4;
+    await writeFile(path, Buffer.concat([frame, invalid, Buffer.alloc(4)]));
+    const result = await codexParser.parse(path);
+    expect(result.partial).toBe(true);
+    expect(result.warnings).toBe(1);
+    expect(result.records).toEqual([]);
+    expect(result.limits).toEqual([]);
+  });
+
+  it('discards Grok records when a later frame has a bad checksum', async () => {
+    const dir = await testTempDir('zstd-grok-checksum-');
+    const path = join(dir, 'grok.jsonl.zst');
+    const corrupt = Buffer.from(checkedGrok);
+    corrupt[corrupt.length - 1] = corrupt[corrupt.length - 1]! ^ 1;
+    await writeFile(path, checkedGrok);
+    expect((await grokBuildParser.parse(path)).records).toHaveLength(1);
+    await writeFile(path, Buffer.concat([checkedGrok, corrupt]));
+    const result = await grokBuildParser.parse(path);
+    expect(result.partial).toBe(true);
+    expect(result.warnings).toBe(1);
+    expect(result.records).toEqual([]);
+    expect(result.warningDetails).toEqual(['Zstd checksum nesúhlasí; súbor bol vynechaný.']);
+    await writeFile(path, Buffer.concat([checkedGrok, checkedGrok.subarray(0, 6)]));
+    const truncated = await grokBuildParser.parse(path);
+    expect(truncated.partial).toBe(true);
+    expect(truncated.records).toEqual([]);
+    expect(truncated.warnings).toBe(1);
+    await expect(grokBuildParser.parse('credentials/secret.zst')).rejects.toThrow('Nepovolená cesta');
+  });
+
+  it('keeps other complete files but discards every record from a corrupt file', async () => {
+    const dir = await testTempDir('zstd-mixed-');
+    const folder = join(dir, 'sessions');
+    await mkdir(folder);
+    const corrupt = Buffer.from(checkedCodex);
+    corrupt[corrupt.length - 1] = corrupt[corrupt.length - 1]! ^ 1;
+    await writeFile(join(folder, 'valid.jsonl.zst'), checkedCodex);
+    await writeFile(join(folder, 'bad.jsonl.zst'), Buffer.concat([checkedCodex, corrupt]));
+    const result = await codexParser.parse(folder);
+    expect(result.partial).toBe(true);
+    expect(result.records).toHaveLength(1);
+    expect(result.warnings).toBe(1);
+    expect(result.warningDetails).toContain('Zstd checksum nesúhlasí; súbor bol vynechaný.');
+    const cached = await scanCached(codexParser, folder, join(dir, 'cache.sqlite'));
+    expect(cached.partial).toBe(true);
+    expect(cached.records).toHaveLength(1);
+    expect(cached.warningDetails).toContain('Zstd checksum nesúhlasí; súbor bol vynechaný.');
+  });
+
+  it('reports a checksum error through the packaged sidecar', async () => {
+    const dir = await testTempDir('zstd-sidecar-');
+    const path = join(dir, 'broken.jsonl.zst');
+    const corrupt = Buffer.from(checkedCodex);
+    corrupt[corrupt.length - 1] = corrupt[corrupt.length - 1]! ^ 1;
+    await writeFile(path, Buffer.concat([checkedCodex, corrupt]));
+    const request = { version: 1, requestId: 'checksum', method: 'scan', params: { agent: 'codex', path, cachePath: join(dir, 'cache.sqlite') } };
+    const run = spawnSync(process.execPath, [resolve('apps/desktop/usage-service/main.cjs')], {
+      input: `${JSON.stringify(request)}\n`, encoding: 'utf8',
+      env: { ...(process.env.SystemRoot && { SystemRoot: process.env.SystemRoot }) },
+    });
+    expect(run.status).toBe(0);
+    const result = JSON.parse(run.stdout).result;
+    expect(result.status).toBe('partial');
+    expect(result.records).toEqual([]);
+    expect(result.warnings.length).toBeGreaterThan(0);
   });
 });

@@ -8,7 +8,7 @@ import {
   obj,
   str,
   time,
-  UnverifiedChecksumError,
+  ZstdIntegrityError,
 } from './shared.js';
 
 export const codexParser: Parser = {
@@ -130,8 +130,8 @@ export const codexParser: Parser = {
         }
         result.warnings++;
         result.partial = true;
-        if (error instanceof UnverifiedChecksumError)
-          result.warningDetails = [...(result.warningDetails ?? []), 'Zstd checksum nemožno overiť; súbor bol vynechaný.'];
+        if (error instanceof ZstdIntegrityError)
+          result.warningDetails = [...(result.warningDetails ?? []), 'Zstd checksum nesúhlasí; súbor bol vynechaný.'];
       }
     }
     return result;

@@ -101,3 +101,9 @@
 ### Pokračovanie
 - Aktuálna vetva `feat/usage-hardening`; posledné lokálne známe odoslané SHA `83d147d1096cad2e5ab3879d0df135c5badc466f`. Stav servera a prípadný nový commit treba znovu overiť.
 - V `<repo>`: `git status --short --branch`, `git fetch origin`, `pnpm.cmd test`, `pnpm.cmd exec eslint packages/usage-core/src packages/usage-core/tests`, `pnpm.cmd exec tsc --noEmit`; potom skontrolovať PR #10 a CI pre presné SHA. Nevykonávať destruktívne čistenie ani neprepisovať existujúce nesledované súbory.
+
+## 2026-11-06 08:40 +01:00 (Europe/Bratislava) – Podpisy Codex súčtov
+- Vetva `feat/usage-hardening`; predchádzajúci lokálny commit `a69e7a4191a7ff5feae84db4e0597b98128404c0` opravuje neúplné archívy. Posledný známy remote-tracking SHA je `83d147d1096cad2e5ab3879d0df135c5badc466f`; serverový stav je NEOVERENÝ pre sieťový blok.
+- Zmena: Podpisy kumulatívnych Codex údajov nezávisia od poradia kľúčov JSON. Plný aj inkrementálny parser používajú rovnakú kanonizáciu; verzia kurzorov a cache sa zvýšila, takže staré podpisy neostanú v používaní. Pridaný syntetický regresný test pre append aj dva súbory.
+- Kontroly: `pnpm.cmd exec eslint packages/usage-core/src packages/usage-core/tests`, `pnpm.cmd exec tsc --noEmit` a `git diff --check` prešli. Samostatne preložený parser a cache prešli na Windows syntetickou skúškou opakovaného snapshotu s prehodeným poradím kľúčov, appendu a deduplikácie medzi súbormi. Úplná sada `pnpm.cmd test`, CI a aplikácia ostávajú NEOVERENÉ z dôvodov v predošlom zázname.
+- Ďalší krok: Po obnovení prístupov overiť aktuálne vetvy a CI, spustiť úplnú sadu testov, následne dokončiť bezpečný WAL, spoľahlivé rozpoznanie zmien pred kurzorom a zostávajúce body zadania. Aktuálny stav a lokálne commity overiť cez `git status --short --branch` a `git log -2 --oneline`; pred pushom overiť cieľovú feature vetvu a nezasiahnuť `main`.

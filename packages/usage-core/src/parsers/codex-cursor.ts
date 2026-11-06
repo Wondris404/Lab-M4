@@ -2,6 +2,20 @@ import { createHash } from 'node:crypto';
 import { emptyResult, type LimitWindow } from './contracts.js';
 import { count, obj, str, time } from './shared.js';
 
+/** Stable encoding of parsed JSON, independent of object property order. */
+export function codexTotalSignature(total: Record<string, unknown>): string {
+  const canonicalize = (value: unknown): unknown => {
+    if (Array.isArray(value)) return value.map(canonicalize);
+    if (value !== null && typeof value === 'object')
+      return Object.fromEntries(
+        Object.entries(value).sort(([a], [b]) => a < b ? -1 : a > b ? 1 : 0)
+          .map(([key, item]) => [key, canonicalize(item)]),
+      );
+    return value;
+  };
+  return JSON.stringify(canonicalize(total));
+}
+
 export interface CodexCursorState {
   sessionId?: string;
   model: string;
@@ -91,7 +105,7 @@ export function codexAccumulator(
       return;
     }
     const fingerprint = createHash('sha256')
-      .update(JSON.stringify([sessionId, total]))
+      .update(JSON.stringify([sessionId, codexTotalSignature(total)]))
       .digest('hex');
     if (seen.has(fingerprint)) return;
     seen.add(fingerprint);

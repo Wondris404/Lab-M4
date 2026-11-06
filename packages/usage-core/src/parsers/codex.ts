@@ -1,4 +1,5 @@
 import { emptyResult, type Parser, type LimitWindow } from './contracts.js';
+import { codexTotalSignature } from './codex-cursor.js';
 import {
   count,
   findCodexFiles,
@@ -96,7 +97,7 @@ export const codexParser: Parser = {
             result.warnings++;
             continue;
           }
-          const signature = JSON.stringify(total);
+          const signature = codexTotalSignature(total);
           const signatures = seen.get(sessionId) ?? new Set<string>();
           if (signatures.has(signature)) continue;
           signatures.add(signature);

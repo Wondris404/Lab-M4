@@ -1,4 +1,4 @@
-import { appendFile, readFile, rename, writeFile } from 'node:fs/promises';
+import { appendFile, mkdir, readFile, rename, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { expect, it } from 'vitest';
 import { codexParser } from '../src/parsers/codex.js';
@@ -72,4 +72,24 @@ it('incrementally parses Codex last usage across append, partial line, truncate 
       (record) => record.inputTokens,
     ),
   ).toEqual([8]);
+});
+
+it('deduplicates equivalent totals with reordered keys across scans and files', async () => {
+  const dir = await testTempDir('codex-order-');
+  const source = join(dir, 'sessions');
+  const cache = join(dir, 'cache.sqlite');
+  await mkdir(source);
+  const path = join(source, 'a.jsonl');
+  const base = JSON.parse(usage(100, 10));
+  base.payload.info.total_token_usage = { input_tokens: 100, output_tokens: 2 };
+  const reordered = structuredClone(base);
+  reordered.payload.info.total_token_usage = { output_tokens: 2, input_tokens: 100 };
+  await writeFile(path, prefix('synthetic-session') + row(base) + '\n');
+  expect((await scanCached(codexParser, path, cache)).records).toHaveLength(1);
+  await appendFile(path, row(reordered) + '\n');
+  expect((await scanCached(codexParser, path, cache)).records).toHaveLength(1);
+  expect((await codexParser.parse(path)).records).toHaveLength(1);
+  await writeFile(join(source, 'b.jsonl'), prefix('synthetic-session') + row(reordered) + '\n');
+  expect((await scanCached(codexParser, source, cache)).records).toHaveLength(1);
+  expect((await codexParser.parse(source)).records).toHaveLength(1);
 });

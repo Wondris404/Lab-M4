@@ -33,14 +33,14 @@ export async function scanCached(parser: Parser, source: string, cachePath: stri
       const fileId = createHash('sha256').update(file).digest('hex');
       files.push(JSON.stringify([fileId, info.dev, info.ino, info.size, info.mtimeMs, info.ctimeMs]));
     }
-    signature = JSON.stringify([7, files.sort()]);
+    signature = JSON.stringify([8, files.sort()]);
   } else {
     await assertSafeFile(source);
     const info = await lstat(canonical);
     const wal = await lstatIfExists(`${canonical}-wal`);
     const shm = await lstatIfExists(`${canonical}-shm`);
     if (parser.provider === 'opencode' && (wal || shm)) return { ...emptyResult(), warnings: 1, partial: true };
-    signature = JSON.stringify([7, info.dev, info.ino, info.size, info.mtimeMs, info.ctimeMs, wal?.size ?? null, wal?.mtimeMs ?? null]);
+    signature = JSON.stringify([8, info.dev, info.ino, info.size, info.mtimeMs, info.ctimeMs, wal?.size ?? null, wal?.mtimeMs ?? null]);
   }
   if (/auth|credential|token|secret|key|login|\.env/i.test(basename(cachePath))) {
     throw new Error('Nepovolená cache.');
@@ -63,7 +63,7 @@ export async function scanCached(parser: Parser, source: string, cachePath: stri
     if (parser === grokBuildParser && original.isFile() && !/\.zst$/i.test(canonical))
       return await scanJsonlAppend(db, key, canonical, (previous) => grokAccumulator(previous as GrokCursorState | undefined, pseudonym), force);
     if (parser === codexParser && original.isFile() && /\.jsonl$/i.test(canonical))
-      return await scanJsonlAppend(db, `${key}:v2`, canonical, (previous) => codexAccumulator(previous as CodexCursorState | undefined, pseudonym), force);
+      return await scanJsonlAppend(db, `${key}:v3`, canonical, (previous) => codexAccumulator(previous as CodexCursorState | undefined, pseudonym), force);
     const row = await new Promise<{ signature: string; result: string } | undefined>((resolve, reject) => db.get('SELECT signature, result FROM scan_cache WHERE id = ?', [key], (e, value) => e ? reject(e) : resolve(value as { signature: string; result: string } | undefined)));
     if (!force && row?.signature === signature) return JSON.parse(row.result) as ParseResult;
     const parsed = await parser.parse(canonical);

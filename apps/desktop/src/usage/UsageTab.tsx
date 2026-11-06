@@ -14,7 +14,7 @@ export interface UsageItem {
   output: number;
   cached: number;
   reasoning: number;
-  costEur?: number;
+  costUsd?: number;
   warnings: string[];
 }
 export function UsageTab() {
@@ -35,9 +35,9 @@ export function UsageTab() {
   );
   const status = usageState(loading, error, sources.length, shown.length);
   const tokens = shown.reduce((sum, r) => sum + r.input + r.output, 0);
-  const known = shown.filter((r) => r.costEur !== undefined);
+  const known = shown.filter((r) => r.costUsd !== undefined);
   const cost = known.length
-    ? `${formatFull(Math.round(known.reduce((sum, r) => sum + (r.costEur ?? 0), 0) * 100) / 100)} €`
+    ? `${formatFull(Math.round(known.reduce((sum, r) => sum + (r.costUsd ?? 0), 0) * 100) / 100)} USD`
     : '—';
   const days = useMemo(() => {
     const result = new Map<string, number>();
@@ -165,7 +165,8 @@ export function UsageTab() {
               </strong>
             </div>
             <div>
-              Cena <strong>{cost}</strong>
+              Cena (USD) <strong>{cost}</strong>
+              {known.length > 0 && known.length < shown.length && ' (neúplné údaje)'}
               {known.length < shown.length && (
                 <span> Čiastočné / NEOVERENÉ</span>
               )}
@@ -210,7 +211,7 @@ export function UsageTab() {
                     <button onClick={() => toggleSort(field)}>{label}</button>
                   </th>
                 ))}
-                <th>EUR</th>
+                <th>USD</th>
               </tr>
             </thead>
             <tbody>
@@ -225,7 +226,7 @@ export function UsageTab() {
                   <td>{formatFull(r.cached)}</td>
                   <td>{formatFull(r.reasoning)}</td>
                   <td>
-                    {r.costEur === undefined ? '—' : formatFull(r.costEur)}
+                    {r.costUsd === undefined ? '—' : formatFull(r.costUsd)}
                   </td>
                 </tr>
               ))}

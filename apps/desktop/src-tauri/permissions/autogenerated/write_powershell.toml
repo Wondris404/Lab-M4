@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-write-powershell"
+description = "Enables the write_powershell command without any pre-configured scope."
+commands.allow = ["write_powershell"]
+
+[[permission]]
+identifier = "deny-write-powershell"
+description = "Denies the write_powershell command without any pre-configured scope."
+commands.deny = ["write_powershell"]

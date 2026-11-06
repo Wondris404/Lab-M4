@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-agent-hook-url"
+description = "Enables the agent_hook_url command without any pre-configured scope."
+commands.allow = ["agent_hook_url"]
+
+[[permission]]
+identifier = "deny-agent-hook-url"
+description = "Denies the agent_hook_url command without any pre-configured scope."
+commands.deny = ["agent_hook_url"]

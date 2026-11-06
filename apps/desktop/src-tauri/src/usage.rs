@@ -13,6 +13,8 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use tauri::{AppHandle, Manager, State};
 use tauri_plugin_dialog::DialogExt;
 
+mod source_coverage;
+
 #[derive(Default)]
 pub struct UsageState {
     sources: Mutex<Option<HashMap<String, (String, PathBuf)>>>,
@@ -24,6 +26,8 @@ pub struct UsageSource {
     id: String,
     agent: String,
     name: String,
+    #[serde(rename = "coveredBy")]
+    covered_by: Option<String>,
 }
 
 type SourceMap = HashMap<String, (String, PathBuf)>;
@@ -91,6 +95,22 @@ pub fn usage_list_sources(
         .map_err(|_| "Source state unavailable")?;
     load_sources(&app, &mut slot)?;
     let sources = slot.as_ref().ok_or("Source state unavailable")?;
+    // Resolve source identity locally; never expose approved absolute paths to the UI.
+    // Invalid or missing sources are left uncovered so scanning reports the error.
+    let resolved: Vec<_> = sources
+        .iter()
+        .filter_map(|(id, (agent, path))| {
+            let path = safe_source(path, agent).ok()?;
+            let is_dir = std::fs::metadata(&path).ok()?.is_dir();
+            Some(source_coverage::Source {
+                id,
+                agent,
+                path,
+                is_dir,
+            })
+        })
+        .collect();
+    let coverage = source_coverage::covered_sources(&resolved);
     let mut result: Vec<UsageSource> = sources
         .iter()
         .map(|(id, (agent, path))| UsageSource {
@@ -101,6 +121,7 @@ pub fn usage_list_sources(
                 .and_then(|s| s.to_str())
                 .unwrap_or("source")
                 .to_owned(),
+            covered_by: coverage.get(id.as_str()).map(|value| (*value).to_owned()),
         })
         .collect();
     result.sort_by(|a, b| a.id.cmp(&b.id));
@@ -267,7 +288,12 @@ pub async fn usage_select_source(
         sources.remove(&id);
         return Err(error);
     }
-    Ok(Some(UsageSource { id, agent, name }))
+    Ok(Some(UsageSource {
+        id,
+        agent,
+        name,
+        covered_by: None,
+    }))
 }
 
 // Always reap the sidecar, including failures while setting up pipes.

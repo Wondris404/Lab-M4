@@ -1,0 +1,8 @@
+{
+  "name": "@lab-m4/orchestrator-core",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "node --test tests/lifecycle.test.mjs tests/cli.test.mjs tests/usage-ledger.test.mjs"
+  }
+}

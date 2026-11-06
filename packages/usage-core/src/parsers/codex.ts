@@ -1,17 +1,32 @@
 import { emptyResult, type Parser, type LimitWindow } from './contracts.js';
-import { count, findCodexFiles, lines, obj, str, time } from './shared.js';
+import { codexTotalSignature } from './codex-cursor.js';
+import {
+  count,
+  findCodexFiles,
+  lines,
+  newExpansionBudget,
+  obj,
+  str,
+  time,
+  UnverifiedChecksumError,
+} from './shared.js';
 
 export const codexParser: Parser = {
   provider: 'codex',
   async parse(path) {
     const result = emptyResult();
     const seen = new Map<string, Set<string>>();
+    const budget = newExpansionBudget();
     for await (const file of findCodexFiles(path)) {
+      const recordsBefore = result.records.length;
+      const limitsBefore = result.limits.length;
+      const warningsBefore = result.warnings;
+      const addedSignatures: [string, string][] = [];
       let sessionId: string | undefined;
       let model = 'unknown';
       let speed: 'standard' | 'fast' | 'unknown' = 'unknown';
       try {
-        for await (const line of lines(file)) {
+        for await (const line of lines(file, budget)) {
           if (!line.trim()) continue;
           let event: Record<string, unknown>;
           try {
@@ -83,11 +98,12 @@ export const codexParser: Parser = {
             result.warnings++;
             continue;
           }
-          const signature = JSON.stringify(total);
+          const signature = codexTotalSignature(total);
           const signatures = seen.get(sessionId) ?? new Set<string>();
           if (signatures.has(signature)) continue;
           signatures.add(signature);
           seen.set(sessionId, signatures);
+          addedSignatures.push([sessionId, signature]);
           result.records.push({
             provider: 'codex',
             sessionId,
@@ -101,9 +117,21 @@ export const codexParser: Parser = {
             costSource: 'neznáme',
           });
         }
-      } catch {
+      } catch (error) {
+        // A failed file is never a complete contribution, including when a
+        // compressed stream is corrupt or truncated after yielding records.
+        result.records.length = recordsBefore;
+        result.limits.length = limitsBefore;
+        result.warnings = warningsBefore;
+        for (const [id, signature] of addedSignatures) {
+          const signatures = seen.get(id);
+          signatures?.delete(signature);
+          if (signatures?.size === 0) seen.delete(id);
+        }
         result.warnings++;
         result.partial = true;
+        if (error instanceof UnverifiedChecksumError)
+          result.warningDetails = [...(result.warningDetails ?? []), 'Zstd checksum nemožno overiť; súbor bol vynechaný.'];
       }
     }
     return result;

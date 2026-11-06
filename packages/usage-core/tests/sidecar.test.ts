@@ -12,12 +12,15 @@ it('scans the compressed synthetic fixture through the packaged JSON-lines servi
     expect(run.status).toBe(0);
     const response = JSON.parse(run.stdout);
     expect(response.requestId).toBe('synthetic');
+    expect(response.result.snapshotId).toMatch(/^[a-f0-9]{64}$/);
     expect(response.result.records).toHaveLength(1);
     expect(response.result.records[0].agent).toBe('codex');
     const nextPage = { ...request, params: { ...request.params, offset: 1, limit: 1 } };
     const pageRun = spawnSync(process.execPath, [resolve('apps/desktop/usage-service/main.cjs')], { input: `${JSON.stringify(nextPage)}\n`, encoding: 'utf8', env: { ...(process.env.SystemRoot && { SystemRoot: process.env.SystemRoot }) } });
-    expect(JSON.parse(pageRun.stdout).result.records).toHaveLength(0);
-    expect(JSON.parse(pageRun.stdout).result.totalRecords).toBe(1);
+    const nextResponse = JSON.parse(pageRun.stdout);
+    expect(nextResponse.result.records).toHaveLength(0);
+    expect(nextResponse.result.totalRecords).toBe(1);
+    expect(nextResponse.result.snapshotId).toBe(response.result.snapshotId);
     const folderRequest = { ...request, params: { ...request.params, path: resolve('packages/usage-core/fixtures/synthetic') } };
     const folderRun = spawnSync(process.execPath, [resolve('apps/desktop/usage-service/main.cjs')], { input: `${JSON.stringify(folderRequest)}\n`, encoding: 'utf8', env: { ...(process.env.SystemRoot && { SystemRoot: process.env.SystemRoot }) } });
     expect(folderRun.status).toBe(0);

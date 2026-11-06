@@ -7,6 +7,7 @@
     "core:event:allow-listen",
     "core:event:allow-unlisten",
     "core:window:allow-close",
+    "core:window:allow-destroy",
     "core:window:allow-inner-size",
     "core:window:allow-outer-position",
     "core:window:allow-request-user-attention",
@@ -14,6 +15,18 @@
     "core:window:allow-set-position",
     "core:window:allow-set-size",
     "dialog:allow-open",
-    "opener:allow-open-url"
+    "opener:allow-open-url",
+    "allow-spawn-powershell",
+    "allow-write-powershell",
+    "allow-resize-powershell",
+    "allow-kill-powershell",
+    "allow-load-sessions",
+    "allow-save-sessions",
+    "allow-agent-hook-url",
+    "allow-load-app-settings",
+    "allow-save-app-settings",
+    "allow-usage-list-sources",
+    "allow-usage-select-source",
+    "allow-usage-scan"
   ]
 }

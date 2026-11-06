@@ -75,4 +75,18 @@ describe('compressed usage expansion limits', () => {
     expect(result.records).toEqual([]);
     expect(result.limits).toEqual([]);
   });
+
+  it('does not silently accept a frame whose checksum cannot be verified', async () => {
+    const dir = await testTempDir('zstd-checksum-');
+    const path = join(dir, 'checksum.jsonl.zst');
+    const frame = await readFile(fixture);
+    const checksummed = Buffer.from(frame);
+    checksummed[4] = checksummed[4]! | 4;
+    await writeFile(path, Buffer.concat([frame, checksummed, Buffer.alloc(4)]));
+    const result = await codexParser.parse(path);
+    expect(result.partial).toBe(true);
+    expect(result.warnings).toBe(1);
+    expect(result.records).toEqual([]);
+    expect(result.limits).toEqual([]);
+  });
 });

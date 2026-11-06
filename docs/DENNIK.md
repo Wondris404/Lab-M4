@@ -343,3 +343,8 @@
 ## 2026-11-06 23:48 +01:00 (Europe/Bratislava) – Súhrn používa príznak relácie
 - Súhrn už nezamieňa potvrdenú reláciu s doslovným ID `unknown` s neprepojenou reláciou: počet a označenie neúplnosti vychádzajú z `sessionKnown`. Syntetický test preveruje najprv potvrdené ID a potom pridanie neprepojenej udalosti.
 - Cielené testy parserov a súhrnov: 18/18, exit 0; `pnpm lint` a `pnpm exec tsc --noEmit`: exit 0. NEOVERENÉ: skutočné Grok dáta a zobrazenie v natívnej Windows aplikácii.
+
+## 2026-11-07 00:03 +01:00 (Europe/Bratislava) – Ochrana checksumu a ďalšie opravy
+- `fzstd` neoveruje checksum Zstandard; poškodený syntetický rámec predtým vrátil dáta bez varovania. Sken teraz takéto rámce bezpečne odmietne, označí výsledok partial a vysvetlí dôvod; invaliduje dotknutú cache. To dočasne vylučuje aj platné checksummed archívy. Ďalší krok je streamingové overenie každého rámca bez oslabenia limitov.
+- Doplnené označenie neznámych Grok relácií, ochrana pred ich falošným sčítaním, hlásenie chyby vytvorenia terminálu a úzko vymedzené CSP pre existujúce Google fonty. Načítanie fontu posiela požiadavku poskytovateľovi, pozri README. Zablokovaný PTY zápis môže stále blokovať zatvorenie; bezpečná oprava poradia vstupu a Windows overenie zostávajú otvorené.
+- Pred poslednou checksum zmenou prešli na Linuxe `pnpm package:usage-sidecar`, `pnpm lint`, `pnpm typecheck`, `pnpm test` (61 testov) exit 0; cielené testy checksumu a parserov po zmene prešli 19/19. Windows GUI aj živí agenti NEOVERENÉ.

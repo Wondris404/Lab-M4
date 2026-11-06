@@ -9,6 +9,7 @@ import {
   findCodexFiles,
   lines,
   newExpansionBudget,
+  UnverifiedChecksumError,
 } from '../parsers/shared.js';
 import { normalizeRecord } from './normalize.js';
 import { scanJsonlAppend, type CursorResult } from './grok-cursor.js';
@@ -35,8 +36,9 @@ export async function scanCodexDirectory(
           records: accumulator.result.records.map(normalizeRecord),
           _fingerprints: accumulator.fingerprints,
         };
-      } catch {
-        parsed = { ...emptyResult(), warnings: 1, partial: true };
+      } catch (error) {
+        parsed = { ...emptyResult(), warnings: 1, partial: true,
+          ...(error instanceof UnverifiedChecksumError && { warningDetails: ['Zstd checksum nemožno overiť; súbor bol vynechaný.'] }) };
       }
     } else {
       const key = createHash('sha256')
@@ -61,6 +63,7 @@ export async function scanCodexDirectory(
     }
     result.limits.push(...parsed.limits);
     result.warnings += parsed.warnings;
+    if (parsed.warningDetails) result.warningDetails = [...(result.warningDetails ?? []), ...parsed.warningDetails];
     if (parsed.partial) result.partial = true;
   }
   return result;

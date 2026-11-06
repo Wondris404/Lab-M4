@@ -28,6 +28,11 @@ export class ExpansionLimitError extends Error {
     super('Compressed usage log exceeds the decompression limit');
   }
 }
+export class UnverifiedChecksumError extends Error {
+  constructor() {
+    super('Zstd checksum cannot be verified');
+  }
+}
 
 /** Shared by all compressed files in a scan; bytes are charged even on failure. */
 export interface ExpansionBudget {
@@ -120,6 +125,9 @@ export class ZstdFrameGuard {
         throw new Error('Unsupported zstd frame');
       const flags = this.header[4]!;
       if (flags & 8) throw new Error('Invalid zstd frame');
+      // fzstd does not validate checksums. Never accept a checksummed frame
+      // as complete until a streaming verifier is available.
+      if (flags & 4) throw new UnverifiedChecksumError();
       const single = (flags & 32) !== 0;
       const dictionaryBytes = [0, 1, 2, 4][flags & 3]!;
       const sizeFlag = flags >>> 6;

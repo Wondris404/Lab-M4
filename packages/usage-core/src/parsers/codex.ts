@@ -8,6 +8,7 @@ import {
   obj,
   str,
   time,
+  UnverifiedChecksumError,
 } from './shared.js';
 
 export const codexParser: Parser = {
@@ -116,7 +117,7 @@ export const codexParser: Parser = {
             costSource: 'neznáme',
           });
         }
-      } catch {
+      } catch (error) {
         // A failed file is never a complete contribution, including when a
         // compressed stream is corrupt or truncated after yielding records.
         result.records.length = recordsBefore;
@@ -129,6 +130,8 @@ export const codexParser: Parser = {
         }
         result.warnings++;
         result.partial = true;
+        if (error instanceof UnverifiedChecksumError)
+          result.warningDetails = [...(result.warningDetails ?? []), 'Zstd checksum nemožno overiť; súbor bol vynechaný.'];
       }
     }
     return result;

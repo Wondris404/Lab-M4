@@ -6,6 +6,8 @@ export interface Source {
   id: string;
   agent: string;
   name: string;
+  /** An approved source which fully covers this one, or null. */
+  coveredBy: string | null;
 }
 interface Page {
   result: {
@@ -29,7 +31,25 @@ export async function fetchUsage(
 ) {
   const records: UsageItem[] = [];
   const warnings: string[] = [];
+  const byId = new Map(sources.map((source) => [source.id, source]));
+  if (byId.size !== sources.length) throw new Error('Neplatný zoznam zdrojov Usage.');
   for (const source of sources) {
+    if (source.coveredBy !== null && typeof source.coveredBy !== 'string')
+      throw new Error('Aplikácia nepodporuje bezpečné spracovanie zdrojov Usage.');
+    const visited = new Set([source.id]);
+    let current = source;
+    while (current.coveredBy !== null) {
+      const parent = byId.get(current.coveredBy);
+      if (!parent || parent.agent !== source.agent || visited.has(parent.id))
+        throw new Error('Neplatné prekrytie zdrojov Usage.');
+      visited.add(parent.id);
+      current = parent;
+    }
+  }
+  if (sources.some((source) => source.coveredBy !== null))
+    warnings.push('Prekrývajúce sa zdroje sa započítali iba raz.');
+  for (const source of sources) {
+    if (source.coveredBy !== null) continue;
     let offset = 0;
     let total = 0;
     let snapshot: string | undefined;

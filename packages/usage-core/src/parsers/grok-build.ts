@@ -68,6 +68,9 @@ export function grokAccumulator(
       .update(
         JSON.stringify([
           sid ?? 'unknown',
+          // A trace id may later be associated with a different session.
+          // Its old events cannot suppress that session's usage.
+          (sid && sessions.get(sid)) ?? null,
           ctx.loop_index,
           timestamp,
           inputTokens,

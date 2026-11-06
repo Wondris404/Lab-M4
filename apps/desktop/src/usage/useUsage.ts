@@ -11,6 +11,8 @@ interface Page {
   result: {
     status: string;
     totalRecords: number;
+    offset: number;
+    snapshotId: string;
     records: UsageItem[];
     warnings: string[];
   };
@@ -30,6 +32,7 @@ export async function fetchUsage(
   for (const source of sources) {
     let offset = 0;
     let total = 0;
+    let snapshot: string | undefined;
     do {
       if (!active()) return { records, warnings };
       const page = await request<Page>('usage_scan', {
@@ -44,11 +47,15 @@ export async function fetchUsage(
         !Array.isArray(data.warnings) ||
         !Number.isSafeInteger(data.totalRecords) ||
         data.totalRecords < 0 ||
+        data.offset !== offset ||
         data.records.length > 500
       )
         throw new Error('Neplatná odpoveď služby Usage.');
+      if (typeof data.snapshotId !== 'string' || !/^[a-f0-9]{64}$/.test(data.snapshotId))
+        throw new Error('Služba Usage nepodporuje bezpečné stránkovanie; zostavte aktuálny sidecar.');
       if (offset === 0) {
         total = data.totalRecords;
+        snapshot = data.snapshotId;
         warnings.push(
           ...data.warnings.map((warning) => `${source.agent}: ${warning}`),
         );
@@ -57,6 +64,10 @@ export async function fetchUsage(
             `${source.agent}: čiastočné alebo nepodporované údaje.`,
           );
       }
+      if (data.snapshotId !== snapshot || data.totalRecords !== total)
+        throw new Error('Zdroj Usage sa počas stránkovania zmenil; obnovte údaje.');
+      if (offset + data.records.length > total)
+        throw new Error('Služba Usage vrátila neplatnú stránku.');
       if (!data.records.length && offset < total)
         throw new Error('Služba Usage vrátila neúplnú stránku.');
       records.push(...data.records.slice(0, Math.max(0, total - offset)));

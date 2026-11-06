@@ -2,7 +2,7 @@ import type { UsageItem } from './UsageTab';
 
 /** Escape spreadsheet formulas and delimiters; cost remains blank when unknown. */
 function cell(value: string): string {
-  const safe = /^[\s\u0000-\u001f]*[=+\-@]/.test(value) ? `'${value}` : value;
+  const safe = /^(?:[\u0000-\u001f]|[\s\u0000-\u001f]*[=+\-@])/.test(value) ? `'${value}` : value;
   return `"${safe.replace(/"/g, '""')}"`;
 }
 export function usageCsv(records: UsageItem[]): string {

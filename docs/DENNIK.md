@@ -172,3 +172,10 @@
 - Kontroly: Po merge prešlo `pnpm.cmd exec vitest run --configLoader runner` 56/56; ESLint, koreňový TypeScript a samostatný TypeScript desktopu prešli. Sada sidecar testovala predchádzajúci staging, nie novozabalený kód.
 - NEOVERENÉ: skutočný vzdialený stav oboch vetiev, ich CI, runtime Tauri/CSP, no-write SQLite snapshot a správnosť stránkovania pri súbežnej zmene zdroja.
 - Ďalší krok: Opraviť bezpečné stránkovanie UI a preveriť prekrývajúce sa zdroje, potom samostatne zapísať fake-only orchestration harness a pokračovať v natívnych approval protokoloch.
+
+## 2026-11-06 09:58 +01:00 (Europe/Bratislava) – Konzistentné stránky a formátovanie
+- Vetva `feat/usage-ui`; predchádzajúci merge commit `9c6bfcb3a4445df5d2c2e42739ca1bbee5f0a285`. Vzdialený server a CI zostávajú NEOVERENÉ pre sieťový blok.
+- Zmena: Protokol vytvára SHA-256 odtlačok normalizovaného celého výsledku po poliach; UI vyžaduje rovnaký odtlačok aj počet záznamov na každej stránke a pri zmene odmietne zmiešaný výpočet. UI tiež opravuje hranice slovenských skratiek a ošetruje CSV vzorce, riadiace znaky a oddeľovače.
+- Kontroly: `pnpm.cmd exec vitest run --configLoader runner` prešlo 62/62 vrátane zmeny zdroja medzi stránkami, formátovacích hraníc a CSV; cielený protokol/UI test 10/10, ESLint, koreňový a desktopový TypeScript prešli. Sidecar integračný test stále používa starší staging.
+- NEOVERENÉ: reálny Tauri runtime, CSP, aktualizovaný zabalený sidecar, CI a prekrývanie už schválených zdrojov. UI vyžaduje nový sidecar so snapshotom; starší odmietne s pokynom na zostavenie. Čítanie OpenCode zostáva zámerne vypnuté.
+- Ďalší krok: Bezpečne riešiť prekrývajúce sa zdroje bez poškodenia existujúceho zoznamu, uložiť fake-only orchestration a overiť natívne protokoly. Po obnovení prístupu overiť serverové vetvy, spustiť testy a pushnúť len feature vetvy.

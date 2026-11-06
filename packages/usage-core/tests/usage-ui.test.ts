@@ -63,6 +63,8 @@ describe('usage view data', () => {
         result: {
           status: 'partial',
           totalRecords: 501,
+          offset: args?.offset,
+          snapshotId: 'a'.repeat(64),
           records: args?.offset === 0 ? first : [item('codex', 2)],
           warnings: ['partial scan'],
         },
@@ -76,6 +78,19 @@ describe('usage view data', () => {
     expect(result.records).toHaveLength(501);
     expect(result.warnings).toContain('codex: partial scan');
     expect(request).toHaveBeenCalledTimes(2);
+  });
+
+  it('rejects a source changed between pages even when its record count is unchanged', async () => {
+    const request = vi.fn(async (_command: string, args?: Record<string, unknown>) => ({
+      result: {
+        status: 'ok', totalRecords: 501, offset: args?.offset,
+        snapshotId: (args?.offset === 0 ? 'a' : 'b').repeat(64),
+        records: args?.offset === 0 ? Array.from({ length: 500 }, () => item('codex', 1)) : [item('codex', 2)],
+        warnings: [],
+      },
+    })) as unknown as Request;
+    await expect(fetchUsage([{ id: 'source', agent: 'codex', name: 'logs' }], request, () => true))
+      .rejects.toThrow('počas stránkovania zmenil');
   });
 
   it('handles empty sources, cancellation and malformed pages', async () => {

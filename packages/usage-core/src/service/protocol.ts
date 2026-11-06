@@ -1,7 +1,9 @@
 import { lstat } from 'node:fs/promises';
+import { createHash, type Hash } from 'node:crypto';
 import { scanCached } from './cache.js';
 import { parserRegistry, type Parser } from '../parsers/index.js';
 import { providers, type Provider } from '../core/types.js';
+import type { ParseResult } from '../parsers/contracts.js';
 import { normalizeRecord } from './normalize.js';
 
 export interface ScanRequest {
@@ -9,6 +11,58 @@ export interface ScanRequest {
   requestId: string;
   method: 'scan';
   params: { agent: Provider; path: string; cachePath?: string; force?: boolean; offset?: number; limit?: number };
+}
+
+// Length framing prevents field-boundary collisions. Hash one field at a time,
+// rather than materializing a second serialized copy of the whole scan.
+function hashField(hash: Hash, value: string | number | boolean | undefined): void {
+  if (value === undefined) {
+    hash.update('u;');
+    return;
+  }
+  const encoded = String(value);
+  hash.update(`${typeof value}:${Buffer.byteLength(encoded, 'utf8')}:`);
+  hash.update(encoded, 'utf8');
+}
+
+/** Identifies exactly the normalized content and outcome used by every page. */
+export function scanSnapshotId(parsed: ParseResult): string {
+  const hash = createHash('sha256');
+  hashField(hash, 'lab-m4-usage-snapshot-v1');
+  hashField(hash, Boolean(parsed.partial));
+  hashField(hash, parsed.warnings);
+  const warningDetails = parsed.warningDetails ?? [];
+  hashField(hash, warningDetails.length);
+  for (const warning of warningDetails) hashField(hash, warning);
+  const mismatches = Object.entries(parsed.mismatchFields).sort(([a], [b]) => a < b ? -1 : a > b ? 1 : 0);
+  hashField(hash, mismatches.length);
+  for (const [key, count] of mismatches) {
+    hashField(hash, key);
+    hashField(hash, count);
+  }
+  hashField(hash, parsed.records.length);
+  for (const record of parsed.records) {
+    for (const value of [record.provider, record.sessionId, record.model, record.timestamp,
+      record.inputTokens, record.cachedInputTokens, record.outputTokens, record.reasoningTokens,
+      record.speed, record.costUsd, record.costSource]) hashField(hash, value);
+    const warnings = record.warnings ?? [];
+    hashField(hash, warnings.length);
+    for (const warning of warnings) hashField(hash, warning);
+  }
+  hashField(hash, parsed.limits.length);
+  for (const limit of parsed.limits) {
+    hashField(hash, limit.timestamp);
+    hashField(hash, limit.sessionId);
+    for (const window of [limit.primary, limit.secondary]) {
+      hashField(hash, Boolean(window));
+      if (window) {
+        hashField(hash, window.used_percent);
+        hashField(hash, window.window_minutes);
+        hashField(hash, window.resets_at);
+      }
+    }
+  }
+  return hash.digest('hex');
 }
 
 /** NEOVERENÉ: live SQLite WAL access may create SQLite shared-memory files. */
@@ -32,7 +86,7 @@ export async function handleRequest(input: unknown) {
   return {
     version: 1, requestId: request.requestId,
     result: {
-      status: parsed.partial ? 'partial' : 'ok', totalRecords: parsed.records.length, offset, warnings: [
+      status: parsed.partial ? 'partial' : 'ok', snapshotId: scanSnapshotId(parsed), totalRecords: parsed.records.length, offset, warnings: [
         ...(parsed.warnings ? [`${parsed.warnings} parser warnings`] : []),
         ...(parsed.warningDetails ?? []),
         ...Object.entries(parsed.mismatchFields).map(([kind, count]) => `${kind}: ${count}`),

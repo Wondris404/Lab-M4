@@ -41,6 +41,10 @@ jobs:
       - run: cargo fmt --manifest-path src-tauri/Cargo.toml --check
       - run: cargo clippy --manifest-path src-tauri/Cargo.toml -- -D warnings
       - run: cargo test --manifest-path src-tauri/Cargo.toml
+      # This explicit native ConPTY smoke does not exercise the Tauri GUI.
+      - name: PowerShell PTY smoke (Windows)
+        timeout-minutes: 3
+        run: cargo test --manifest-path src-tauri/Cargo.toml --test terminal_pty_smoke -- --ignored --nocapture
       - run: pnpm tauri build
       - uses: actions/upload-artifact@v4
         with:

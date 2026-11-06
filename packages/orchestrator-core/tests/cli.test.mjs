@@ -2,6 +2,8 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
+import { createFakeSession, resumeFake, stepFake } from '../src/fake-engine.mjs';
+import { createSession, loadSession, updateSession } from '../src/fake-store.mjs';
 
 const cli = fileURLToPath(new URL('../src/cli.mjs', import.meta.url));
 function run(...args) {
@@ -44,4 +46,20 @@ test('fake CLI persists STOP during approval and rejects resume', () => {
   assert.equal(ok('stop', state.id).status, 'cancelled');
   assert.notEqual(run('approve', state.id, pending.approval.id).status, 0);
   assert.notEqual(run('resume', state.id).status, 0);
+});
+
+test('timeout at a full event log is persisted with the approval invalidated', async () => {
+  const state = createFakeSession({ now: 0 });
+  for (let i = 0; i < 31; i++) {
+    stepFake(state, 0);
+    resumeFake(state, 0);
+  }
+  stepFake(state, 0);
+  assert.equal(state.events.length, 64);
+  await createSession(state);
+  await updateSession(state.id, (stored) => stepFake(stored, stored.deadline));
+  const saved = await loadSession(state.id);
+  assert.equal(saved.status, 'failed');
+  assert.equal(saved.approval, null);
+  assert.equal(saved.events.at(-1).type, 'timeout');
 });

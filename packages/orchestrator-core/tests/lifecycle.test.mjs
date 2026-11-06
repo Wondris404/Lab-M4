@@ -85,3 +85,38 @@ test('approval cannot authorize changed action, and STOP survives a full event l
   assert.equal(state.approval, null);
   assert.equal(state.events.at(-1).type, 'fake_stop');
 });
+
+test('timeout is recorded even when the synthetic event log is full', () => {
+  const state = createFakeSession({ now });
+  // This sequence fills the log using only supported transitions.
+  for (let i = 0; i < 31; i++) {
+    stepFake(state, now);
+    resumeFake(state, now);
+  }
+  stepFake(state, now);
+  assert.equal(state.events.length, 64);
+  assert.equal(state.status, 'waiting-approval');
+  stepFake(state, state.deadline);
+  assert.equal(state.status, 'failed');
+  assert.equal(state.task.status, 'failed');
+  assert.equal(state.approval, null);
+  assert.equal(state.events.at(-1).type, 'timeout');
+  assert.equal(state.events.length, 65);
+});
+
+test('a full synthetic event log fails closed before another transition', () => {
+  const state = createFakeSession({ now });
+  for (let i = 0; i < 31; i++) {
+    stepFake(state, now);
+    resumeFake(state, now);
+  }
+  stepFake(state, now);
+  const approval = state.approval.id;
+  decideFakeApproval(state, approval, 'approve', now);
+  assert.equal(state.status, 'failed');
+  assert.equal(state.task.status, 'failed');
+  assert.equal(state.approval, null);
+  assert.equal(state.events.at(-1).type, 'event_limit');
+  assert.equal(state.events.length, 65);
+  assert.throws(() => decideFakeApproval(state, approval, 'approve', now), /terminal/);
+});

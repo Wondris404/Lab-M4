@@ -50,3 +50,40 @@ test('rejects inconsistent component totals without changing the ledger', () => 
   restored.threads.synthetic = { inputTokens: 10, cachedInputTokens: 0, outputTokens: 0, reasoningOutputTokens: 0, totalTokens: 0 };
   assert.throws(() => usageBudgetStatus(restored), /Invalid aggregate/);
 });
+
+test('rejects cumulative subset increases larger than their parent increases', () => {
+  const ledger = createUsageLedger();
+  const first = event('thread', 0);
+  first.params.tokenUsage.total = {
+    inputTokens: 100, cachedInputTokens: 0,
+    outputTokens: 100, reasoningOutputTokens: 0, totalTokens: 200,
+  };
+  recordCodexUsage(ledger, first);
+  const before = structuredClone(ledger);
+  for (const change of [
+    { inputTokens: 101, cachedInputTokens: 2, outputTokens: 100, reasoningOutputTokens: 0, totalTokens: 201 },
+    { inputTokens: 100, cachedInputTokens: 0, outputTokens: 101, reasoningOutputTokens: 2, totalTokens: 201 },
+  ]) {
+    const next = event('thread', 0);
+    next.params.tokenUsage.total = change;
+    assert.throws(() => recordCodexUsage(ledger, next), /reconcile/i);
+    assert.deepEqual(ledger, before);
+  }
+  const valid = event('thread', 0);
+  valid.params.tokenUsage.total = {
+    inputTokens: 102, cachedInputTokens: 2,
+    outputTokens: 101, reasoningOutputTokens: 1, totalTokens: 203,
+  };
+  assert.equal(recordCodexUsage(ledger, valid).reportedTokens, 203);
+});
+
+test('rejects an invalid existing thread before modifying the ledger', () => {
+  const ledger = createUsageLedger();
+  ledger.threads.corrupt = {
+    inputTokens: 5, cachedInputTokens: 6,
+    outputTokens: 0, reasoningOutputTokens: 0, totalTokens: 5,
+  };
+  const before = structuredClone(ledger);
+  assert.throws(() => recordCodexUsage(ledger, event('new', 1)), /Invalid aggregate/);
+  assert.deepEqual(ledger, before);
+});

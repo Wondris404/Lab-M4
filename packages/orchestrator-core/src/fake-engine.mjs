@@ -7,8 +7,10 @@ const MAX_EVENTS = 64;
 const MAX_ATTEMPTS = 2;
 
 function event(state, type) {
-  // STOP must remain available even when the bounded event log is full.
-  if (state.events.length >= MAX_EVENTS && type !== 'fake_stop') throw new Error('Synthetic event limit reached');
+  // Reserve one terminal event beyond the ordinary limit. This lets timeout,
+  // STOP and log exhaustion remain durable when no regular slots remain.
+  if (state.events.length >= MAX_EVENTS && !['fake_stop', 'timeout', 'event_limit'].includes(type))
+    throw new Error('Synthetic event limit reached');
   state.events.push({ sequence: state.events.length + 1, type });
 }
 
@@ -21,6 +23,13 @@ function active(state, now) {
     state.task.status = 'failed';
     state.approval = null;
     event(state, 'timeout');
+    return false;
+  }
+  if (state.events.length >= MAX_EVENTS) {
+    state.status = 'failed';
+    state.task.status = 'failed';
+    state.approval = null;
+    event(state, 'event_limit');
     return false;
   }
   return true;

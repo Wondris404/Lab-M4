@@ -24,9 +24,20 @@ export function recordCodexUsage(ledger, event) {
   const current = tokenUsage.total;
   if (!validTotals(current))
     throw new Error('Invalid token totals');
+  // Validate the complete existing ledger before modifying it. A corrupt
+  // unrelated thread must not cause a later failure after this update sticks.
+  usageBudgetStatus(ledger);
   const previous = Object.hasOwn(ledger.threads, threadId) ? ledger.threads[threadId] : undefined;
   if (previous && fields.some((key) => current[key] < previous[key]))
     throw new Error('Token total decreased; reconcile before continuing');
+  // These snapshots are cumulative and the detailed counts are subsets of
+  // input/output. Their increments cannot exceed their parent increments. If
+  // the provider revises old classification, reconcile instead of accepting
+  // an internally contradictory cumulative series as trusted accounting.
+  if (previous && (
+    current.cachedInputTokens - previous.cachedInputTokens > current.inputTokens - previous.inputTokens ||
+    current.reasoningOutputTokens - previous.reasoningOutputTokens > current.outputTokens - previous.outputTokens
+  )) throw new Error('Token subset increment inconsistent; reconcile before continuing');
   const next = Object.fromEntries(fields.map((key) => [key, current[key]]));
   const others = Object.entries(ledger.threads).filter(([id]) => id !== threadId);
   const aggregate = others.reduce((sum, [, usage]) => sum + usage.totalTokens, current.totalTokens);

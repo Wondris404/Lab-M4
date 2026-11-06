@@ -305,3 +305,8 @@
 - Kontroly: Cielené testy xterm a capability `pnpm.cmd exec vitest run --configLoader runner packages/usage-core/tests/xterm-handshake.test.ts packages/usage-core/tests/desktop-permissions.test.ts` prešli 3/3; koreňový TypeScript a cielený ESLint prešli. Prvý TypeScript pokus zlyhal na nedostupnom typovom importe izolovaného desktop balíka, test bol upravený bez zmeny závislostí a opakovaná kontrola prešla.
 - NEOVERENÉ: Tauri event/IPC prepojenie, viditeľná PowerShell relácia, prepínanie, zatvorenie a obnova okna. Computer Use okno nevidí; pôvodný debug executable je starší než oprava capability. Zelené ikony a nesledované súbory zostali nedotknuté.
 - Ďalší krok: Spustiť aktuálny build vo viditeľnej používateľskej relácii a overiť celý tok; nepripisovať tento unit test ako dôkaz fungujúceho GUI.
+
+## 2026-11-06 15:13 +01:00 (Europe/Bratislava) – Diagnostika zlyhaného CI
+- Vetva `feat/orchestrator-foundation`, predchádzajúci a vzdialený commit `777224f7e232706245b5fec9f4ec797797dce19b`. CI https://github.com/Wondris404/Lab-M4/actions/runs/42231521508: Node prešiel, Windows test Job Object zlyhal; ďalšie Rust kontroly a build sa nespustili.
+- Zlyhanie `job-stop-proof.exe --self-test` reprodukované lokálne; doplnená diagnostika počtu procesov a stavu workera. Lokálne test hlási tri procesy v jobe a bežiaci worker, exit 1; toto ešte nevysvetľuje príčinu na GitHub runneri. Prvý pokus o opätovné zostavenie na rovnaké meno zlyhal linkerom LNK1104, zostavenie pod novým názvom prešlo.
+- NEOVERENÉ: príčina tretej položky a stav procesov na CI; test ani ochrany sa nevypínali. Ďalší krok: zistiť identitu členov jobu a prečo ich test zaznamenáva viac, až potom navrhnúť a overiť opravu. Zachovať používateľove súbory a neukončovať cudzie procesy.

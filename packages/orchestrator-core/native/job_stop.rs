@@ -265,7 +265,15 @@ mod windows_test {
                 break ids;
             }
             if ids.len() > 2 || Instant::now() >= deadline {
-                return Err(io::Error::other("Expected worker and grandchild"));
+                let worker_state = match wait_handle(&process, 0)? {
+                    WAIT_OBJECT_0 => "exited",
+                    WAIT_TIMEOUT => "running",
+                    _ => "unexpected wait result",
+                };
+                return Err(io::Error::other(format!(
+                    "Expected worker and grandchild; found {} job processes, worker {worker_state}",
+                    ids.len()
+                )));
             }
             sleep(Duration::from_millis(25));
         };

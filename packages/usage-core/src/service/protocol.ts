@@ -42,7 +42,8 @@ export function scanSnapshotId(parsed: ParseResult): string {
   }
   hashField(hash, parsed.records.length);
   for (const record of parsed.records) {
-    for (const value of [record.provider, record.sessionId, record.model, record.timestamp,
+    for (const value of [record.provider, record.sessionId,
+      record.sessionKnown, record.model, record.timestamp,
       record.inputTokens, record.cachedInputTokens, record.outputTokens, record.reasoningTokens,
       record.speed, record.costUsd, record.costSource]) hashField(hash, value);
     const warnings = record.warnings ?? [];
@@ -92,7 +93,7 @@ export async function handleRequest(input: unknown) {
         ...Object.entries(parsed.mismatchFields).map(([kind, count]) => `${kind}: ${count}`),
       ],
       records: parsed.records.slice(offset, offset + limit).map((r) => ({
-        agent: r.provider, model: r.model, session: r.sessionId, timestamp: r.timestamp,
+        agent: r.provider, model: r.model, session: r.sessionId, sessionKnown: r.sessionKnown !== false, timestamp: r.timestamp,
         input: r.inputTokens, output: r.outputTokens, cached: r.cachedInputTokens,
         reasoning: r.reasoningTokens, ...(r.costUsd !== undefined && { costUsd: r.costUsd }), warnings: r.warnings ?? [],
       })),

@@ -6,6 +6,6 @@ function cell(value: string): string {
   return `"${safe.replace(/"/g, '""')}"`;
 }
 export function usageCsv(records: UsageItem[]): string {
-  const rows = records.map(r => [r.timestamp, r.agent, r.model, r.session, String(r.input), String(r.output), String(r.cached), String(r.reasoning), r.costUsd === undefined ? '' : String(r.costUsd)].map(cell).join(';'));
+  const rows = records.map(r => [r.timestamp, r.agent, r.model, r.sessionKnown === false ? '' : r.session, String(r.input), String(r.output), String(r.cached), String(r.reasoning), r.costUsd === undefined ? '' : String(r.costUsd)].map(cell).join(';'));
   return ['timestamp;agent;model;session;input;output;cached;reasoning;cost_usd', ...rows].join('\r\n') + '\r\n';
 }

@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-usage-list-sources"
+description = "Enables the usage_list_sources command without any pre-configured scope."
+commands.allow = ["usage_list_sources"]
+
+[[permission]]
+identifier = "deny-usage-list-sources"
+description = "Denies the usage_list_sources command without any pre-configured scope."
+commands.deny = ["usage_list_sources"]

@@ -10,6 +10,7 @@ import { getCurrentWindow, UserAttentionType } from "@tauri-apps/api/window";
 import { open } from "@tauri-apps/plugin-dialog";
 import "@xterm/xterm/css/xterm.css";
 import { shouldWaitForCursorCorrection } from "./terminalOutput";
+import { createTerminalSession } from "./terminalSession";
 import openaiIcon from "./assets/ai-openai.svg";
 import claudeIcon from "./assets/ai-claude.svg";
 import opencodeIcon from "./assets/ai-opencode.svg";
@@ -1399,6 +1400,7 @@ function App() {
   const [renamingFolderId, setRenamingFolderId] = useState<string | null>(null);
   const [renameDraft, setRenameDraft] = useState("");
   const [agentToasts, setAgentToasts] = useState<AgentToast[]>([]);
+  const [terminalError, setTerminalError] = useState<string | null>(null);
   const [blinkingPanes, setBlinkingPanes] = useState<Set<string>>(new Set());
   const [paneDictation, setPaneDictation] = useState<PaneDictationState | null>(null);
   const [headerMenuOpen, setHeaderMenuOpen] = useState(false);
@@ -2289,7 +2291,7 @@ function App() {
 
   handlePtyExitRef.current = handlePtyExit;
 
-  const createSession = useCallback(async (folder?: string | null) => {
+  const createSession = useCallback(async (folder?: string | null) => createTerminalSession(async () => {
     const win = await createWin(folder ?? null);
     const session: Session = {
       id: `sess-${Date.now()}`,
@@ -2310,7 +2312,7 @@ function App() {
       )
     );
     setActiveSessionId(session.id);
-  }, [createWin]);
+  }, setTerminalError), [createWin]);
 
   const createLinkedSession = useCallback(async () => {
     const selected = await open({ directory: true, multiple: false });
@@ -4139,12 +4141,27 @@ function App() {
           document.body
         )}
 
-      {agentToasts.length > 0 && (
+      {(terminalError !== null || agentToasts.length > 0) && (
         <div
           className="agent-toast-stack"
           aria-live="polite"
           aria-atomic="false"
         >
+          {terminalError !== null && (
+            <div className="agent-toast warning" role="alert">
+              <div className="agent-toast-main">
+                <span className="agent-toast-title">Could not create terminal session</span>
+                <span className="agent-toast-meta">{terminalError}</span>
+              </div>
+              <button
+                className="agent-toast-close"
+                title="Close alert"
+                onClick={() => setTerminalError(null)}
+              >
+                x
+              </button>
+            </div>
+          )}
           {agentToasts.map((toast) => {
             const warning = toast.status === "warning";
             return (

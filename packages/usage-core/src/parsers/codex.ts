@@ -1,7 +1,6 @@
 import { emptyResult, type Parser, type LimitWindow } from './contracts.js';
 import {
   count,
-  ExpansionLimitError,
   findCodexFiles,
   lines,
   newExpansionBudget,
@@ -116,16 +115,16 @@ export const codexParser: Parser = {
             costSource: 'neznáme',
           });
         }
-      } catch (error) {
-        if (error instanceof ExpansionLimitError) {
-          result.records.length = recordsBefore;
-          result.limits.length = limitsBefore;
-          result.warnings = warningsBefore;
-          for (const [id, signature] of addedSignatures) {
-            const signatures = seen.get(id);
-            signatures?.delete(signature);
-            if (signatures?.size === 0) seen.delete(id);
-          }
+      } catch {
+        // A failed file is never a complete contribution, including when a
+        // compressed stream is corrupt or truncated after yielding records.
+        result.records.length = recordsBefore;
+        result.limits.length = limitsBefore;
+        result.warnings = warningsBefore;
+        for (const [id, signature] of addedSignatures) {
+          const signatures = seen.get(id);
+          signatures?.delete(signature);
+          if (signatures?.size === 0) seen.delete(id);
         }
         result.warnings++;
         result.partial = true;

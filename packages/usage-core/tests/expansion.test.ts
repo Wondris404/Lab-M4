@@ -2,6 +2,7 @@ import { resolve } from 'node:path';
 import { readFile, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
+import { codexParser } from '../src/parsers/codex.js';
 import {
   ExpansionLimitError,
   lines,
@@ -61,5 +62,17 @@ describe('compressed usage expansion limits', () => {
     budget.remaining = used - 1;
     await expect(read(budget)).rejects.toBeInstanceOf(ExpansionLimitError);
     expect(budget.remaining).toBe(0);
+  });
+
+  it('discards a Codex file when a later compressed frame is truncated', async () => {
+    const dir = await testTempDir('zstd-truncated-');
+    const path = join(dir, 'truncated.jsonl.zst');
+    const frame = await readFile(fixture);
+    await writeFile(path, Buffer.concat([frame, frame.subarray(0, 6)]));
+    const result = await codexParser.parse(path);
+    expect(result.partial).toBe(true);
+    expect(result.warnings).toBe(1);
+    expect(result.records).toEqual([]);
+    expect(result.limits).toEqual([]);
   });
 });

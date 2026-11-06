@@ -285,3 +285,9 @@
 - Kontroly: `pnpm.cmd exec vitest run --configLoader runner packages/usage-core/tests/desktop-permissions.test.ts` prešlo 2/2. Existujúci debug `wraith.exe` v hlavnom checkoute má čas 13:03 a capability s opravou čas 13:28; generovaný capability snapshot je ešte starší. Spustenie pôvodného súboru teda nemožno považovať za test nových oprávnení.
 - NEOVERENÉ: Nový build vo viditeľnej používateľskej relácii, vytvorenie terminálu, `Get-Date` a zatvorenie okna. Izolovaný testovací build sa síce zostavil, ale Computer Use jeho okno nevidel; neobchádzali sa systémové hranice. Zelené ikony a nesledované súbory zostali zachované.
 - Ďalší krok: Zostaviť aktuálny zdroj v používateľovom bežnom Windows prostredí a overiť viditeľné správanie, alebo sprístupniť toto okno povolenému nástroju. Neoznačovať terminal ani zatvorenie za opravené bez výsledku.
+
+## 2026-11-06 14:53 +01:00 (Europe/Bratislava) – Generované oprávnenia buildu
+- Vetva `feat/orchestrator-foundation`; predchádzajúci lokálny commit `9fa13643c65ffcadedda58960f8ec4e1deb8b859`, posledný používateľom potvrdený vzdialený commit `332e2c75d1996f6468daa32d6a20907701d7c133`; CI NEOVERENÉ.
+- Kontrola: Generovaný `capabilities.json` v izolovanom auditnom worktree po úspešnom Rust builde obsahuje konkrétne `core:window:allow-destroy`, `allow-spawn-powershell` aj ďalšie terminálové a session oprávnenia. To potvrdzuje spracovanie opraveného súboru buildom, nie úspešné volania vo WebView.
+- NEOVERENÉ: Nový build v používateľovom viditeľnom okne, nová relácia, `Get-Date`, prepínanie, zatvorenie a obnova. Pôvodný debug executable je starší než oprava. Žiadne ikony či nesledované súbory sa nemenili.
+- Ďalší krok: V bežnom interaktívnom Windows prostredí spustiť nový build a overiť vyššie uvedené kroky; po výsledku pokračovať konkrétnou opravou alebo potvrdením. Auditné pracovné súbory nečistiť bez povolenia.

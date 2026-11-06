@@ -26,12 +26,21 @@ export interface JsonlAccumulator {
 }
 export type CursorResult = ParseResult & { _fingerprints?: string[] };
 
-async function tailHash(file: FileHandle, offset: number): Promise<string> {
-  const length = Math.min(offset, 4096);
-  const buffer = Buffer.alloc(length);
-  const { bytesRead } = await file.read(buffer, 0, length, offset - length);
-  if (bytesRead !== length) throw new Error('Source changed while scanning');
-  return createHash('sha256').update(buffer).digest('hex');
+// Metadata and a tail sample cannot prove that an older prefix was unchanged.
+// Hash the complete processed prefix before reusing parsed contributions.
+async function prefixHash(file: FileHandle, offset: number): Promise<string> {
+  const hash = createHash('sha256');
+  const buffer = Buffer.alloc(64 * 1024);
+  let position = 0;
+  while (position < offset) {
+    const { bytesRead } = await file.read(
+      buffer, 0, Math.min(buffer.length, offset - position), position,
+    );
+    if (!bytesRead) throw new Error('Source changed while scanning');
+    hash.update(buffer.subarray(0, bytesRead));
+    position += bytesRead;
+  }
+  return hash.digest('hex');
 }
 
 /** Persist only normalized records, pseudonymous parser state and file metadata. */
@@ -63,20 +72,30 @@ export async function scanJsonlAppend(
   try {
     const info = await file.stat();
     const sameFile = row && row.dev === info.dev && row.ino === info.ino;
+    const samePrefix =
+      !force && sameFile && row.offset <= row.size && row.offset <= info.size &&
+      (await prefixHash(file, row.offset)) === row.tail;
     if (
       !force &&
-      sameFile &&
+      samePrefix &&
       row.size === info.size &&
       row.mtime === info.mtimeMs &&
       row.ctime === info.ctimeMs
-    )
+    ) {
+      const after = await file.stat();
+      const currentPath = await lstat(path);
+      if (
+        currentPath.isSymbolicLink() || after.dev !== currentPath.dev ||
+        after.ino !== currentPath.ino || after.size !== info.size ||
+        after.mtimeMs !== info.mtimeMs || after.ctimeMs !== info.ctimeMs
+      ) return { ...emptyResult(), warnings: 1, partial: true };
       return JSON.parse(row.result) as CursorResult;
+    }
     const append =
       !force &&
-      sameFile &&
+      samePrefix &&
       info.size > row.size &&
-      row.offset <= row.size &&
-      (await tailHash(file, row.offset)) === row.tail;
+      row.offset <= row.size;
     const oldResult = append
       ? (JSON.parse(row.result) as CursorResult)
       : emptyResult();
@@ -119,6 +138,7 @@ export async function scanJsonlAppend(
         return { ...emptyResult(), warnings: 1, partial: true };
       throw error;
     }
+    const tail = await prefixHash(file, offset);
     const endInfo = await file.stat();
     const pathInfo = await lstat(path);
     if (
@@ -143,7 +163,6 @@ export async function scanJsonlAppend(
         ],
       }),
     };
-    const tail = await tailHash(file, offset);
     await run(
       'INSERT OR REPLACE INTO grok_cursor (id, dev, ino, size, mtime, ctime, offset, tail, state, result) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
       [

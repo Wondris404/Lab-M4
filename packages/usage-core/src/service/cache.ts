@@ -61,9 +61,9 @@ export async function scanCached(parser: Parser, source: string, cachePath: stri
     if (parser === codexParser && original.isDirectory())
       return await scanCodexDirectory(db, key, canonical, pseudonym, force);
     if (parser === grokBuildParser && original.isFile() && !/\.zst$/i.test(canonical))
-      return await scanJsonlAppend(db, key, canonical, (previous) => grokAccumulator(previous as GrokCursorState | undefined, pseudonym), force);
+      return await scanJsonlAppend(db, `${key}:v2`, canonical, (previous) => grokAccumulator(previous as GrokCursorState | undefined, pseudonym), force);
     if (parser === codexParser && original.isFile() && /\.jsonl$/i.test(canonical))
-      return await scanJsonlAppend(db, `${key}:v3`, canonical, (previous) => codexAccumulator(previous as CodexCursorState | undefined, pseudonym), force);
+      return await scanJsonlAppend(db, `${key}:v4`, canonical, (previous) => codexAccumulator(previous as CodexCursorState | undefined, pseudonym), force);
     const row = await new Promise<{ signature: string; result: string } | undefined>((resolve, reject) => db.get('SELECT signature, result FROM scan_cache WHERE id = ?', [key], (e, value) => e ? reject(e) : resolve(value as { signature: string; result: string } | undefined)));
     if (!force && row?.signature === signature) return JSON.parse(row.result) as ParseResult;
     const parsed = await parser.parse(canonical);

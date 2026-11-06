@@ -1,4 +1,4 @@
-import { appendFile, readFile, rename, writeFile } from 'node:fs/promises';
+import { appendFile, open, readFile, rename, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { expect, it } from 'vitest';
 import { grokBuildParser } from '../src/parsers/grok-build.js';
@@ -77,4 +77,27 @@ it('scans appends, defers partial lines, and rescans on truncation and rotation'
       (item) => item.inputTokens,
     ),
   ).toEqual([60]);
+});
+
+it('invalidates an old rewrite outside the last 4 KiB followed by an append', async () => {
+  const dir = await testTempDir('grok-prefix-');
+  const file = join(dir, 'grok.jsonl');
+  const cache = join(dir, 'cache.sqlite');
+  const content = `${context('synthetic-session')}\n${usage(1)}\n${' '.repeat(6000)}\n`;
+  await writeFile(file, content);
+  expect((await scanCached(grokBuildParser, file, cache)).records[0]?.inputTokens).toBe(10);
+  const original = Buffer.from(content);
+  const index = original.indexOf(Buffer.from('"prompt_tokens":10'));
+  expect(index).toBeGreaterThanOrEqual(0);
+  const handle = await open(file, 'r+');
+  try {
+    await handle.write(Buffer.from('"prompt_tokens":90'), 0, 18, index);
+  } finally {
+    await handle.close();
+  }
+  await appendFile(file, `${usage(2)}\n`);
+  const cached = await scanCached(grokBuildParser, file, cache);
+  const full = await grokBuildParser.parse(file);
+  expect(cached.records.map((record) => record.inputTokens)).toEqual([90, 20]);
+  expect(cached.records.map((record) => record.inputTokens)).toEqual(full.records.map((record) => record.inputTokens));
 });

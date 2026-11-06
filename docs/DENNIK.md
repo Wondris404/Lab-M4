@@ -331,3 +331,7 @@
 - Pri syntetickom teste premapovanie rovnakého `sid` na druhú reláciu spôsobilo zahodenie jej udalosti, ak sa zhodovali čas, index a počty. Do existujúceho deduplikačného kľúča sa pridala aktuálne priradená relácia; opakovanie v tej istej relácii zostáva odfiltrované.
 - Po zmene sa zneplatní starý kurzor pre Grok JSONL a verzia cache pre komprimovaný Grok zdroj. Cielené `pnpm exec vitest run packages/usage-core/tests/grok-session-dedupe.test.ts packages/usage-core/tests/grok-cursor.test.ts packages/usage-core/tests/parsers.test.ts packages/usage-core/tests/cache.test.ts`: 20/20, exit 0; `pnpm lint`: exit 0.
 - NEOVERENÉ: Grok neposkytuje v skúmanom formáte potvrdený jednoznačný identifikátor každej inference udalosti. Existujúca deduplikácia podľa `sid`, relácie, indexu, času a počtov preto zostáva heuristikou a môže zlúčiť dve nerozlíšiteľné udalosti tej istej relácie. Živý Grok a Windows GUI neboli spustené.
+
+## 2026-11-06 23:50 +01:00 (Europe/Bratislava) – Opravy syntetickej orchestrácie
+- Opravené uloženie timeoutu pri plnom logu a kontrola rozporných prírastkov tokenových podmnožín pred zmenou ledgeru. Ide výhradne o syntetický režim; živé adaptéry a vynútiteľné approvals chýbajú.
+- Po zostavení sidecaru prešli `pnpm lint`, `pnpm typecheck`, `pnpm test` (80 testov) a `pnpm test:orchestrator` (15 testov), exit 0. Windows GUI, PTY, nainštalovaná aplikácia a živá orchestrácia zostávajú NEOVERENÉ.

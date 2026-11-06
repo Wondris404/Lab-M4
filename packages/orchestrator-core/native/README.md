@@ -21,3 +21,17 @@ case the test must fail rather than fall back to an unbounded worker. This test
 does not prove behavior of Codex, Grok, their launchers or existing user sessions,
 nor does it implement cancellation while waiting for approval, restart recovery,
 or enforcement of filesystem, network or approval policy. A job is not a sandbox.
+
+`job_supervisor.rs` is a separate reusable lifecycle primitive, exercised by
+`supervisor_test.rs`. It creates an `.exe` suspended, places it in a private
+kill-on-close job before resuming, and can terminate the job with a bounded
+wait for zero active processes. It is **not wired to real workers** and does
+not implement stdin/stdout transport, environment filtering, workspace/network
+isolation or approval enforcement. It currently inherits the supervisor's
+environment. It must not be used to enable a live agent mode until these
+requirements have independently been implemented and verified.
+
+```powershell
+rustc --edition 2021 packages/orchestrator-core/native/supervisor_test.rs -o .lab-m4/test-tmp/supervisor-test.exe
+.\.lab-m4\test-tmp\supervisor-test.exe
+```

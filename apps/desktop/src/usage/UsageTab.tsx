@@ -102,7 +102,7 @@ export function UsageTab() {
         <button disabled={loading} onClick={() => void refresh()}>
           Obnoviť
         </button>
-        <button disabled={loading || !shown.length} onClick={download}>
+        <button disabled={loading || status === 'error' || !shown.length} onClick={download}>
           Exportovať CSV
         </button>
       </div>

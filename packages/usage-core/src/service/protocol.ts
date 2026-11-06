@@ -43,7 +43,7 @@ export function scanSnapshotId(parsed: ParseResult): string {
   hashField(hash, parsed.records.length);
   for (const record of parsed.records) {
     for (const value of [record.provider, record.sessionId,
-      (record as typeof record & { sessionKnown?: boolean }).sessionKnown, record.model, record.timestamp,
+      record.sessionKnown, record.model, record.timestamp,
       record.inputTokens, record.cachedInputTokens, record.outputTokens, record.reasoningTokens,
       record.speed, record.costUsd, record.costSource]) hashField(hash, value);
     const warnings = record.warnings ?? [];

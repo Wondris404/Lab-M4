@@ -1933,10 +1933,6 @@ function App() {
         console.warn("Agent hook server is unavailable", error);
       });
 
-    void invoke("ensure_agent_hooks").catch((error) => {
-      console.warn("Agent hook installation failed", error);
-    });
-
     return () => {
       cancelled = true;
     };

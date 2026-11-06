@@ -40,7 +40,7 @@ export async function handleRequest(input: unknown) {
       records: parsed.records.slice(offset, offset + limit).map((r) => ({
         agent: r.provider, model: r.model, session: r.sessionId, timestamp: r.timestamp,
         input: r.inputTokens, output: r.outputTokens, cached: r.cachedInputTokens,
-        reasoning: r.reasoningTokens, ...(r.costUsd !== undefined && { cost: r.costUsd }), warnings: r.warnings ?? [],
+        reasoning: r.reasoningTokens, ...(r.costUsd !== undefined && { costUsd: r.costUsd }), warnings: r.warnings ?? [],
       })),
     },
   };

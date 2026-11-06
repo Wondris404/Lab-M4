@@ -30,3 +30,23 @@ test('rejects invalid or decreasing cumulative totals and handles hostile IDs', 
   assert.throws(() => recordCodexUsage(ledger, event('bad', -1)), /Invalid token/);
   assert.throws(() => recordCodexUsage(ledger, { method: 'other' }), /Invalid usage/);
 });
+
+test('rejects inconsistent component totals without changing the ledger', () => {
+  const ledger = createUsageLedger();
+  for (const counts of [
+    { inputTokens: 999999, outputTokens: 0, cachedInputTokens: 0, reasoningOutputTokens: 0, totalTokens: 0 },
+    { inputTokens: 5, outputTokens: 2, cachedInputTokens: 6, reasoningOutputTokens: 0, totalTokens: 7 },
+    { inputTokens: 5, outputTokens: 2, cachedInputTokens: 0, reasoningOutputTokens: 3, totalTokens: 7 },
+    { inputTokens: 5, outputTokens: 2, cachedInputTokens: 0, reasoningOutputTokens: 0, totalTokens: 6 },
+    { inputTokens: Number.MAX_SAFE_INTEGER, outputTokens: 1, cachedInputTokens: 0, reasoningOutputTokens: 0, totalTokens: Number.MAX_SAFE_INTEGER },
+  ]) {
+    const invalid = event('synthetic', 0);
+    invalid.params.tokenUsage.total = counts;
+    assert.throws(() => recordCodexUsage(ledger, invalid), /Invalid token totals/);
+    assert.equal(usageBudgetStatus(ledger).reportedTokens, 0);
+    assert.equal(usageBudgetStatus(ledger).canSchedule, false);
+  }
+  const restored = createUsageLedger();
+  restored.threads.synthetic = { inputTokens: 10, cachedInputTokens: 0, outputTokens: 0, reasoningOutputTokens: 0, totalTokens: 0 };
+  assert.throws(() => usageBudgetStatus(restored), /Invalid aggregate/);
+});

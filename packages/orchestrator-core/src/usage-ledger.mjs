@@ -2,6 +2,13 @@
 // consumes those notifications; it does not launch an agent or infer billing.
 const fields = ['inputTokens', 'cachedInputTokens', 'outputTokens', 'reasoningOutputTokens', 'totalTokens'];
 
+function validTotals(value) {
+  if (!value || fields.some((key) => !Number.isSafeInteger(value[key]) || value[key] < 0)) return false;
+  const combined = value.inputTokens + value.outputTokens;
+  return Number.isSafeInteger(combined) && value.totalTokens === combined &&
+    value.cachedInputTokens <= value.inputTokens && value.reasoningOutputTokens <= value.outputTokens;
+}
+
 export function createUsageLedger({ tokenLimit = 100_000, costLimitEur = 5 } = {}) {
   if (!Number.isSafeInteger(tokenLimit) || tokenLimit <= 0 ||
       !Number.isFinite(costLimitEur) || costLimitEur <= 0) throw new Error('Invalid budget');
@@ -15,7 +22,7 @@ export function recordCodexUsage(ledger, event) {
   if (typeof threadId !== 'string' || !threadId || threadId.length > 256 || !tokenUsage?.total)
     throw new Error('Invalid usage event');
   const current = tokenUsage.total;
-  if (fields.some((key) => !Number.isSafeInteger(current[key]) || current[key] < 0))
+  if (!validTotals(current))
     throw new Error('Invalid token totals');
   const previous = Object.hasOwn(ledger.threads, threadId) ? ledger.threads[threadId] : undefined;
   if (previous && fields.some((key) => current[key] < previous[key]))
@@ -32,7 +39,7 @@ export function recordCodexUsage(ledger, event) {
 export function usageBudgetStatus(ledger) {
   if (ledger?.version !== 1) throw new Error('Invalid ledger');
   const tokens = Object.values(ledger.threads).reduce((sum, usage) => {
-    if (!Number.isSafeInteger(usage.totalTokens) || usage.totalTokens < 0 ||
+    if (!validTotals(usage) ||
         !Number.isSafeInteger(sum + usage.totalTokens)) throw new Error('Invalid aggregate');
     return sum + usage.totalTokens;
   }, 0);

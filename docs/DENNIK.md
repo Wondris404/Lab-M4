@@ -247,3 +247,10 @@
 - Kontroly: Nový regresný test pred opravou oddelene zlyhal na chýbajúcom `allow-destroy` aj `allow-spawn-powershell`, po oprave 2/2 prešiel. `pnpm.cmd exec vitest run --configLoader runner` 64/64, desktopový TypeScript a ESLint prešli. Sidecarový test stále používa starší staging a nepreukazuje aktuálny zabalený protokol.
 - NEOVERENÉ: Skutočné otvorenie nových relácií, `Get-Date`, prepínanie, individuálne ukončenie, zavretie okna a obnova po reštarte; na obrazovke nebolo nájdené otvorené okno Lab-M4. Používateľ bol požiadaný o manuálne overenie. Až jeho výsledok alebo vlastné viditeľné testovanie môže potvrdiť opravu runtime.
 - Ďalší krok: Overiť používateľský test a prípadné chyby, potom opraviť zostávajúce auditné nálezy. Ikony, zálohy, logy, vnorený repozitár a nesledované permissions ponechať nedotknuté; odosielať len feature vetvu po overení siete.
+
+## 2026-11-06 14:23 +01:00 (Europe/Bratislava) – Konzistencia tokenového ledgeru
+- Vetva `feat/orchestrator-foundation`; predchádzajúci lokálny commit `eff9964ec697d697579a821a874ee8eee4769124`, posledný používateľom potvrdený vzdialený commit `ed5eb82460b35dd4a58edc2b3c7dcebf62a1d79c`. GitHub a CI NEOVERENÉ.
+- Zmena: Ledger odmieta záporné, pretečené a nekonzistentné súčty; vyžaduje celok input + output a cache/reasoning ako podmnožiny podľa zaznamenaných pozorovaní Codexu. Rovnakú kontrolu vykoná aj pri obnovenom stave. Neplatné oznámenie nesmie zmeniť uložené počty; plánovanie zostáva fail-closed.
+- Kontroly: Nový syntetický regresný test pre `inputTokens=999999,totalTokens=0` a ďalšie nezhody pred opravou zlyhal, po oprave `pnpm.cmd test:orchestrator` prešlo 10/10; ESLint orchestration a `git diff --check` prešli.
+- NEOVERENÉ: Živý tokenový stream, cena/fakturácia a vynútenie rozpočtu; ledger nie je napojený na skutočného workera. Test terminálu a zatvárania vo viditeľnej aplikácii čaká na výsledok používateľa.
+- Ďalší krok: Overiť manuálny test terminálu, potom pokračovať zvyšnými auditnými opravami bez zásahu do ikon a nesledovaných dát; poslať iba feature vetvu po sprístupnení siete.

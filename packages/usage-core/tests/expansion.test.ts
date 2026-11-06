@@ -2,6 +2,7 @@ import { resolve } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
+import sqlite3 from 'sqlite3';
 import { describe, expect, it } from 'vitest';
 import { codexParser } from '../src/parsers/codex.js';
 import { grokBuildParser } from '../src/parsers/grok-build.js';
@@ -22,6 +23,7 @@ const fixture = resolve(
 // independent of the implementation under test and require no zstd binary.
 const checkedCodex = Buffer.from('KLUv/WR5APUFANKKIR1gR+MGEWq1t7CXpfsenPw9IQyCr2bU3w3IEPhYPMR77yF1KNNlzMJLoVYSGGg0I/LyCO325aB0bpcoywPZKQR7eweUqcuCPbip1jTIcoF0TgA6Bh0DUJzi6UnD5mwsHcm1rQ+ydQ2lBdfEe0emOdss9kP6wkUMmLwcO5vSZczJT8/E0D8EFQA/XVLo3QrLhiuH2+QIjMYZ9M8U2AfhI7AfYfogwMTk+cIb6cRwleZVCyuYATJppX1Fpp5MVcgJ', 'base64');
 const checkedGrok = Buffer.from('KLUv/STARQQAIskcG4C3OsZFgeRpIh9Db0OoDVmGdH20Mr/AwsoGDICmSWTbcjwU/hjLrdU9hRXTZB3rJ1F6XC1wq34Kw/eD0hdl29RjdmfSl14/12WmdK1CJWwrFhq6cE4TJCo/H6RMAUoCJREw0nh67J+v1pr0HuLTWYtnAgYAOEuaqo5nAEvPNlHZvq17ArcGk2s=', 'base64');
+const checkedEmpty = Buffer.from('KLUv/SQAAQAAmenYUQ==', 'base64');
 
 async function read(budget: { remaining: number; perFile: number }) {
   const result: string[] = [];
@@ -125,6 +127,52 @@ describe('compressed usage expansion limits', () => {
     const cached = await scanCached(codexParser, path, join(dir, 'cache.sqlite'));
     expect(cached.partial).toBe(true);
     expect(cached.records).toEqual([]);
+  });
+
+  it('checks an empty frame before proceeding past empty skippable frames', async () => {
+    const dir = await testTempDir('zstd-empty-');
+    const path = join(dir, 'empty.jsonl.zst');
+    const skip = Buffer.from([0x50, 0x2a, 0x4d, 0x18, 0, 0, 0, 0]);
+    await writeFile(path, Buffer.concat([skip, checkedEmpty, skip, checkedCodex]));
+    const valid = await codexParser.parse(path);
+    expect(valid.records).toHaveLength(1);
+    expect(valid.partial).not.toBe(true);
+    const corrupt = Buffer.from(checkedEmpty);
+    corrupt[corrupt.length - 1] = corrupt[corrupt.length - 1]! ^ 1;
+    await writeFile(path, Buffer.concat([checkedCodex, skip, corrupt]));
+    const invalid = await codexParser.parse(path);
+    expect(invalid.partial).toBe(true);
+    expect(invalid.records).toEqual([]);
+    expect(invalid.warnings).toBe(1);
+  });
+
+  it('invalidates the previous compressed-file cache versions', async () => {
+    for (const [parser, frame, oldVersion] of [
+      [codexParser, checkedCodex, 9], [grokBuildParser, checkedGrok, 11],
+    ] as const) {
+      const dir = await testTempDir('zstd-cache-version-');
+      const path = join(dir, 'usage.jsonl.zst');
+      const cache = join(dir, 'cache.sqlite');
+      await writeFile(path, frame);
+      const actual = await scanCached(parser, path, cache);
+      expect(actual.records).toHaveLength(1);
+      const db = new sqlite3.Database(cache);
+      try {
+        const row = await new Promise<{ signature: string }>((resolve, reject) => db.get(
+          'SELECT signature FROM scan_cache', (error, value) => error ? reject(error) : resolve(value as { signature: string }),
+        ));
+        const signature = JSON.parse(row.signature) as unknown[];
+        signature[0] = oldVersion;
+        await new Promise<void>((resolve, reject) => db.run(
+          'UPDATE scan_cache SET signature = ?, result = ?',
+          [JSON.stringify(signature), JSON.stringify({ ...actual, records: [] })],
+          (error) => error ? reject(error) : resolve(),
+        ));
+      } finally {
+        await new Promise<void>((resolve, reject) => db.close((error) => error ? reject(error) : resolve()));
+      }
+      expect((await scanCached(parser, path, cache)).records).toHaveLength(1);
+    }
   });
 
   it('rejects a fabricated checksum on a later frame without retaining records', async () => {

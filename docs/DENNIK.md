@@ -254,3 +254,9 @@
 - Kontroly: Nový syntetický regresný test pre `inputTokens=999999,totalTokens=0` a ďalšie nezhody pred opravou zlyhal, po oprave `pnpm.cmd test:orchestrator` prešlo 10/10; ESLint orchestration a `git diff --check` prešli.
 - NEOVERENÉ: Živý tokenový stream, cena/fakturácia a vynútenie rozpočtu; ledger nie je napojený na skutočného workera. Test terminálu a zatvárania vo viditeľnej aplikácii čaká na výsledok používateľa.
 - Ďalší krok: Overiť manuálny test terminálu, potom pokračovať zvyšnými auditnými opravami bez zásahu do ikon a nesledovaných dát; poslať iba feature vetvu po sprístupnení siete.
+
+## 2026-11-06 14:26 +01:00 (Europe/Bratislava) – Kontrola zabaleného protokolu
+- Vetva `feat/orchestrator-foundation`; predchádzajúci lokálny commit `d0ab76c345d5aaa8f2816819bc692037e4b79953`, posledné používateľom potvrdené vzdialené SHA `ed5eb82460b35dd4a58edc2b3c7dcebf62a1d79c`. GitHub a CI NEOVERENÉ.
+- Zmena: Integračný test existujúceho zabaleného sidecaru teraz vyžaduje platné `snapshotId` a jeho zhodu medzi stránkami, takže starší staging bez protokolu už nemôže prejsť týmto testom. Konfigurácia Tauri už pred dev/build spúšťa opätovné zabalenie.
+- Kontroly: Aktuálny lokálny staging, ktorý sa od predošlého auditu zmenil, pri syntetickej požiadavke vracia snapshot; `pnpm.cmd exec vitest run --configLoader runner packages/usage-core/tests/sidecar.test.ts` prešlo 1/1. Staging som neprepisoval. Vykonanie kompletného balenia v sandboxe a čistý Tauri runtime zostávajú NEOVERENÉ.
+- Ďalší krok: Vyčkať na manuálne overenie novej relácie, `Get-Date`, prepínania a zatvorenia okna; pokračovať v auditných opravách a overiť balenie na povolenom prostredí. Ikony a existujúce nesledované súbory ponechať nedotknuté.

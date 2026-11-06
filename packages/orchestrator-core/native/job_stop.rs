@@ -182,12 +182,13 @@ mod windows_test {
         })?;
         Ok(job)
     }
-    fn start_suspended(job: &OwnedHandle) -> io::Result<OwnedHandle> {
+    fn start_suspended(job: &OwnedHandle, signal: &std::path::Path) -> io::Result<OwnedHandle> {
         let exe = std::env::current_exe()?;
         let application = wide(exe.as_os_str());
         let mut command = wide(OsStr::new(&format!(
-            "\"{}\" --synthetic-worker",
-            exe.display()
+            "\"{}\" --synthetic-worker \"{}\"",
+            exe.display(),
+            signal.display()
         )));
         let mut startup: StartupInfoW = unsafe { zeroed() };
         startup.cb = size_of::<StartupInfoW>() as u32;
@@ -257,14 +258,20 @@ mod windows_test {
                 .spawn()?,
         );
         let job = create_job()?;
-        let process = start_suspended(&job)?;
+        let signal =
+            std::env::temp_dir().join(format!("lab-m4-job-test-{}.pid", std::process::id()));
+        let _ = std::fs::remove_file(&signal);
+        let process = start_suspended(&job, &signal)?;
         let deadline = Instant::now() + Duration::from_secs(8);
         let ids = loop {
             let ids = job_processes(&job)?;
-            if ids.len() == 2 {
-                break ids;
+            let grandchild = std::fs::read_to_string(&signal)
+                .ok()
+                .and_then(|s| s.parse::<u32>().ok());
+            if grandchild.is_some_and(|pid| ids.contains(&pid)) {
+                break (ids, grandchild.unwrap());
             }
-            if ids.len() > 2 || Instant::now() >= deadline {
+            if Instant::now() >= deadline {
                 let worker_state = match wait_handle(&process, 0)? {
                     WAIT_OBJECT_0 => "exited",
                     WAIT_TIMEOUT => "running",
@@ -277,8 +284,10 @@ mod windows_test {
             }
             sleep(Duration::from_millis(25));
         };
+        let (ids, grandchild_id) = ids;
+        let _ = std::fs::remove_file(&signal);
         let worker_id = unsafe { GetProcessId(process.0) };
-        if worker_id == 0 || !ids.contains(&worker_id) || ids[0] == ids[1] {
+        if worker_id == 0 || !ids.contains(&worker_id) || worker_id == grandchild_id {
             return Err(io::Error::other("Unexpected job membership"));
         }
         let mut unrelated_in_job = 0;
@@ -328,10 +337,14 @@ mod windows_test {
         match std::env::args().nth(1).as_deref() {
             Some("--self-test") => self_test(),
             Some("--synthetic-worker") => {
-                let _child = Command::new(std::env::current_exe()?)
+                let child = Command::new(std::env::current_exe()?)
                     .arg("--synthetic-grandchild")
                     .creation_flags(CREATE_NO_WINDOW)
                     .spawn()?;
+                let signal = std::env::args_os()
+                    .nth(2)
+                    .ok_or_else(|| io::Error::other("Missing signal path"))?;
+                std::fs::write(signal, child.id().to_string())?;
                 sleep(Duration::from_secs(30));
                 Ok(())
             }

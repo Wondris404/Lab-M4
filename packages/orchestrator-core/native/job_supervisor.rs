@@ -102,6 +102,7 @@ extern "system" {
         returned: *mut u32,
     ) -> i32;
     fn AssignProcessToJobObject(job: Handle, process: Handle) -> i32;
+    fn IsProcessInJob(process: Handle, job: Handle, result: *mut i32) -> i32;
     fn TerminateJobObject(job: Handle, code: u32) -> i32;
     fn CreateProcessW(
         app: *const u16,
@@ -280,6 +281,11 @@ impl Supervised {
             )
         })?;
         Ok(info.active_processes)
+    }
+    pub(crate) fn contains_process(&self, process: *mut c_void) -> io::Result<bool> {
+        let mut result = 0;
+        check(unsafe { IsProcessInJob(process, self.job.0, &mut result) })?;
+        Ok(result != 0)
     }
     /// Stop only this job and confirm that no processes remain, with a deadline.
     pub(crate) fn stop(&self, timeout: Duration) -> io::Result<()> {

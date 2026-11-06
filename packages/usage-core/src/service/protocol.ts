@@ -92,7 +92,7 @@ export async function handleRequest(input: unknown) {
         ...Object.entries(parsed.mismatchFields).map(([kind, count]) => `${kind}: ${count}`),
       ],
       records: parsed.records.slice(offset, offset + limit).map((r) => ({
-        agent: r.provider, model: r.model, session: r.sessionId, timestamp: r.timestamp,
+        agent: r.provider, model: r.model, session: r.sessionId, sessionKnown: r.sessionKnown !== false, timestamp: r.timestamp,
         input: r.inputTokens, output: r.outputTokens, cached: r.cachedInputTokens,
         reasoning: r.reasoningTokens, ...(r.costUsd !== undefined && { costUsd: r.costUsd }), warnings: r.warnings ?? [],
       })),

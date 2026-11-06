@@ -87,6 +87,7 @@ export function grokAccumulator(
       sessionId: sid
         ? (sessions.get(sid) ?? pseudonym('unknown'))
         : pseudonym('unknown'),
+      ...(sid && sessions.has(sid) ? {} : { sessionKnown: false }),
       model:
         sid && sessions.has(sid) ? (models.get(sid) ?? 'unknown') : 'unknown',
       timestamp,

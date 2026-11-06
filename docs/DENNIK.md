@@ -193,3 +193,12 @@
 - Pri syntetickom teste premapovanie rovnakého `sid` na druhú reláciu spôsobilo zahodenie jej udalosti, ak sa zhodovali čas, index a počty. Do existujúceho deduplikačného kľúča sa pridala aktuálne priradená relácia; opakovanie v tej istej relácii zostáva odfiltrované.
 - Po zmene sa zneplatní starý kurzor pre Grok JSONL a verzia cache pre komprimovaný Grok zdroj. Cielené `pnpm exec vitest run packages/usage-core/tests/grok-session-dedupe.test.ts packages/usage-core/tests/grok-cursor.test.ts packages/usage-core/tests/parsers.test.ts packages/usage-core/tests/cache.test.ts`: 20/20, exit 0; `pnpm lint`: exit 0.
 - NEOVERENÉ: Grok neposkytuje v skúmanom formáte potvrdený jednoznačný identifikátor každej inference udalosti. Existujúca deduplikácia podľa `sid`, relácie, indexu, času a počtov preto zostáva heuristikou a môže zlúčiť dve nerozlíšiteľné udalosti tej istej relácie. Živý Grok a Windows GUI neboli spustené.
+
+## 2026-11-06 23:46 +01:00 (Europe/Bratislava) – Príznak neznámej Grok relácie
+- Dve syntetické Grok udalosti s rôznymi trace ID bez potvrdenej väzby na reláciu dostávali rovnaký `unknown` a UI ich mohlo započítať ako jednu skutočnú reláciu. Backend teraz vracia `sessionKnown: false` pre neprepojené udalosti a `true` pre známe relácie; z trace ID neodvodzuje identitu relácie. Nadväzujúce UI musí neznáme relácie vynechať zo známeho počtu a označiť neúplnosť.
+- Zneplatnené staré JSONL kurzory aj komprimované cache bez príznaku. Cielené parserové, protokolové a kurzorové testy 23/23, `pnpm lint` a `pnpm exec tsc --noEmit`: exit 0. Nové testy pokrývajú opakované čítanie aj zneplatnenie oboch druhov cache.
+- NEOVERENÉ: údaje skutočných Grok inštalácií, Windows GUI a živá orchestrácia. Ďalší krok: zapojiť príznak do UI a hashu snapshotu v závislých vetvách.
+
+## 2026-11-06 23:48 +01:00 (Europe/Bratislava) – Súhrn používa príznak relácie
+- Súhrn už nezamieňa potvrdenú reláciu s doslovným ID `unknown` s neprepojenou reláciou: počet a označenie neúplnosti vychádzajú z `sessionKnown`. Syntetický test preveruje najprv potvrdené ID a potom pridanie neprepojenej udalosti.
+- Cielené testy parserov a súhrnov: 18/18, exit 0; `pnpm lint` a `pnpm exec tsc --noEmit`: exit 0. NEOVERENÉ: skutočné Grok dáta a zobrazenie v natívnej Windows aplikácii.

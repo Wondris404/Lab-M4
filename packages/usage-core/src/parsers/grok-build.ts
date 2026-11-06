@@ -2,9 +2,10 @@ import { createHash } from 'node:crypto';
 import { emptyResult, type Parser } from './contracts.js';
 import {
   count,
+  assertSafeFile,
   ExpansionLimitError,
   LineLimitError,
-  UnverifiedChecksumError,
+  ZstdIntegrityError,
   lines,
   obj,
   str,
@@ -114,26 +115,30 @@ export function grokAccumulator(
 export const grokBuildParser: Parser = {
   provider: 'grok-build',
   async parse(path) {
+    await assertSafeFile(path);
     const accumulator = grokAccumulator();
     const result = accumulator.result;
     try {
       for await (const line of lines(path)) accumulator.consume(line);
     } catch (error) {
       if (
+        !/\.zst$/i.test(path) &&
         !(error instanceof LineLimitError) &&
         !(error instanceof ExpansionLimitError) &&
-        !(error instanceof UnverifiedChecksumError)
+        !(error instanceof ZstdIntegrityError)
       )
         throw error;
-      if (error instanceof ExpansionLimitError || error instanceof UnverifiedChecksumError) {
+      if (/\.zst$/i.test(path) || error instanceof ExpansionLimitError) {
         result.records.length = 0;
         result.limits.length = 0;
         result.warnings = 0;
       }
       result.warnings++;
       result.partial = true;
-      if (error instanceof UnverifiedChecksumError)
-        result.warningDetails = ['Zstd checksum nemožno overiť; súbor bol vynechaný.'];
+      if (error instanceof ZstdIntegrityError)
+        result.warningDetails = ['Zstd checksum nesúhlasí; súbor bol vynechaný.'];
+      else if (/\.zst$/i.test(path) && !(error instanceof ExpansionLimitError))
+        result.warningDetails = ['Komprimovaný súbor je poškodený alebo neúplný; bol vynechaný.'];
     }
     return result;
   },

@@ -9,7 +9,7 @@ import {
   findCodexFiles,
   lines,
   newExpansionBudget,
-  UnverifiedChecksumError,
+  ZstdIntegrityError,
 } from '../parsers/shared.js';
 import { normalizeRecord } from './normalize.js';
 import { scanJsonlAppend, type CursorResult } from './grok-cursor.js';
@@ -38,7 +38,7 @@ export async function scanCodexDirectory(
         };
       } catch (error) {
         parsed = { ...emptyResult(), warnings: 1, partial: true,
-          ...(error instanceof UnverifiedChecksumError && { warningDetails: ['Zstd checksum nemožno overiť; súbor bol vynechaný.'] }) };
+          ...(error instanceof ZstdIntegrityError && { warningDetails: ['Zstd checksum nesúhlasí; súbor bol vynechaný.'] }) };
       }
     } else {
       const key = createHash('sha256')

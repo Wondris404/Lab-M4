@@ -41,8 +41,39 @@ jobs:
       - run: cargo fmt --manifest-path src-tauri/Cargo.toml --check
       - run: cargo clippy --manifest-path src-tauri/Cargo.toml -- -D warnings
       - run: cargo test --manifest-path src-tauri/Cargo.toml
+      # This explicit native ConPTY smoke does not exercise the Tauri GUI.
+      - name: PowerShell PTY smoke (Windows)
+        timeout-minutes: 3
+        run: cargo test --manifest-path src-tauri/Cargo.toml --test terminal_pty_smoke -- --ignored --nocapture
       - run: pnpm tauri build
       - uses: actions/upload-artifact@v4
         with:
           name: lab-m4-windows-x64
           path: apps/desktop/src-tauri/target/release/bundle
+  windows-webdriver:
+    runs-on: windows-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24.22.2
+      - run: corepack enable
+      - run: pnpm install --frozen-lockfile
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Install Tauri WebDriver
+        run: cargo install tauri-driver --version 2.1.0 --locked
+      - name: Make the preinstalled matching EdgeDriver available
+        shell: pwsh
+        run: |
+          if (-not $env:EDGEWEBDRIVER -or -not (Test-Path (Join-Path $env:EDGEWEBDRIVER 'msedgedriver.exe'))) {
+            throw 'The Windows runner does not provide a matching EdgeDriver.'
+          }
+          $env:EDGEWEBDRIVER | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+      - name: Build isolated debug app
+        run: pnpm tauri build --debug --no-bundle
+      - name: Exercise terminal and window through WebDriver
+        shell: pwsh
+        run: |
+          $env:TAURI_DRIVER = Join-Path $HOME '.cargo/bin/tauri-driver.exe'
+          node scripts/windows-webdriver-smoke.mjs

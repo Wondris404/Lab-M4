@@ -4,6 +4,7 @@ import { basename, join, parse, resolve, sep } from 'node:path';
 import { Transform } from 'node:stream';
 import { createInterface } from 'node:readline';
 import { Decompress } from 'fzstd';
+import xxhash, { type XXHash } from 'xxhash-wasm';
 
 export type Obj = Record<string, unknown>;
 export const obj = (v: unknown): Obj =>
@@ -28,9 +29,9 @@ export class ExpansionLimitError extends Error {
     super('Compressed usage log exceeds the decompression limit');
   }
 }
-export class UnverifiedChecksumError extends Error {
+export class ZstdIntegrityError extends Error {
   constructor() {
-    super('Zstd checksum cannot be verified');
+    super('Compressed usage log checksum does not match');
   }
 }
 
@@ -51,9 +52,24 @@ export class ZstdFrameGuard {
   private pending = 0;
   private last = false;
   private checksum = false;
-  constructor(private readonly maxWindow: number) {}
+  private checksumBytes: number[] = [];
+  constructor(
+    private readonly maxWindow: number,
+    private readonly onStart: (checksum: boolean) => void = () => {},
+    private readonly onEnd: (checksum?: number) => void = () => {},
+  ) {}
 
-  push(chunk: Uint8Array, emit: (data: Uint8Array) => void): void {
+  private finishFrame(): void {
+    const checksum = this.checksum
+      ? (this.checksumBytes[0]! | (this.checksumBytes[1]! << 8) |
+          (this.checksumBytes[2]! << 16) | (this.checksumBytes[3]! << 24)) >>> 0
+      : undefined;
+    this.onEnd(checksum);
+    this.checksumBytes = [];
+    this.stage = 'frame';
+  }
+
+  push(chunk: Uint8Array, emit: (data: Uint8Array, skippable: boolean) => void): void {
     let pos = 0;
     while (pos < chunk.length) {
       if (
@@ -62,17 +78,21 @@ export class ZstdFrameGuard {
         this.stage === 'skip'
       ) {
         const amount = Math.min(this.pending, chunk.length - pos);
-        if (amount) emit(chunk.subarray(pos, pos + amount));
+        if (amount) {
+          const data = chunk.subarray(pos, pos + amount);
+          if (this.stage === 'checksum') this.checksumBytes.push(...data);
+          emit(data, this.stage === 'skip');
+        }
         pos += amount;
         this.pending -= amount;
         if (!this.pending) {
-          if (this.stage === 'checksum' || this.stage === 'skip')
-            this.stage = 'frame';
+          if (this.stage === 'checksum') this.finishFrame();
+          else if (this.stage === 'skip') this.stage = 'frame';
           else if (!this.last) this.stage = 'block';
           else if (this.checksum) {
             this.stage = 'checksum';
             this.pending = 4;
-          } else this.stage = 'frame';
+          } else this.finishFrame();
         }
         continue;
       }
@@ -85,7 +105,7 @@ export class ZstdFrameGuard {
         if (type === 3) throw new Error('Invalid zstd block');
         this.last = (block & 1) !== 0;
         this.pending = type === 1 ? 1 : block >>> 3;
-        emit(Uint8Array.from(this.header));
+        emit(Uint8Array.from(this.header), false);
         this.header = [];
         this.stage = 'payload';
         if (!this.pending) {
@@ -93,7 +113,7 @@ export class ZstdFrameGuard {
           else if (this.checksum) {
             this.stage = 'checksum';
             this.pending = 4;
-          } else this.stage = 'frame';
+          } else this.finishFrame();
         }
         continue;
       }
@@ -111,7 +131,7 @@ export class ZstdFrameGuard {
             (this.header[6]! << 16) |
             (this.header[7]! << 24)) >>>
           0;
-        emit(Uint8Array.from(this.header));
+        emit(Uint8Array.from(this.header), true);
         this.header = [];
         this.stage = this.pending ? 'skip' : 'frame';
         continue;
@@ -125,9 +145,6 @@ export class ZstdFrameGuard {
         throw new Error('Unsupported zstd frame');
       const flags = this.header[4]!;
       if (flags & 8) throw new Error('Invalid zstd frame');
-      // fzstd does not validate checksums. Never accept a checksummed frame
-      // as complete until a streaming verifier is available.
-      if (flags & 4) throw new UnverifiedChecksumError();
       const single = (flags & 32) !== 0;
       const dictionaryBytes = [0, 1, 2, 4][flags & 3]!;
       const sizeFlag = flags >>> 6;
@@ -146,7 +163,8 @@ export class ZstdFrameGuard {
       }
       if (window > BigInt(this.maxWindow)) throw new ExpansionLimitError();
       this.checksum = (flags & 4) !== 0;
-      emit(Uint8Array.from(this.header));
+      this.onStart(this.checksum);
+      emit(Uint8Array.from(this.header), false);
       this.header = [];
       this.stage = 'block';
     }
@@ -186,6 +204,7 @@ export async function* lines(
   let expanded = 0;
   const compressed = /\.zst$/i.test(path);
   if (compressed && budget.remaining <= 0) throw new ExpansionLimitError();
+  const hashes = compressed ? await xxhash() : undefined;
   const stream = createReadStream(path);
   const decompressed = compressed
     ? stream.pipe(
@@ -195,19 +214,26 @@ export async function* lines(
               decoder?: Decompress;
               guard?: ZstdFrameGuard;
             };
-            state.guard = new ZstdFrameGuard(budget.perFile);
-            state.decoder = new Decompress((data) => {
-              expanded += data.byteLength;
-              const exceedsScan = data.byteLength > budget.remaining;
-              budget.remaining = Math.max(
-                0,
-                budget.remaining - data.byteLength,
-              );
-              if (expanded > budget.perFile || exceedsScan) {
-                throw new ExpansionLimitError();
-              }
-              state.push(Buffer.from(data));
-            });
+            let hash: XXHash<bigint> | undefined;
+            state.guard = new ZstdFrameGuard(
+              budget.perFile,
+              (hasChecksum) => {
+                hash = hasChecksum ? hashes!.create64() : undefined;
+                state.decoder = new Decompress((data) => {
+                  expanded += data.byteLength;
+                  const exceedsScan = data.byteLength > budget.remaining;
+                  budget.remaining = Math.max(0, budget.remaining - data.byteLength);
+                  if (expanded > budget.perFile || exceedsScan) throw new ExpansionLimitError();
+                  hash?.update(data);
+                  state.push(Buffer.from(data));
+                });
+              },
+              (expected) => {
+                state.decoder!.push(new Uint8Array(), true);
+                if (expected !== undefined && Number(hash!.digest() & 0xffffffffn) !== expected)
+                  throw new ZstdIntegrityError();
+              },
+            );
             callback();
           },
           transform(chunk: Buffer, _encoding, callback) {
@@ -216,8 +242,8 @@ export async function* lines(
                 decoder: Decompress;
                 guard: ZstdFrameGuard;
               };
-              state.guard.push(chunk, (data) =>
-                state.decoder.push(data, false),
+              state.guard.push(chunk, (data, skippable) =>
+                { if (!skippable) state.decoder.push(data, false); },
               );
               callback();
             } catch (e) {
@@ -231,7 +257,6 @@ export async function* lines(
                 guard: ZstdFrameGuard;
               };
               state.guard.finish();
-              state.decoder.push(new Uint8Array(), true);
               callback();
             } catch (e) {
               callback(e as Error);

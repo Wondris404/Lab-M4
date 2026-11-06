@@ -44,7 +44,7 @@ export async function scanCached(parser: Parser, source: string, cachePath: stri
     await assertSafeFile(source);
     const info = await lstat(canonical);
     const wal = await lstatIfExists(`${canonical}-wal`);
-    signature = JSON.stringify([parser === grokBuildParser ? 11 : 9, info.dev, info.ino, info.size, info.mtimeMs, info.ctimeMs, wal?.size ?? null, wal?.mtimeMs ?? null]);
+    signature = JSON.stringify([parser === grokBuildParser ? 12 : 10, info.dev, info.ino, info.size, info.mtimeMs, info.ctimeMs, wal?.size ?? null, wal?.mtimeMs ?? null]);
   }
   if (/auth|credential|token|secret|key|login|\.env/i.test(basename(cachePath))) {
     throw new Error('Nepovolená cache.');

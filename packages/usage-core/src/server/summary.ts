@@ -25,12 +25,13 @@ export async function summarize(settings: Settings) {
   }
   const records = Object.values(agents).flatMap((a) => a.records);
   const known = records.filter((r) => r.costUsd !== undefined);
+  const incomplete = Object.keys(errors).length > 0 || Object.values(agents).some((agent) => agent.partial);
   const costUsd = known.length
     ? known.reduce((n, r) => n + (r.costUsd ?? 0), 0)
     : null;
   return {
     recordCount: records.length,
-    sourcesIncomplete: Object.keys(errors).length > 0,
+    sourcesIncomplete: incomplete,
     totals: records.length
       ? {
           sessions: new Set(
@@ -39,7 +40,7 @@ export async function summarize(settings: Settings) {
               .map((r) => JSON.stringify([r.provider, r.sessionId])),
           ).size,
           sessionsIncomplete:
-            Object.keys(errors).length > 0 ||
+            incomplete ||
             records.some((r) => r.sessionId === 'unknown'),
           totalTokens: records.reduce(
             (n, r) => n + r.inputTokens + r.outputTokens,
@@ -55,7 +56,7 @@ export async function summarize(settings: Settings) {
           costUsd,
           costEur: costUsd === null ? null : costUsd * settings.usdToEur,
           costIncomplete:
-            Object.keys(errors).length > 0 || known.length !== records.length,
+            incomplete || known.length !== records.length,
           costSource: known.length
             ? known.some((r) => r.costSource === 'odhad')
               ? 'odhad'

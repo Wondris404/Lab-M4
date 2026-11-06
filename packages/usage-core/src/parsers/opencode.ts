@@ -8,7 +8,7 @@ type Row = Record<string, unknown>;
 function mismatch(r: ParseResult, key: string): void {
   r.mismatchFields[key] = (r.mismatchFields[key] ?? 0) + 1;
 }
-function consume(row: Row, result: ParseResult): void {
+export function consumeOpenCodeRow(row: Row, result: ParseResult): void {
   const sessionId = str(row.sessionId),
     timestamp = time(row.timestamp);
   const input = count(row.input),
@@ -94,7 +94,7 @@ async function readDatabase(path: string): Promise<ParseResult> {
             result.warnings++;
             return;
           }
-          consume(row as Row, result);
+          consumeOpenCodeRow(row as Row, result);
         },
         (err) => (err ? reject(err) : resolve()),
       );
@@ -135,6 +135,12 @@ async function readDatabase(path: string): Promise<ParseResult> {
 export const opencodeParser: Parser = {
   provider: 'opencode',
   async parse(path) {
+    await assertSafeFile(path);
+    // Opening SQLite read-only can still create or modify shared-memory files.
+    // A check for -wal/-shm before opening cannot prevent a concurrent writer
+    // from creating them afterwards. Keep reads disabled until a supported,
+    // consistent no-source-write snapshot mechanism is implemented.
+    if (!safeSnapshotAvailable()) return opencodeReadUnavailable();
     for (let attempt = 0; ; attempt++) {
       try {
         return await readDatabase(path);
@@ -148,3 +154,16 @@ export const opencodeParser: Parser = {
     }
   },
 };
+
+function safeSnapshotAvailable(): boolean {
+  return false;
+}
+
+export function opencodeReadUnavailable(): ParseResult {
+  return {
+    ...emptyResult(),
+    warnings: 1,
+    warningDetails: ['OpenCode je dočasne nedostupný: chýba bezpečný SQLite snapshot bez zápisu do zdroja.'],
+    partial: true,
+  };
+}

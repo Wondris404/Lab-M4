@@ -15,7 +15,7 @@ const close = (db: sqlite3.Database) =>
     db.close((error) => (error ? reject(error) : resolve())),
   );
 
-it('reports a locked database as partial and retries after the writer unlocks it', async () => {
+it('does not open an unavailable database during or after a writer lock', async () => {
   const dir = await testTempDir('sqlite-lock-');
   const sourceDir = join(dir, 'source');
   await mkdir(sourceDir);
@@ -40,8 +40,9 @@ it('reports a locked database as partial and retries after the writer unlocks it
     expect((await readdir(sourceDir)).sort()).toEqual(names);
     await run(writer, 'ROLLBACK');
     const unlocked = await scanCached(opencodeParser, path, cache);
-    expect(unlocked.partial).toBeUndefined();
-    expect(unlocked.warnings).toBe(0);
+    expect(unlocked.partial).toBe(true);
+    expect(unlocked.warnings).toBe(1);
+    expect(unlocked.warningDetails?.[0]).toContain('do zdroja');
     expect((await readdir(sourceDir)).sort()).toEqual(names);
   } finally {
     await close(writer);

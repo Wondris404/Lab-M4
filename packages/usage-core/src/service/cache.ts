@@ -2,7 +2,7 @@ import { createHash, createHmac, randomBytes } from 'node:crypto';
 import { lstat, realpath } from 'node:fs/promises';
 import { basename } from 'node:path';
 import sqlite3 from 'sqlite3';
-import { emptyResult, type Parser, type ParseResult } from '../parsers/contracts.js';
+import { type Parser, type ParseResult } from '../parsers/contracts.js';
 import { assertSafeFile, findCodexFiles } from '../parsers/shared.js';
 import { normalizeRecord } from './normalize.js';
 import { grokAccumulator, grokBuildParser, type GrokCursorState } from '../parsers/grok-build.js';
@@ -10,6 +10,7 @@ import { codexParser } from '../parsers/codex.js';
 import { codexAccumulator, type CodexCursorState } from '../parsers/codex-cursor.js';
 import { scanJsonlAppend } from './grok-cursor.js';
 import { scanCodexDirectory } from './codex-directory.js';
+import { opencodeReadUnavailable } from '../parsers/opencode.js';
 
 async function lstatIfExists(path: string) {
   try { return await lstat(path); } catch (error) {
@@ -23,6 +24,11 @@ export async function scanCached(parser: Parser, source: string, cachePath: stri
   const original = await lstat(source);
   if (original.isSymbolicLink()) throw new Error('Nepovolený odkaz.');
   const canonical = await realpath(source);
+  // Never serve a prior complete SQLite cache while source reads are disabled.
+  if (parser.provider === 'opencode') {
+    await assertSafeFile(source);
+    return opencodeReadUnavailable();
+  }
   const key = createHash('sha256').update(`${parser.provider}\0${canonical}`).digest('hex');
   let signature: string;
   if (original.isDirectory() && parser.provider === 'codex') {
@@ -38,8 +44,6 @@ export async function scanCached(parser: Parser, source: string, cachePath: stri
     await assertSafeFile(source);
     const info = await lstat(canonical);
     const wal = await lstatIfExists(`${canonical}-wal`);
-    const shm = await lstatIfExists(`${canonical}-shm`);
-    if (parser.provider === 'opencode' && (wal || shm)) return { ...emptyResult(), warnings: 1, partial: true };
     signature = JSON.stringify([8, info.dev, info.ino, info.size, info.mtimeMs, info.ctimeMs, wal?.size ?? null, wal?.mtimeMs ?? null]);
   }
   if (/auth|credential|token|secret|key|login|\.env/i.test(basename(cachePath))) {

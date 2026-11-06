@@ -15,6 +15,7 @@ export interface ParseResult {
   warnings: number;
   limits: LimitSnapshot[];
   mismatchFields: Record<string, number>;
+  warningDetails?: string[];
   partial?: boolean;
 }
 export const emptyResult = (): ParseResult => ({

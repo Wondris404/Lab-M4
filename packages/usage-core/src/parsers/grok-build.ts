@@ -4,6 +4,7 @@ import {
   count,
   ExpansionLimitError,
   LineLimitError,
+  UnverifiedChecksumError,
   lines,
   obj,
   str,
@@ -120,16 +121,19 @@ export const grokBuildParser: Parser = {
     } catch (error) {
       if (
         !(error instanceof LineLimitError) &&
-        !(error instanceof ExpansionLimitError)
+        !(error instanceof ExpansionLimitError) &&
+        !(error instanceof UnverifiedChecksumError)
       )
         throw error;
-      if (error instanceof ExpansionLimitError) {
+      if (error instanceof ExpansionLimitError || error instanceof UnverifiedChecksumError) {
         result.records.length = 0;
         result.limits.length = 0;
         result.warnings = 0;
       }
       result.warnings++;
       result.partial = true;
+      if (error instanceof UnverifiedChecksumError)
+        result.warningDetails = ['Zstd checksum nemožno overiť; súbor bol vynechaný.'];
     }
     return result;
   },

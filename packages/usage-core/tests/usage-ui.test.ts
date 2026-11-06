@@ -8,6 +8,11 @@ import {
   usageState,
 } from '../../../apps/desktop/src/usage/viewModel.js';
 import type { UsageItem } from '../../../apps/desktop/src/usage/UsageTab.js';
+import { usageCsv } from '../../../apps/desktop/src/usage/csv.js';
+import { handleRequest } from '../src/service/protocol.js';
+import { testTempDir } from './test-temp.js';
+import { mkdir, writeFile } from 'node:fs/promises';
+import { join } from 'node:path';
 
 const item = (
   agent: string,
@@ -71,7 +76,7 @@ describe('usage view data', () => {
       }),
     ) as unknown as Request;
     const result = await fetchUsage(
-      [{ id: 'source', agent: 'codex', name: 'logs' }],
+      [{ id: 'source', agent: 'codex', name: 'logs', coveredBy: null }],
       request,
       () => true,
     );
@@ -89,8 +94,77 @@ describe('usage view data', () => {
         warnings: [],
       },
     })) as unknown as Request;
-    await expect(fetchUsage([{ id: 'source', agent: 'codex', name: 'logs' }], request, () => true))
+    await expect(fetchUsage([{ id: 'source', agent: 'codex', name: 'logs', coveredBy: null }], request, () => true))
       .rejects.toThrow('počas stránkovania zmenil');
+  });
+
+  it('scans repeated source identities once and keeps every event from the surviving source', async () => {
+    const request = vi.fn(async () => ({
+      result: { status: 'ok', totalRecords: 2, offset: 0, snapshotId: 'a'.repeat(64),
+        records: [item('codex', 10), item('codex', 10)], warnings: [] },
+    })) as unknown as Request;
+    const result = await fetchUsage([
+      { id: 'a', agent: 'codex', name: 'same', coveredBy: null },
+      { id: 'b', agent: 'codex', name: 'same', coveredBy: 'a' },
+    ], request, () => true);
+    expect(request).toHaveBeenCalledTimes(1);
+    expect(result.records).toHaveLength(2);
+    expect(result.records.reduce((sum, row) => sum + row.input, 0)).toBe(20);
+    expect(usageCsv(result.records).trim().split('\n')).toHaveLength(3);
+  });
+
+  it('does not count a directory and its covered file twice, even if the file comes first', async () => {
+    const dir = await testTempDir('source-overlap-');
+    const folder = join(dir, 'sessions');
+    const file = join(folder, 'one.jsonl');
+    const cachePath = join(dir, 'cache.sqlite');
+    await mkdir(folder);
+    const event = (total: number) => JSON.stringify({
+      timestamp: '2025-01-01T00:00:00Z', type: 'event_msg',
+      payload: { type: 'token_count', info: {
+        total_token_usage: { input_tokens: total },
+        last_token_usage: { input_tokens: 10, cached_input_tokens: 0, output_tokens: 2, reasoning_output_tokens: 0 },
+      } },
+    });
+    await writeFile(file, [JSON.stringify({ type: 'session_meta', payload: { id: 'synthetic' } }), event(10), event(20), ''].join('\n'));
+    const request = vi.fn(async (_command: string, args?: Record<string, unknown>) => {
+      const path = args?.id === 'folder' ? folder : file;
+      return handleRequest({ version: 1, requestId: 'synthetic', method: 'scan',
+        params: { agent: 'codex', path, cachePath, offset: args?.offset } });
+    }) as unknown as Request;
+    const result = await fetchUsage([
+      { id: 'file', agent: 'codex', name: 'one', coveredBy: 'folder' },
+      { id: 'folder', agent: 'codex', name: 'sessions', coveredBy: null },
+      { id: 'folder-again', agent: 'codex', name: 'sessions', coveredBy: 'folder' },
+    ], request, () => true);
+    expect(request).toHaveBeenCalledTimes(1);
+    // Both separate cumulative states have identical visible last-usage fields.
+    expect(result.records).toHaveLength(2);
+    expect(result.records[0]).toEqual(result.records[1]);
+    expect(result.records.reduce((sum, row) => sum + row.input, 0)).toBe(20);
+  });
+
+  it('retains identical-looking events in distinct uncovered sources', async () => {
+    const request = vi.fn(async () => ({
+      result: { status: 'ok', totalRecords: 1, offset: 0, snapshotId: 'b'.repeat(64),
+        records: [item('grok-build', 10)], warnings: [] },
+    })) as unknown as Request;
+    const result = await fetchUsage([
+      { id: 'a', agent: 'grok-build', name: 'one', coveredBy: null },
+      { id: 'b', agent: 'grok-build', name: 'two', coveredBy: null },
+    ], request, () => true);
+    expect(request).toHaveBeenCalledTimes(2);
+    expect(result.records).toHaveLength(2);
+    expect(result.records.reduce((sum, row) => sum + row.input, 0)).toBe(20);
+  });
+
+  it('rejects missing, inconsistent or cyclic source coverage', async () => {
+    const request = vi.fn() as unknown as Request;
+    const source = { id: 'a', agent: 'codex', name: 'logs', coveredBy: 'b' };
+    await expect(fetchUsage([source], request, () => true)).rejects.toThrow('prekrytie');
+    await expect(fetchUsage([source, { ...source, id: 'b', coveredBy: 'a' }], request, () => true)).rejects.toThrow('prekrytie');
+    await expect(fetchUsage([{ ...source, coveredBy: undefined } as unknown as typeof source], request, () => true)).rejects.toThrow('bezpečné');
+    expect(request).not.toHaveBeenCalled();
   });
 
   it('handles empty sources, cancellation and malformed pages', async () => {
@@ -101,7 +175,7 @@ describe('usage view data', () => {
     });
     expect(
       await fetchUsage(
-        [{ id: 'x', agent: 'codex', name: 'logs' }],
+        [{ id: 'x', agent: 'codex', name: 'logs', coveredBy: null }],
         request,
         () => false,
       ),
@@ -111,7 +185,7 @@ describe('usage view data', () => {
     })) as unknown as Request;
     await expect(
       fetchUsage(
-        [{ id: 'x', agent: 'codex', name: 'logs' }],
+        [{ id: 'x', agent: 'codex', name: 'logs', coveredBy: null }],
         invalid,
         () => true,
       ),

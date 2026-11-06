@@ -273,3 +273,9 @@
 - Problémy: Bežný Vite dev server v auditnom sandboxe skončil pri esbuild optimalizácii s `Access is denied`; preview nemení toto zistenie. Žiadne systémové nastavenia, ikony, pôvodný staging ani cudzie procesy sa nemenili.
 - NEOVERENÉ: Viditeľný štart, nová relácia PowerShell, `Get-Date`, prepínanie a zatvorenie okna. Bez výsledku manuálneho testu nemožno tvrdiť, že oprava funguje. Neoverené sú aj živý orchestrátor, CI a aktuálny vzdialený SHA.
 - Ďalší krok: Používateľ v bežnom PowerShelli spustí `pnpm.cmd tauri dev` v `<repo>` a overí novú reláciu, `Get-Date`, dve relácie, zavretie a opätovné otvorenie; podľa výsledku pokračovať opravou. Až následne dokončiť zvyšné priority a poslať feature vetvu bez force.
+
+## 2026-11-06 14:49 +01:00 (Europe/Bratislava) – Izolované PowerShell a PTY testy
+- Vetva `feat/orchestrator-foundation`; predchádzajúci commit `332e2c75d1996f6468daa32d6a20907701d7c133`, ktorého odoslanie potvrdil používateľ. Aktuálne CI je NEOVERENÉ.
+- Kontroly: Cielené capability testy prešli 2/2. Priamy `powershell.exe -NoLogo -NoProfile -NonInteractive` s `Get-Date` skončil exit 0 a vrátil syntetický marker. V auditnom worktree dva syntetické PowerShell PTY nevrátili marker do 15 sekúnd, ani jednorazový PowerShell príkaz a samostatný `cmd.exe` cez PTY do 10 sekúnd. Testy skončili exit 1; každé dieťa vytvorené testom bolo ukončené vlastným handle a nebol nájdený bežiaci testovací proces.
+- Problém / NEOVERENÉ: Výsledok nedokazuje, či je príčinou izolované prostredie alebo ConPTY; nepreukazuje správanie v používateľovom okne. Computer Use nenašiel otvorené okno Lab-M4. Neviem preto potvrdiť vytvorenie relácie, výstup `Get-Date` ani zatvorenie okna. Používateľovi bola položená jednoduchá otázka, čo vidí po otvorení aplikácie.
+- Ďalší krok: Podľa používateľského pozorovania overiť opravený build v jeho bežnom interaktívnom Windows prostredí, zachovať existujúce ikony a cudzie procesy a opraviť prípadnú zistenú runtime chybu.

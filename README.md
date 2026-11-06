@@ -4,6 +4,12 @@ Based on Wraith (Wondris404/Wraith, commit 700f170). See [Wraith license](licens
 
 Work in progress. Usage parsers are preserved in `packages/usage-core`.
 
+The terminal font picker includes Google Fonts. On startup the app attempts to
+load their stylesheet from `fonts.googleapis.com` and font files from
+`fonts.gstatic.com`; these requests require Internet access and reveal the
+client's network address to Google. When unavailable, the terminal uses its
+configured fallback font. The Windows WebView2 behavior is not yet verified.
+
 ## Usage from the existing terminal
 
 From the repository root, scan a source explicitly chosen by the user:

@@ -416,6 +416,15 @@
 - `cargo clippy --offline --locked -- -D warnings` exit 0, `Finished dev profile` za 6,80 s, bez warningu. Ignorovaný `cargo test --test terminal_pty_smoke -- --ignored` exit 0: 1 passed, 0 failed.
 - `rustc --edition 2021 -D warnings` pre `agent_transport.rs` aj `supervisor_test.rs` exit 0. `node packages/orchestrator-core/tests/windows-agent-transport.mjs` exit 0: spawn failure, deadline, EOF, backpressure, surviving control.
 
+## 2026-11-07 21:14 +01:00 (Europe/Bratislava) – Jeden meraný strom 4f59e4c
+- Všetky príkazy nižšie bežali pri checkout `4f59e4c67883beb6e7b78072e1e235c2fac4baad`. Node v24.22.2.
+- `pnpm package:usage-sidecar` exit 0. `pnpm lint` exit 0. `pnpm typecheck` exit 0. `pnpm test` exit 0: 33 súborov, 111 testov. `pnpm test:orchestrator` exit 0: 18 pass, 0 fail.
+- `cargo fmt --check` exit 0. `cargo clippy --offline --locked -- -D warnings` exit 0. `cargo test --offline --locked` exit 0: lib 17 passed, 0 failed, ConPTY test v predvolenom behu 1 ignored. Samostatný `--test terminal_pty_smoke -- --ignored` exit 0: 1 passed.
+- `rustc -D warnings` transport aj sleeper exit 0. `windows-agent-transport.mjs` exit 0.
+- `pnpm --filter wraith exec tauri build --ci --bundles nsis` exit 0. Inštalátor `apps/desktop/src-tauri/target/release/bundle/nsis/Lab-M4_0.2.0_x64-setup.exe`, 30 764 250 bajtov, SHA-256 `39A1F44DAF424D05D7A985F10F326FF71DC9C5C3AE00D6CFEDD84F86A9896F29`, čas súboru 2026-11-07 21:13:24, strom `4f59e4c`.
+- GUI a živý Codex → Grok Build nie sú PASS. Čistá inštalácia je NEOVERENÉ. Push nebol.
+- Report: `.lab-m4/reports/stav-2026-11-07-2113.md`.
+
 - Celý beh na `1eb061f` odhalil náhodný pád `grok-cursor` (104/105, exit 1): dočasná cesta mala suffix `KEYJLz`, ktorý blokuje zámerná kontrola citlivých názvov. Syntetické fixture používajú hexadecimálny UUID suffix. Kontrola zdrojových ciest v aplikácii zostala zachovaná.
 
 ## 2026-11-07 – Regresie z review Usage

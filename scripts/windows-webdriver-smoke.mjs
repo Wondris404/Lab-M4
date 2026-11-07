@@ -1,5 +1,5 @@
 // External WebDriver smoke test: no test commands or plugins are built into the app.
-// Run only in a disposable Windows profile, with a debug build and tauri-driver.
+// Run in a disposable Windows profile with tauri-driver and a debug or installed build.
 import { spawn } from 'node:child_process';
 import { mkdtemp, mkdir, readFile, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -7,7 +7,11 @@ import { join, resolve } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
 
 if (process.platform !== 'win32') throw new Error('Windows is required for this smoke test');
-const binary = resolve('apps/desktop/src-tauri/target/debug/wraith.exe');
+const installed = process.env.LAB_M4_INSTALLED_EXE;
+if (installed && process.env.RUNNER_ENVIRONMENT !== 'github-hosted') {
+  throw new Error('The installed Usage smoke requires a disposable GitHub-hosted runner');
+}
+const binary = installed ? resolve(installed) : resolve('apps/desktop/src-tauri/target/debug/wraith.exe');
 const driverPath = process.env.TAURI_DRIVER;
 if (!driverPath) throw new Error('TAURI_DRIVER must point to the installed tauri-driver executable');
 const scratch = await mkdtemp(join(tmpdir(), 'lab-m4-webdriver-'));
@@ -20,6 +24,12 @@ Object.assign(env, {
   USERPROFILE: join(scratch, 'profile'), APPDATA: join(scratch, 'appdata'),
   LOCALAPPDATA: join(scratch, 'local'), TEMP: scratch, TMP: scratch, LAB_E2E_DIR: scratch,
 });
+if (installed) {
+  // Only the disposable installed app can use the runner's real profile.
+  // The Node process driving WebDriver stays outside this PATH restriction.
+  for (const name of ['USERPROFILE', 'APPDATA', 'LOCALAPPDATA']) env[name] = process.env[name];
+  env.PATH = join(env.SystemRoot, 'System32');
+}
 const driverArgs = process.env.TAURI_NATIVE_DRIVER ? ['--native-driver', process.env.TAURI_NATIVE_DRIVER] : [];
 const driver = spawn(driverPath, driverArgs, { env, stdio: ['ignore', 'inherit', 'inherit'], windowsHide: true });
 let driverError;
@@ -127,10 +137,33 @@ function writeMarker(name, expr) {
   return `$labMarker="${expr}|$((Get-Date).Year)|$PID"; Write-Output $labMarker; [IO.File]::WriteAllText([IO.Path]::Combine($env:LAB_E2E_DIR,'${name}'),$labMarker)`;
 }
 
-try {
-  await step('start tauri-driver', () => until('tauri-driver', async () => {
-    try { await request('GET', '/status', undefined, 1000); return true; } catch { return false; }
-  }));
+async function verifyInstalledUsage() {
+  await startSession();
+  await step('scan two fixtures through the installed Usage tab', async () => {
+    await click('.lab-tabs button:nth-of-type(2)');
+    await until('installed Usage results', async () => {
+      const result = await request('POST', endpoint('/execute/sync'), {
+        script: `const usage = document.querySelector('.usage-tab');
+          if (!usage) return null;
+          return {
+            error: usage.querySelector('[role="alert"]')?.textContent,
+            partial: [...usage.querySelectorAll('[role="status"]')].some(e => e.textContent.startsWith('Orientačný odhad')),
+            rows: [...usage.querySelectorAll('tbody tr')].map(row => [...row.cells].map(cell => cell.textContent)),
+          };`, args: [],
+      });
+      if (result?.error) throw new Error(`Installed Usage scan failed: ${result.error}`);
+      if (!result?.partial || result.rows.length !== 1) return false;
+      const row = result.rows[0];
+      if (row[1] !== 'codex' || row[4] !== '10' || row[5] !== '4' || row[8] !== '—')
+        throw new Error('Installed Usage returned unexpected token counts or pricing');
+      return true;
+    }, 60_000);
+  });
+  await step('close installed Lab-M4', closeWindow);
+  console.log('Installed Usage smoke passed: bundled runtime, valid and truncated input, partial results, unknown cost');
+}
+
+async function verifyTerminal() {
   await startSession();
   await step('send ordered input to first terminal', async () => {
     await typeLine("$global:labSession='first'; $global:labOrder='A'");
@@ -180,6 +213,14 @@ try {
     if (await readMarker('output-end.txt')) throw new Error('Output completed before the window closed');
   });
   console.log('Windows WebDriver smoke passed: sessions, input ordering, Get-Date, close, relaunch and output cleanup');
+}
+
+try {
+  await step('start tauri-driver', () => until('tauri-driver', async () => {
+    try { await request('GET', '/status', undefined, 1000); return true; } catch { return false; }
+  }));
+  if (installed) await verifyInstalledUsage();
+  else await verifyTerminal();
 } catch (error) {
   console.error(`[webdriver] failed during ${stage}`, error);
   if (session) {

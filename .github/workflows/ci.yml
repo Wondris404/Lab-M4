@@ -67,34 +67,13 @@ jobs:
         run: cargo install tauri-driver --version 2.1.0 --locked
       - name: Match EdgeDriver to the installed WebView2 runtime
         shell: pwsh
-        run: |
-          $client = 'Microsoft\EdgeUpdate\Clients\{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}'
-          $versions = @(
-            Get-ItemPropertyValue -LiteralPath "HKCU:\SOFTWARE\$client" -Name pv -ErrorAction SilentlyContinue
-            Get-ItemPropertyValue -LiteralPath "HKLM:\SOFTWARE\WOW6432Node\$client" -Name pv -ErrorAction SilentlyContinue
-          ) | Where-Object { $_ -match '^[1-9]\d*\.\d+\.\d+\.\d+$' } | Select-Object -Unique
-          if (@($versions).Count -ne 1) {
-            throw 'Expected a single identifiable WebView2 runtime version on the GUI runner.'
-          }
-          $runtime = @($versions)[0]
-          $compatible = '^Microsoft Edge WebDriver ' + [regex]::Escape(($runtime -split '\.' | Select-Object -First 3) -join '.') + '\.'
-          $driver = if ($env:EDGEWEBDRIVER) { Join-Path $env:EDGEWEBDRIVER 'msedgedriver.exe' }
-          if (-not $driver -or -not (Test-Path -LiteralPath $driver) -or (& $driver --version) -notmatch $compatible) {
-            $download = Join-Path $env:RUNNER_TEMP 'lab-m4-edge-driver'
-            New-Item -ItemType Directory -Path $download | Out-Null
-            $zip = Join-Path $download 'driver.zip'
-            Invoke-WebRequest -Uri "https://msedgedriver.microsoft.com/$runtime/edgedriver_win64.zip" -OutFile $zip -TimeoutSec 60
-            Expand-Archive -LiteralPath $zip -DestinationPath $download
-            $driver = Join-Path $download 'msedgedriver.exe'
-          }
-          $driverVersion = & $driver --version
-          if ($LASTEXITCODE -ne 0 -or $driverVersion -notmatch $compatible) {
-            throw "EdgeDriver version '$driverVersion' does not match WebView2 $runtime."
-          }
-          Write-Output "WebView2 $runtime | $driverVersion"
-          "TAURI_NATIVE_DRIVER=$driver" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+        run: ./scripts/windows-webdriver-setup.ps1
       - name: Build isolated debug app
-        run: pnpm tauri build --debug --no-bundle
+        shell: pwsh
+        run: |
+          $config = Join-Path $env:RUNNER_TEMP 'lab-m4-terminal-smoke.json'
+          '{"identifier":"com.wondris.labm4.terminal-smoke"}' | Set-Content -LiteralPath $config -Encoding utf8NoBOM
+          pnpm tauri build --debug --no-bundle --config $config
       - name: Exercise terminal and window through WebDriver
         shell: pwsh
         run: |
@@ -104,5 +83,35 @@ jobs:
         if: failure()
         with:
           name: lab-m4-webdriver-diagnostics
+          path: .lab-m4/webdriver-artifacts
+          if-no-files-found: ignore
+  windows-installed-usage:
+    runs-on: windows-2022
+    needs: desktop
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24.22.2
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Install Tauri WebDriver
+        run: cargo install tauri-driver --version 2.1.0 --locked
+      - name: Match EdgeDriver to the installed WebView2 runtime
+        shell: pwsh
+        run: ./scripts/windows-webdriver-setup.ps1
+      - uses: actions/download-artifact@v4
+        with:
+          name: lab-m4-windows-x64
+          path: ${{ runner.temp }}/lab-m4-bundle
+      - name: Install the release artifact and scan Usage
+        shell: pwsh
+        run: |
+          $env:TAURI_DRIVER = Join-Path $HOME '.cargo/bin/tauri-driver.exe'
+          ./scripts/windows-installed-usage-smoke.ps1 -BundleDirectory (Join-Path $env:RUNNER_TEMP 'lab-m4-bundle')
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: lab-m4-installed-usage-diagnostics
           path: .lab-m4/webdriver-artifacts
           if-no-files-found: ignore

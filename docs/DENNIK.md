@@ -402,6 +402,14 @@
 - Živý Codex → Grok Build cyklus ostáva BLOCKED. Iný model sa nenasadil. Push sa nerobil.
 - Na `4e128295` som dvakrát spustil `node scripts/windows-webdriver-smoke.mjs` proti čerstvému debug `wraith.exe`, s `tauri-driver` 2.1.0 a EdgeDriver 156.0.4314.58. Oba behy exit 1: `POST /session` TimeoutError a `hyper::Error(IncompleteMessage)` ešte pred terminálom. GUI na tomto SHA je NEOVERENÉ. Čistá inštalácia ostáva NEOVERENÉ, lebo inštalačný smoke skončil pred inštaláciou požiadavkou na GitHub-hosted runner.
 
+## 2026-11-07 21:05 +01:00 (Europe/Bratislava) – WebView2 prepínače a nový NSIS
+- Commit `5bf789be909b42a57f489fea66b988da894dd57a` na `codex/orchestrator-transport`. Okno z `tauri.conf.json` sa vytvára v setup, lebo automatické okno vzniká skôr, než sa dajú nastaviť argumenty. Pri `TAURI_WEBVIEW_AUTOMATION=true` alebo `TAURI_AUTOMATION=true` ide celý zoznam `WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS` cez API, doplnený o `--remote-debugging-port`, ak v ňom nie je číselný port, a o pôvodné `msWebOOUI` features v jednom `--disable-features`. Bežný štart premennú nevidí a port neotvára. Overené: proces žil, `debugPort=False`.
+- `cargo test --offline --locked --lib` exit 0, 17/17. `cargo fmt --check` exit 0.
+- Verbose msedgedriver 156.0.4314.58 nastaví `--enable-automation` a `--remote-debugging-port=0`. Príkazový riadok `msedgewebview2.exe` pre `wraith.exe` tieto prepínače obsahoval a `user-data-dir` bol v `scoped_dir` drivera. `DevToolsActivePort` počas behu nevznikol. Shell mal Medium integrity. Zhoda EdgeDriver a WebView2 156.0.4314.58 teda nestačí.
+- `node scripts/windows-webdriver-smoke.mjs` na tomto debug exe: RUN1 exit 1, RUN2 exit 1. Oba skončili na `POST /session` TimeoutError a `hyper::Error(IncompleteMessage)`. K terminálu sa nedostali. Po behu neostal `wraith.exe`, `tauri-driver.exe` ani `msedgedriver.exe`. GUI ostáva NEOVERENÉ.
+- `pnpm --filter wraith exec tauri build --ci --bundles nsis` s Node v24.22.2 exit 0. Inštalátor `apps/desktop/src-tauri/target/release/bundle/nsis/Lab-M4_0.2.0_x64-setup.exe`, 30 761 348 bajtov, SHA-256 `C593422C822A7F60E290D6CF0617728FA0F81DAC21605C025E151C707838766C`, čas súboru 2026-11-07 21:01:04, strom `5bf789b`. Čistá inštalácia sa nespúšťala. Push nebol. PR #13 ostáva na `40d326d`. Živý Codex → Grok Build ostáva BLOCKED.
+- Report: `.lab-m4/reports/stav-2026-11-07-2105.md`.
+
 - Celý beh na `1eb061f` odhalil náhodný pád `grok-cursor` (104/105, exit 1): dočasná cesta mala suffix `KEYJLz`, ktorý blokuje zámerná kontrola citlivých názvov. Syntetické fixture používajú hexadecimálny UUID suffix. Kontrola zdrojových ciest v aplikácii zostala zachovaná.
 
 ## 2026-11-07 – Regresie z review Usage

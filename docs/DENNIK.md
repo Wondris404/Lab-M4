@@ -484,6 +484,11 @@
 - `pnpm --filter wraith exec tauri build --ci --bundles nsis` exit 0. Inštalátor `apps/desktop/src-tauri/target/release/bundle/nsis/Lab-M4_0.2.0_x64-setup.exe`, 30 761 705 bajtov, SHA-256 `0465D164A7A526B377D68EB0E58F4DEC0B13B327B23376D1D8B051B9A221AA09`, čas súboru 2026-11-07 21:58:04, strom `bbf7c06`.
 - Push, prihlásenie a inštalácia sa nerobili. GUI ostáva NEOVERENÉ, čistá inštalácia NEOVERENÉ, živý cyklus BLOCKED.
 
+## 2026-11-07 22:05 +01:00 (Europe/Bratislava) – WebDriver nie je regresia voči 40d326d
+- `40d326d` prešiel na CI windows-2022 so zhodným starším WebView2, nie na tomto evergreen runtime. Diff spúšťania voči tomu commitu je `create: false` a okno v setup. Samotný debug smoke stále volá rovnaké `POST /session`. Timeout bol už na `4e128295` pred touto zmenou okna.
+- WebView2 je teraz `157.0.4341.42`. Probe bez `TAURI_WEBVIEW_AUTOMATION`, teda cestou ako `40d326d`, dal na príkazový riadok `--edge-webview-switches=--remote-debugging-port`. Port `9333` neodpovedal a `DevToolsActivePort` nevznikol.
+- Jeden beh `node scripts/windows-webdriver-smoke.mjs` pri HEAD `f8446b6`, debug `wraith.exe`, EdgeDriver `157.0.4341.42` zhodný s runtime: exit 1, `POST /session` TimeoutError, `hyper::Error(IncompleteMessage)`. Po behu `DevToolsActivePort` nebol v `wraith.exe.WebView2` ani v `Temp\lab-m4-webdriver-*`. K session, Get-Date ani zatvoreniu sa test nedostal. Kód som kvôli tomu nemenil: runtime port nezapíše ani na pôvodnej ceste.
+
 - Celý beh na `1eb061f` odhalil náhodný pád `grok-cursor` (104/105, exit 1): dočasná cesta mala suffix `KEYJLz`, ktorý blokuje zámerná kontrola citlivých názvov. Syntetické fixture používajú hexadecimálny UUID suffix. Kontrola zdrojových ciest v aplikácii zostala zachovaná.
 
 ## 2026-11-07 – Regresie z review Usage

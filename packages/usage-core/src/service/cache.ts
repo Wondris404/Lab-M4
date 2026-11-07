@@ -48,8 +48,8 @@ export async function scanCached(parser: Parser, source: string, cachePath: stri
     const info = await lstat(canonical);
     const wal = await lstatIfExists(`${canonical}-wal`);
     const version = /\.zst$/i.test(canonical)
-      ? (parser === grokBuildParser ? 15 : 12)
-      : (parser === grokBuildParser ? 14 : 11);
+      ? (parser === grokBuildParser ? 17 : 12)
+      : (parser === grokBuildParser ? 17 : 11);
     signature = JSON.stringify([version, info.dev, info.ino, info.size, info.mtimeMs, info.ctimeMs, wal?.size ?? null, wal?.mtimeMs ?? null]);
   }
   if (/auth|credential|token|secret|key|login|\.env/i.test(basename(cachePath))) {
@@ -71,7 +71,7 @@ export async function scanCached(parser: Parser, source: string, cachePath: stri
     if (codexDirectory)
       return await scanCodexDirectory(db, key, canonical, pseudonym, force);
     if (parser === grokBuildParser && original.isFile() && !/\.zst$/i.test(canonical))
-      return await scanJsonlAppend(db, `${key}:v6`, canonical, (previous) => grokAccumulator(previous as GrokCursorState | undefined, pseudonym), force);
+      return await scanJsonlAppend(db, `${key}:v7`, canonical, (previous) => grokAccumulator(previous as GrokCursorState | undefined, pseudonym), force);
     if (parser === codexParser && original.isFile() && /\.jsonl$/i.test(canonical))
       return await scanJsonlAppend(db, `${key}:v5`, canonical, (previous) => codexAccumulator(previous as CodexCursorState | undefined, pseudonym), force);
     const row = await new Promise<{ signature: string; result: string } | undefined>((resolve, reject) => db.get('SELECT signature, result FROM scan_cache WHERE id = ?', [key], (e, value) => e ? reject(e) : resolve(value as { signature: string; result: string } | undefined)));

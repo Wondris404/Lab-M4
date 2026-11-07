@@ -1,7 +1,7 @@
 // External WebDriver smoke test: no test commands or plugins are built into the app.
 // Run only in a disposable Windows profile, with a debug build and tauri-driver.
 import { spawn } from 'node:child_process';
-import { mkdtemp, mkdir, readFile } from 'node:fs/promises';
+import { mkdtemp, mkdir, readFile, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
@@ -20,21 +20,43 @@ Object.assign(env, {
   USERPROFILE: join(scratch, 'profile'), APPDATA: join(scratch, 'appdata'),
   LOCALAPPDATA: join(scratch, 'local'), TEMP: scratch, TMP: scratch, LAB_E2E_DIR: scratch,
 });
-const driver = spawn(driverPath, [], { env, stdio: 'ignore', windowsHide: true });
+const driverArgs = process.env.TAURI_NATIVE_DRIVER ? ['--native-driver', process.env.TAURI_NATIVE_DRIVER] : [];
+const driver = spawn(driverPath, driverArgs, { env, stdio: ['ignore', 'inherit', 'inherit'], windowsHide: true });
 let driverError;
 driver.on('error', (error) => { driverError = error; });
-const overall = setTimeout(() => { console.error('WebDriver smoke timed out'); driver.kill(); process.exit(1); }, 240_000);
+let stage = 'driver startup';
+driver.on('exit', (code, signal) => {
+  driverError ??= new Error(`tauri-driver exited (code ${code}, signal ${signal})`);
+});
+const overall = setTimeout(() => {
+  console.error(`WebDriver smoke timed out during ${stage}`);
+  driver.kill();
+  process.exit(1);
+}, 240_000);
 const base = 'http://127.0.0.1:4444';
 let session;
 
+async function step(label, action) {
+  stage = label;
+  console.log(`[webdriver] ${label}`);
+  return action();
+}
+
 async function request(method, path, body, timeout = 8000) {
-  const response = await fetch(base + path, {
-    method, signal: AbortSignal.timeout(timeout),
-    ...(body !== undefined && { headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) }),
-  });
-  const data = await response.json();
-  if (!response.ok || data.value?.error) throw new Error(`WebDriver ${method} ${path.replace(/\/session\/[^/]+/, '/session/<id>')} failed: ${data.value?.error ?? response.status}`);
-  return data.value;
+  const route = path.replace(/\/session\/[^/]+/, '/session/<id>');
+  try {
+    const response = await fetch(base + path, {
+      method, signal: AbortSignal.timeout(timeout),
+      ...(body !== undefined && { headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) }),
+    });
+    const data = await response.json();
+    if (!response.ok || data.value?.error) {
+      throw new Error(data.value?.message ?? data.value?.error ?? `HTTP ${response.status}`);
+    }
+    return data.value;
+  } catch (error) {
+    throw new Error(`${method} ${route}: ${error.name}: ${error.message}`, { cause: error });
+  }
 }
 async function until(label, condition, timeout = 30_000) {
   const deadline = Date.now() + timeout;
@@ -68,10 +90,7 @@ async function readMarker(name) {
   catch (error) { if (error.code === 'ENOENT') return ''; throw error; }
 }
 async function marker(name, expected) {
-  const result = await until(name, async () => {
-    const value = await readMarker(name);
-    return value.startsWith(expected + '|') ? value : '';
-  });
+  const result = await until(`PowerShell to write ${name}`, () => readMarker(name));
   const [value, year, pid] = result.split('|');
   if (value !== expected || Number(year) < 2020 || Number(year) > 2200 || !/^\d+$/.test(pid))
     throw new Error(`Unexpected PowerShell result for ${name}`);
@@ -82,10 +101,20 @@ function isRunning(pid) {
   catch (error) { if (error.code === 'ESRCH') return false; throw error; }
 }
 async function startSession() {
-  const value = await request('POST', '/session', { capabilities: { alwaysMatch: { 'tauri:options': { application: binary } } } }, 60_000);
+  const value = await step('launch application and attach WebView', () =>
+    request('POST', '/session', { capabilities: { alwaysMatch: { 'tauri:options': { application: binary } } } }, 60_000));
   session = value.sessionId;
   if (!session) throw new Error('Missing WebDriver session id');
-  await until('initial terminal session', async () => (await elements('.session-item')).length === 1);
+  await step('load UI', () => until('document', () =>
+    request('POST', endpoint('/execute/sync'), { script: 'return document.readyState === "complete" && !!document.querySelector("#root");', args: [] })));
+  await step('locate Tauri bridge', async () => {
+    const available = await request('POST', endpoint('/execute/sync'), {
+      script: 'return typeof window.__TAURI_INTERNALS__?.invoke === "function";', args: [],
+    });
+    if (!available) throw new Error('Tauri invoke bridge is unavailable');
+  });
+  await step('create initial terminal session', () =>
+    until('initial terminal session', async () => (await elements('.session-item')).length === 1));
 }
 async function closeWindow() {
   await request('DELETE', endpoint('/window'), undefined, 20_000);
@@ -93,41 +122,77 @@ async function closeWindow() {
   session = undefined;
 }
 function writeMarker(name, expr) {
-  return `"${expr}|$((Get-Date).Year)|$PID" | Set-Content -Encoding utf8 -LiteralPath (Join-Path $env:LAB_E2E_DIR '${name}')`;
+  // Print the computed result before writing the out-of-band marker so a
+  // screenshot can distinguish PowerShell execution from marker I/O failure.
+  return `$labMarker="${expr}|$((Get-Date).Year)|$PID"; Write-Output $labMarker; [IO.File]::WriteAllText([IO.Path]::Combine($env:LAB_E2E_DIR,'${name}'),$labMarker)`;
 }
 
 try {
-  await until('tauri-driver', async () => {
+  await step('start tauri-driver', () => until('tauri-driver', async () => {
     try { await request('GET', '/status', undefined, 1000); return true; } catch { return false; }
-  });
+  }));
   await startSession();
-  await typeLine(`$global:labSession='first'; $global:labOrder='A'; $global:labOrder+='B'; ${writeMarker('first.txt', '$global:labSession-$global:labOrder')}`);
-  const firstPid = await marker('first.txt', 'first-AB');
-  await click('[aria-label="Actions menu"]');
-  await click('.sidebar-menu button:nth-of-type(2)');
-  await until('second session', async () => (await elements('.session-item')).length === 2);
-  await typeLine(`$global:labSession='second'; ${writeMarker('second.txt', '$global:labSession')}`);
-  const secondPid = await marker('second.txt', 'second');
+  await step('send ordered input to first terminal', async () => {
+    await typeLine("$global:labSession='first'; $global:labOrder='A'");
+    await typeLine("$global:labOrder+='B'");
+    await typeLine(writeMarker('first.txt', '$global:labSession-$global:labOrder'));
+  });
+  const firstPid = await step('read first terminal marker', () => marker('first.txt', 'first-AB'));
+  await step('create second terminal', async () => {
+    await click('[aria-label="Actions menu"]');
+    await click('.sidebar-menu button:nth-of-type(2)');
+    await until('second session', async () => (await elements('.session-item')).length === 2);
+  });
+  await step('send input to second terminal', () =>
+    typeLine(`$global:labSession='second'; ${writeMarker('second.txt', '$global:labSession')}`));
+  const secondPid = await step('read second terminal marker', () => marker('second.txt', 'second'));
   if (firstPid === secondPid) throw new Error('Sessions unexpectedly share a PowerShell process');
-  await click('.session-item', 0);
-  await typeLine(writeMarker('first-again.txt', '$global:labSession-$global:labOrder'));
-  await marker('first-again.txt', 'first-AB');
-  await click('.session-item', 1);
-  await click('.session-item .close-btn', 1);
-  await click('.confirm-modal-btn-danger');
-  await until('second session closed', async () => (await elements('.session-item')).length === 1);
-  await until('second PowerShell exit', async () => !isRunning(secondPid));
-  await typeLine(writeMarker('after-close.txt', '$global:labSession-$global:labOrder'));
-  await marker('after-close.txt', 'first-AB');
-  await closeWindow();
+  await step('verify first terminal state after switching', async () => {
+    await click('.session-item', 0);
+    await typeLine(writeMarker('first-again.txt', '$global:labSession-$global:labOrder'));
+    await marker('first-again.txt', 'first-AB');
+  });
+  await step('close second terminal and wait for PowerShell exit', async () => {
+    await click('.session-item', 1);
+    await click('.session-item .close-btn', 1);
+    await click('.confirm-modal-btn-danger');
+    await until('second session closed', async () => (await elements('.session-item')).length === 1);
+    await until('second PowerShell exit', async () => !isRunning(secondPid));
+  });
+  await step('verify first terminal after closing the second', async () => {
+    await typeLine(writeMarker('after-close.txt', '$global:labSession-$global:labOrder'));
+    await marker('after-close.txt', 'first-AB');
+  });
+  await step('close window with idle terminal', closeWindow);
   await until('first PowerShell exit', async () => !isRunning(firstPid));
   await startSession();
   await typeLine(writeMarker('relaunch.txt', 'relaunch'));
   const relaunchPid = await marker('relaunch.txt', 'relaunch');
-  await typeLine('1..100000 | ForEach-Object { "LAB-M4-OUTPUT-$_" }');
-  await closeWindow();
-  await until('PowerShell exit while producing output', async () => !isRunning(relaunchPid));
+  await step('wait for active terminal output before closing', async () => {
+    await typeLine(`Write-Output 'LAB-M4-OUTPUT-0'; ${writeMarker('output-start.txt', 'output-start')}; 1..2000 | ForEach-Object { "LAB-M4-OUTPUT-$_"; Start-Sleep -Milliseconds 20 }; ${writeMarker('output-end.txt', 'output-end')}`);
+    if (await marker('output-start.txt', 'output-start') !== relaunchPid) {
+      throw new Error('Output was started in a different PowerShell process');
+    }
+  });
+  await step('close window with active terminal output', async () => {
+    await closeWindow();
+    await until('PowerShell exit while producing output', async () => !isRunning(relaunchPid));
+    if (await readMarker('output-end.txt')) throw new Error('Output completed before the window closed');
+  });
   console.log('Windows WebDriver smoke passed: sessions, input ordering, Get-Date, close, relaunch and output cleanup');
+} catch (error) {
+  console.error(`[webdriver] failed during ${stage}`, error);
+  if (session) {
+    try {
+      const png = await request('GET', endpoint('/screenshot'), undefined, 3000);
+      const artifacts = resolve('.lab-m4/webdriver-artifacts');
+      await mkdir(artifacts, { recursive: true });
+      await writeFile(join(artifacts, 'failure.png'), Buffer.from(png, 'base64'));
+    } catch (screenshotError) {
+      console.error('[webdriver] screenshot unavailable:', screenshotError.message);
+    }
+  }
+  process.exitCode = 1;
 } finally {
   if (session) { try { await request('DELETE', endpoint(''), undefined, 5000); } catch { /* retain original test failure */ } }
   clearTimeout(overall);

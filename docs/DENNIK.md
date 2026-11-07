@@ -509,6 +509,7 @@
 
 ## 2026-11-07 23:20 +01:00 (Europe/Bratislava) – Vetva je na GitHube
 - `git push -u origin HEAD:codex/orchestrator-transport` prijal novú vetvu. Remote `refs/heads/codex/orchestrator-transport` je `df321fa33e661f20c33041e17251d5443ff04b84`, zhodný s lokálnym HEAD pred týmto zápisom. Do `main` sa nemergovalo. PR #13 ostáva na `40d326d`.
+- Draft PR #14: https://github.com/Wondris404/Lab-M4/pull/14. Hlava po tomto zápise sa posunie ďalším denníkovým commitom. Merge sa nerobil.
 
 - Celý beh na `1eb061f` odhalil náhodný pád `grok-cursor` (104/105, exit 1): dočasná cesta mala suffix `KEYJLz`, ktorý blokuje zámerná kontrola citlivých názvov. Syntetické fixture používajú hexadecimálny UUID suffix. Kontrola zdrojových ciest v aplikácii zostala zachovaná.
 

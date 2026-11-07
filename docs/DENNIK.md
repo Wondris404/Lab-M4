@@ -495,6 +495,13 @@
 - Čistá inštalácia ostáva NEOVERENÉ. Lokálne `windows-installed-usage-smoke.ps1` končí pred inštaláciou: `Installer smoke must run on a disposable GitHub-hosted runner.`
 - Push sa nerobil. Report: `.lab-m4/reports/stav-2026-11-07-2210.md`.
 
+## 2026-11-07 22:55 +01:00 (Europe/Bratislava) – STOP, review diffu a NSIS z dcf2f27
+- `dcf2f2764728147789517b286601d413fe027798` rozlišuje zatvorenie vstupu a STOP. EOF rodiča počká na usporiadaný stdout a končí 0 s `LAB_M4_RESULT parent-closed`. Riadok `LAB_M4_STOP` sa agentovi neprepošle a končí 5 s `LAB_M4_RESULT stop`. Timeout ostáva 124, plná fronta 4, zatvorenie agenta 2, spawn 1.
+- Review berie `git diff` a exit testu z izolovaného worktree. Počet pokusov sám o sebe výsledok neprijme. STOP fake relácie s pripojeným transportom volá odovzdanú binárku a Node peer odmietne. Živý Codex → Grok Build ostáva BLOCKED.
+- Čistý worktree `dcf2f27` nemal staging. `pnpm package:usage-sidecar` exit 0, Node v24.22.2, `snapshotId` je v `main.cjs`, manifest obsahuje `node.exe`, `main.cjs` a `node_sqlite3.node`. `tauri build --ci --bundles nsis` exit 0. Inštalátor `Lab-M4_0.2.0_x64-setup.exe`, 30 774 391 bajtov, SHA-256 `1B5EC2DC75759A6ED444DED6CC753ED19C06E4F2854B90C98992AB3901CBEEA4`, čas 2026-11-07 22:49:44. Starší súbor z `bbf7c06` už nie je odovzdaný balík.
+- Na `dcf2f27`: `package`, `lint`, `typecheck`, `pnpm test` 111/111 a `pnpm test:orchestrator` 22/22 exit 0. `cargo fmt` a `clippy -D warnings` exit 0. Prvé dva `cargo test` exit 101, LNK1104. Ďalší beh exit 0: lib 17 passed, 0 failed. Ignorovaný ConPTY exit 0, 1 passed, 0,64 s. `cargo test -- close` exit 0, 6 passed. Natívny transport exit 0.
+- Čistá inštalácia ostáva NEOVERENÉ. GUI ostáva NEOVERENÉ. Push sa nerobil. Report: `.lab-m4/reports/stav-2026-11-07-2255.md`.
+
 - Celý beh na `1eb061f` odhalil náhodný pád `grok-cursor` (104/105, exit 1): dočasná cesta mala suffix `KEYJLz`, ktorý blokuje zámerná kontrola citlivých názvov. Syntetické fixture používajú hexadecimálny UUID suffix. Kontrola zdrojových ciest v aplikácii zostala zachovaná.
 
 ## 2026-11-07 – Regresie z review Usage

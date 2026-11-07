@@ -34,6 +34,8 @@ export function grokAccumulator(
       event = obj(JSON.parse(line));
     } catch {
       result.warnings++;
+      result.partial = true;
+      result.countRisk = 'under-count';
       return;
     }
     const ctx = obj(event.ctx),
@@ -64,6 +66,8 @@ export function grokAccumulator(
       reasoningTokens > outputTokens
     ) {
       result.warnings++;
+      result.partial = true;
+      result.countRisk = 'under-count';
       return;
     }
     const fingerprint = createHash('sha256')
@@ -135,6 +139,7 @@ export const grokBuildParser: Parser = {
       }
       result.warnings++;
       result.partial = true;
+      result.countRisk = 'under-count';
       if (error instanceof ZstdIntegrityError)
         result.warningDetails = ['Zstd checksum nesúhlasí; súbor bol vynechaný.'];
       else if (/\.zst$/i.test(path) && !(error instanceof ExpansionLimitError))

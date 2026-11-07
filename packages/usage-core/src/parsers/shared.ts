@@ -291,7 +291,8 @@ export async function* lines(
       if (pending !== undefined) yield pending;
       pending = line;
     }
-    if (endsWithNewline && pending !== undefined) yield pending;
+    // A validated archive has a definite EOF; a live plain log still needs LF.
+    if (pending !== undefined && (compressed || endsWithNewline)) yield pending;
   } finally {
     stream.destroy();
     decompressed.destroy();

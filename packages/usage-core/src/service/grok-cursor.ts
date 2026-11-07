@@ -156,6 +156,9 @@ export async function scanJsonlAppend(
       records: [...oldResult.records, ...fresh.records.map(normalizeRecord)],
       limits: [...oldResult.limits, ...fresh.limits],
       warnings: oldResult.warnings + fresh.warnings,
+      ...((oldResult.partial || fresh.partial) && { partial: true }),
+      ...((oldResult.countRisk || fresh.countRisk) && { countRisk: oldResult.countRisk ?? fresh.countRisk }),
+      ...((oldResult.warningDetails || fresh.warningDetails) && { warningDetails: [...new Set([...(oldResult.warningDetails ?? []), ...(fresh.warningDetails ?? [])])] }),
       ...(accumulator.fingerprints && {
         _fingerprints: [
           ...((oldResult as CursorResult)._fingerprints ?? []),

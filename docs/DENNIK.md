@@ -387,6 +387,13 @@
 - Ručný protokolový smoke s týmto supervisorom spustil skutočné CLI v nových prázdnych profiloch. Codex 0.166.0 odpovedal na `initialize` a `account/read` s `refreshToken: false`. Grok Build 1.0.77 odpovedal cez ACP v1, ponúkol iba `grok.com` a odmietol `session/new` s kódom `-32000`. Pri STOP sa počet aktívnych procesov v privátnych joboch znížil pri Codexe z 3 na 0 a pri Groku z 2 na 0. Bez loginu, obnovy tokenu, modelového turnu alebo prenosu kódu.
 - Dokumentácia xAI uvádza aj `cached_token` a `xai.api_key` pri vhodnej autentifikácii. Tento smoke overuje transport a lifecycle konkrétnych bináriek v prázdnom profile. Pre živý režim zostáva otvorená existujúca autorizovaná autentifikácia, vynútenie oprávnení na Windows, hranice I/O, skutočný diff a review. Job Object spravuje lifecycle. Fake CLI zostáva oddelené.
 
+## 2026-11-07 20:10 +01:00 (Europe/Bratislava) – Transport s ohraničenou frontou
+- Pracovný strom `C:\Users\ondre\Desktop\Lab-M4\.lab-m4\implementation-verified`, vetva `codex/orchestrator-transport`, commit `d29eb12c01bcaf6bdc21c53569f7a00050055f39`. Pôvodný checkout `C:\Users\ondre\Desktop\Lab-M4` ostal na `d0e50a5` s nesledovaným `agent-usage/`. Push sa nerobil. Zamietnutá publikácia Usage sa neopakovala. PR #13 ostáva na staršej hlave `40d326d`.
+- Natívny transport rozlišuje zatvorenie vstupu (exit 0), zatvorenie výstupu agenta (2), chybu vstupu (3), plnú frontu (4) a timeout (124). Po timeoute aj po plnej fronte vypíše `LAB_M4_JOB_STOP` a skončí vlastný job na nulu. Test `windows-agent-transport.mjs` prešiel dvakrát, exit 0. Nezávislý proces mimo jobu prežil. `node --test` orchestrátora 18/18, exit 0. `cli.mjs start` bez `--fake` exit 1. Dva behy s `--fake` exit 0 a režim ostáva `fake`.
+- Prázdny profil Grok Build skončil exit 1, hláška Not signed in. Prázdny profil Codex CLI exit 1 a nedokončil úlohu, diff ani review. Živý cyklus je BLOCKED. Tokeny sa nekopírovali.
+- `pnpm package:usage-sidecar` v tomto shelli exit 1: Node v24.22.1 nemá vedľa seba LICENSE. Existujúci staging uvádza Node v24.22.2, preto freshness test neprešiel (110/111, jeden fail). Staging sa nemazal. Nový NSIS z tohto commitu sa nestaval. GUI sa v tejto session nespúšťalo. Oboje je NEOVERENÉ pre `d29eb12`.
+- Report: `.lab-m4/reports/stav-2026-11-07-2010.md`.
+
 - Celý beh na `1eb061f` odhalil náhodný pád `grok-cursor` (104/105, exit 1): dočasná cesta mala suffix `KEYJLz`, ktorý blokuje zámerná kontrola citlivých názvov. Syntetické fixture používajú hexadecimálny UUID suffix. Kontrola zdrojových ciest v aplikácii zostala zachovaná.
 
 ## 2026-11-07 – Regresie z review Usage

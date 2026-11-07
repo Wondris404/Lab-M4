@@ -425,6 +425,11 @@
 - GUI a živý Codex → Grok Build nie sú PASS. Čistá inštalácia je NEOVERENÉ. Push nebol.
 - Report: `.lab-m4/reports/stav-2026-11-07-2113.md`.
 
+## 2026-11-07 21:20 +01:00 (Europe/Bratislava) – Trvalý izolovaný domov pre login
+- Predvolené profily Codex aj Grok Build majú uložené prihlásenie. Súbory sa nečítali do chatu a nekopírovali sa.
+- `agent-preflight.mjs` predtým vytváral pri každom behu nový prázdny `CODEX_HOME` a `GROK_HOME`, takže bežné `grok login` v používateľskom profile tento beh nevidí.
+- Commit `b45d365266056ab50f5ba84fb426caefc61cf5b2` necháva oba domovy v gitignorovanom `.lab-m4/agent-homes`. `USERPROFILE` ostáva jednorazový. Test `agent-preflight.test.mjs` je v `pnpm test:orchestrator`: 19 pass, 0 fail, exit 0. Živý cyklus ostáva BLOCKED, kým sa používateľ neprihlási do týchto dvoch priečinkov.
+
 - Celý beh na `1eb061f` odhalil náhodný pád `grok-cursor` (104/105, exit 1): dočasná cesta mala suffix `KEYJLz`, ktorý blokuje zámerná kontrola citlivých názvov. Syntetické fixture používajú hexadecimálny UUID suffix. Kontrola zdrojových ciest v aplikácii zostala zachovaná.
 
 ## 2026-11-07 – Regresie z review Usage

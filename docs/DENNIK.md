@@ -466,6 +466,11 @@
 - Prvý `cargo test` na tomto SHA narazil na LNK1104, lebo linker neotvoril testovacie exe. Po uvoľnení súborov rovnaký checkout: `cargo test --offline --locked` exit 0, lib 17 passed, 0 failed, ConPTY test v predvolenom behu 1 ignored. `cargo test --test terminal_pty_smoke -- --ignored` exit 0, 1 passed, 0 failed, 0,83 s. `cargo test -- close` exit 0, 6 passed, 0 failed, 11 filtered out.
 - Push, prihlásenie a inštalácia sa nerobili. GUI, čistá inštalácia a živý cyklus ostávajú NEOVERENÉ alebo BLOCKED.
 
+## 2026-11-07 21:50 +01:00 (Europe/Bratislava) – Natívny timeout na 9505e9b
+- `git diff --stat 98568951f71771c5f8fcec7e2e2e1807600bcf32 9505e9bc7ab0e31872200425665ffe9d6acbc21b` je iba `docs/DENNIK.md`, 36 vložených riadkov. Medzi nimi nie je zmena kódu.
+- Na tomto checkoute `rustc --edition 2021 -D warnings` pre `agent_transport.rs` aj `supervisor_test.rs` exit 0. `node packages/orchestrator-core/tests/windows-agent-transport.mjs` exit 0. Výstup: `Native transport passed: spawn failure, deadline, EOF, backpressure, surviving control`.
+- Invariant: testovaný job skončil v limite (deadline, exit 124), po `LAB_M4_JOB_STOP` neostal žiadny vlastný proces a nezávislý kontrolný proces prežil. Push, prihlásenie a inštalácia sa nerobili.
+
 - Celý beh na `1eb061f` odhalil náhodný pád `grok-cursor` (104/105, exit 1): dočasná cesta mala suffix `KEYJLz`, ktorý blokuje zámerná kontrola citlivých názvov. Syntetické fixture používajú hexadecimálny UUID suffix. Kontrola zdrojových ciest v aplikácii zostala zachovaná.
 
 ## 2026-11-07 – Regresie z review Usage

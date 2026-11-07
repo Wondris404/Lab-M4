@@ -445,6 +445,13 @@
 - `cargo test --offline --locked --manifest-path apps/desktop/src-tauri/Cargo.toml` exit 0. Lib 17 passed, 0 failed. ConPTY test ostal 1 ignored a v tomto behu sa nespustil.
 - `rustc --edition 2021 -D warnings` pre `agent_transport.rs` aj `supervisor_test.rs` exit 0. `node packages/orchestrator-core/tests/windows-agent-transport.mjs` exit 0: spawn failure, deadline, EOF, backpressure, surviving control. Job skončil v limite, vlastné procesy neostali, kontrolný proces prežil.
 
+## 2026-11-07 21:36 +01:00 (Europe/Bratislava) – ConPTY smoke a ukončovanie na 95f3fdc
+- Checkout pred týmto zápisom: `95f3fdc78d902b5863ea6ae73acac5a2083f441b`.
+- `cargo test --offline --locked --manifest-path apps/desktop/src-tauri/Cargo.toml --test terminal_pty_smoke -- --ignored --nocapture` exit 0. `powershell_ptys_accept_input_and_close_independently` 1 passed, 0 failed, 0,66 s. Dve relácie, Get-Date, prvá skončila, druhá ostala nažive.
+- `cargo test --offline --locked --manifest-path apps/desktop/src-tauri/Cargo.toml -- close` exit 0. 6 passed, 0 failed, 11 filtered out: pipe close, PowerShell print close, wait timeout, súbežný close, blokovaný ConPTY zápis a vlastný process tree.
+- `cargo test --offline --locked --manifest-path apps/desktop/src-tauri/Cargo.toml -- native_terminal` exit 0. 1 passed, 0 failed. Je to ten istý process-tree test, spustený ešte raz.
+- Prihlásenie do izolovaných domovov, `DevToolsActivePort` a čistá inštalácia ostávajú BLOCKED alebo NEOVERENÉ. Push sa nerobil.
+
 - Celý beh na `1eb061f` odhalil náhodný pád `grok-cursor` (104/105, exit 1): dočasná cesta mala suffix `KEYJLz`, ktorý blokuje zámerná kontrola citlivých názvov. Syntetické fixture používajú hexadecimálny UUID suffix. Kontrola zdrojových ciest v aplikácii zostala zachovaná.
 
 ## 2026-11-07 – Regresie z review Usage

@@ -38,6 +38,8 @@ jobs:
       - run: ./job-stop-proof.exe --self-test
       - run: rustc --edition 2021 ../../packages/orchestrator-core/native/supervisor_test.rs -o job-supervisor-test.exe
       - run: ./job-supervisor-test.exe
+      - run: rustc --edition 2021 -D warnings ../../packages/orchestrator-core/native/agent_transport.rs -o agent-transport.exe
+      - run: node ../../packages/orchestrator-core/tests/windows-agent-transport.mjs agent-transport.exe job-supervisor-test.exe
       - run: cargo fmt --manifest-path src-tauri/Cargo.toml --check
       - run: cargo clippy --manifest-path src-tauri/Cargo.toml -- -D warnings
       - run: cargo test --manifest-path src-tauri/Cargo.toml

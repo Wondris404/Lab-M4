@@ -113,7 +113,6 @@ extern "system" {
         len: u32,
         returned: *mut u32,
     ) -> i32;
-    fn IsProcessInJob(process: Handle, job: Handle, result: *mut i32) -> i32;
     fn TerminateJobObject(job: Handle, code: u32) -> i32;
     fn CreatePipe(read: *mut Handle, write: *mut Handle, attrs: *const c_void, size: u32) -> i32;
     fn SetHandleInformation(handle: Handle, mask: u32, flags: u32) -> i32;
@@ -406,7 +405,12 @@ impl Supervised {
         })?;
         Ok(info.active_processes)
     }
+    #[allow(dead_code)] // Membership is queried by the native regression.
     pub(crate) fn contains_process(&self, process: *mut c_void) -> io::Result<bool> {
+        #[link(name = "kernel32")]
+        extern "system" {
+            fn IsProcessInJob(process: Handle, job: Handle, result: *mut i32) -> i32;
+        }
         let mut result = 0;
         check(unsafe { IsProcessInJob(process, self.job.0, &mut result) })?;
         Ok(result != 0)

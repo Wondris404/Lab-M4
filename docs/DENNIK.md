@@ -394,6 +394,13 @@
 - `pnpm package:usage-sidecar` v tomto shelli exit 1: Node v24.22.1 nemá vedľa seba LICENSE. Existujúci staging uvádza Node v24.22.2, preto freshness test neprešiel (110/111, jeden fail). Staging sa nemazal. Nový NSIS z tohto commitu sa nestaval. GUI sa v tejto session nespúšťalo. Oboje je NEOVERENÉ pre `d29eb12`.
 - Report: `.lab-m4/reports/stav-2026-11-07-2010.md`.
 
+## 2026-11-07 20:20 +01:00 (Europe/Bratislava) – Sidecar Node 24.22.2 a NSIS
+- Na `84a9e4f5f1460b1f6e13eb660b7ccbbd2f3069aa` som zabalil sidecar oficiálnym Node v24.22.2, ktorý má vedľa seba LICENSE. `package:usage-sidecar` exit 0. Freshness test tým istým Node exit 0.
+- S tým istým Node na PATH: `pnpm lint` exit 0, `pnpm test` exit 0 (33 súborov, 111 testov), `pnpm test:orchestrator` exit 0 (18/18), `pnpm typecheck` exit 0, `cargo fmt --check` exit 0, `cargo clippy -- -D warnings` exit 0, `cargo test --offline --locked` exit 0 (lib 15/15), ignorovaný `terminal_pty_smoke` exit 0 (1/1).
+- `pnpm --filter wraith exec tauri build --ci --bundles nsis` exit 0. Inštalátor `apps/desktop/src-tauri/target/release/bundle/nsis/Lab-M4_0.2.0_x64-setup.exe`, 30 780 068 bajtov, SHA-256 `AE618BA4E48FBF7BF4A602BAE3E3B2CF42131F70A0E8BFFB6CEA50CEC7104645`, zo stromu `84a9e4f`. Nie je to starý balík z `5e0eee4`.
+- `windows-installed-usage-smoke.ps1` exit 1: vyžaduje disposable GitHub-hosted runner a pred inštaláciou skončil. Používateľova aplikácia sa neinštalovala. Čistá inštalácia a GUI na `84a9e4f` ostávajú NEOVERENÉ.
+- Živý Codex → Grok Build cyklus ostáva BLOCKED. Iný model sa nenasadil. Push sa nerobil.
+
 - Celý beh na `1eb061f` odhalil náhodný pád `grok-cursor` (104/105, exit 1): dočasná cesta mala suffix `KEYJLz`, ktorý blokuje zámerná kontrola citlivých názvov. Syntetické fixture používajú hexadecimálny UUID suffix. Kontrola zdrojových ciest v aplikácii zostala zachovaná.
 
 ## 2026-11-07 – Regresie z review Usage

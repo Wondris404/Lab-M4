@@ -88,7 +88,7 @@ export async function scanJsonlAppend(
         currentPath.isSymbolicLink() || after.dev !== currentPath.dev ||
         after.ino !== currentPath.ino || after.size !== info.size ||
         after.mtimeMs !== info.mtimeMs || after.ctimeMs !== info.ctimeMs
-      ) return { ...emptyResult(), warnings: 1, partial: true };
+      ) return { ...emptyResult(), warnings: 1, partial: true, countRisk: 'under-count' };
       return JSON.parse(row.result) as CursorResult;
     }
     const append =
@@ -135,7 +135,7 @@ export async function scanJsonlAppend(
       }
     } catch (error) {
       if (error instanceof LineLimitError)
-        return { ...emptyResult(), warnings: 1, partial: true };
+        return { ...emptyResult(), warnings: 1, partial: true, countRisk: 'under-count' };
       throw error;
     }
     const tail = await prefixHash(file, offset);
@@ -149,7 +149,7 @@ export async function scanJsonlAppend(
       endInfo.mtimeMs !== info.mtimeMs ||
       endInfo.ctimeMs !== info.ctimeMs
     )
-      return { ...emptyResult(), warnings: 1, partial: true };
+      return { ...emptyResult(), warnings: 1, partial: true, countRisk: 'under-count' };
     const fresh = accumulator.result;
     const result: CursorResult = {
       ...oldResult,

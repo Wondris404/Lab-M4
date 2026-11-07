@@ -438,6 +438,13 @@
 - Push sa nerobil. Izolované prihlásenie, `DevToolsActivePort` a čistá inštalácia ostávajú krokom používateľa.
 - Report: `.lab-m4/reports/stav-2026-11-07-2128.md`.
 
+## 2026-11-07 21:32 +01:00 (Europe/Bratislava) – Rust kontroly na 01190f8
+- Checkout pred týmto zápisom: `01190f830d508142e9450f4e2a6f1bb39601af59`. Žiadny ďalší commit nepredchádzal týmto príkazom.
+- `cargo fmt --manifest-path apps/desktop/src-tauri/Cargo.toml --check` exit 0.
+- `cargo clippy --offline --locked --manifest-path apps/desktop/src-tauri/Cargo.toml -- -D warnings` exit 0. `Finished dev profile` za 2,73 s.
+- `cargo test --offline --locked --manifest-path apps/desktop/src-tauri/Cargo.toml` exit 0. Lib 17 passed, 0 failed. ConPTY test ostal 1 ignored a v tomto behu sa nespustil.
+- `rustc --edition 2021 -D warnings` pre `agent_transport.rs` aj `supervisor_test.rs` exit 0. `node packages/orchestrator-core/tests/windows-agent-transport.mjs` exit 0: spawn failure, deadline, EOF, backpressure, surviving control. Job skončil v limite, vlastné procesy neostali, kontrolný proces prežil.
+
 - Celý beh na `1eb061f` odhalil náhodný pád `grok-cursor` (104/105, exit 1): dočasná cesta mala suffix `KEYJLz`, ktorý blokuje zámerná kontrola citlivých názvov. Syntetické fixture používajú hexadecimálny UUID suffix. Kontrola zdrojových ciest v aplikácii zostala zachovaná.
 
 ## 2026-11-07 – Regresie z review Usage

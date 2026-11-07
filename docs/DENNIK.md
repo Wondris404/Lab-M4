@@ -459,6 +459,13 @@
 - Čistá inštalácia NEOVERENÉ. `windows-installed-usage-smoke.ps1` exit 1: `Installer smoke must run on a disposable GitHub-hosted runner.` Inštalácia sa nespustila.
 - Živý cyklus BLOCKED. Prázdny profil Grok Build exit 1, hláška Not signed in. Prázdny profil Codex exit 1. Credential súbory sa nekopírovali. Izolované domovy `.lab-m4/agent-homes/codex` a `grok` čakajú na prihlásenie používateľa.
 
+## 2026-11-07 21:45 +01:00 (Europe/Bratislava) – Jedna sada na 72ff0cb
+- Pred sadou `git status --porcelain` na `72ff0cbd1dc6ff83530dbdb2585ab2dd722839c1` nič nevypísal. Node v24.22.2.
+- `pnpm package:usage-sidecar` exit 0. `pnpm lint` exit 0. `pnpm typecheck` exit 0 a v ňom produkčný frontend build, `built in 2.05s`. `pnpm test` exit 0: 33 súborov, 111 testov. `pnpm test:orchestrator` exit 0: 19 pass, 0 fail.
+- `cargo fmt --check` exit 0. `cargo clippy --offline --locked -- -D warnings` exit 0, dev profil za 4,51 s.
+- Prvý `cargo test` na tomto SHA narazil na LNK1104, lebo linker neotvoril testovacie exe. Po uvoľnení súborov rovnaký checkout: `cargo test --offline --locked` exit 0, lib 17 passed, 0 failed, ConPTY test v predvolenom behu 1 ignored. `cargo test --test terminal_pty_smoke -- --ignored` exit 0, 1 passed, 0 failed, 0,83 s. `cargo test -- close` exit 0, 6 passed, 0 failed, 11 filtered out.
+- Push, prihlásenie a inštalácia sa nerobili. GUI, čistá inštalácia a živý cyklus ostávajú NEOVERENÉ alebo BLOCKED.
+
 - Celý beh na `1eb061f` odhalil náhodný pád `grok-cursor` (104/105, exit 1): dočasná cesta mala suffix `KEYJLz`, ktorý blokuje zámerná kontrola citlivých názvov. Syntetické fixture používajú hexadecimálny UUID suffix. Kontrola zdrojových ciest v aplikácii zostala zachovaná.
 
 ## 2026-11-07 – Regresie z review Usage

@@ -507,6 +507,9 @@
 - `node scripts/windows-webdriver-smoke.mjs` dvakrát, exit 1 a exit 1. Oba skončili na `POST /session` TimeoutError a `hyper::Error(IncompleteMessage)`. K reláciám, `Get-Date`, poradiu, zatvoreniu, relaunch ani blokovanému writeru sa test nedostal.
 - `DevToolsActivePort` po oboch behoch chýba. `wraith.exe`, `tauri-driver.exe` a `msedgedriver.exe` neostali. GUI ostáva NEOVERENÉ. Ďalší rovnaký beh nespúšťam.
 
+## 2026-11-07 23:20 +01:00 (Europe/Bratislava) – Vetva je na GitHube
+- `git push -u origin HEAD:codex/orchestrator-transport` prijal novú vetvu. Remote `refs/heads/codex/orchestrator-transport` je `df321fa33e661f20c33041e17251d5443ff04b84`, zhodný s lokálnym HEAD pred týmto zápisom. Do `main` sa nemergovalo. PR #13 ostáva na `40d326d`.
+
 - Celý beh na `1eb061f` odhalil náhodný pád `grok-cursor` (104/105, exit 1): dočasná cesta mala suffix `KEYJLz`, ktorý blokuje zámerná kontrola citlivých názvov. Syntetické fixture používajú hexadecimálny UUID suffix. Kontrola zdrojových ciest v aplikácii zostala zachovaná.
 
 ## 2026-11-07 – Regresie z review Usage

@@ -919,6 +919,132 @@ fn save_sessions(app: AppHandle, state: Value) -> Result<(), String> {
     Ok(())
 }
 
+/// Arguments passed through WebView2's API when a WebDriver session asked for automation.
+///
+/// `TAURI_WEBVIEW_AUTOMATION` is set by tauri-driver. wry treats that flag as a no-op on
+/// Windows, and WebView2 150+ does not open a DevTools port from
+/// `WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS` alone. The port stays closed for a normal launch.
+pub(crate) fn automation_browser_args(
+    webview_automation: Option<&str>,
+    legacy_automation: Option<&str>,
+    webview_arguments: Option<&str>,
+) -> Option<String> {
+    if !automation_requested(webview_automation, legacy_automation) {
+        return None;
+    }
+    // Keep the driver's full switch list. WebView2 only honors it through the
+    // API, and dropping `--enable-automation` leaves the debugging port closed.
+    let mut args = webview_arguments.unwrap_or("").trim().to_string();
+    if remote_debugging_port(&args).is_none() {
+        if !args.is_empty() {
+            args.push(' ');
+        }
+        args.push_str("--remote-debugging-port=0");
+    }
+    if !args.contains("--remote-allow-origins=") {
+        args.push_str(" --remote-allow-origins=*");
+    }
+    Some(with_required_disabled_features(&args))
+}
+
+fn with_required_disabled_features(args: &str) -> String {
+    const REQUIRED: [&str; 3] = ["msWebOOUI", "msPdfOOUI", "msSmartScreenProtection"];
+    let mut kept = Vec::new();
+    let mut features = Vec::new();
+    for token in args.split_whitespace() {
+        if let Some(value) = token.strip_prefix("--disable-features=") {
+            for feature in value.split(',').filter(|feature| !feature.is_empty()) {
+                if !features.iter().any(|have: &String| have == feature) {
+                    features.push(feature.to_string());
+                }
+            }
+        } else {
+            kept.push(token.to_string());
+        }
+    }
+    for feature in REQUIRED {
+        if !features.iter().any(|have| have == feature) {
+            features.push(feature.to_string());
+        }
+    }
+    if !features.is_empty() {
+        kept.push(format!("--disable-features={}", features.join(",")));
+    }
+    kept.join(" ")
+}
+
+pub(crate) fn automation_data_dir(
+    webview_automation: Option<&str>,
+    legacy_automation: Option<&str>,
+    user_data_folder: Option<&str>,
+) -> Option<PathBuf> {
+    if !automation_requested(webview_automation, legacy_automation) {
+        return None;
+    }
+    let raw = user_data_folder?.trim();
+    let path = PathBuf::from(raw);
+    if raw.is_empty() || !path.is_absolute() {
+        return None;
+    }
+    Some(path)
+}
+
+fn automation_requested(webview_automation: Option<&str>, legacy_automation: Option<&str>) -> bool {
+    webview_automation == Some("true") || legacy_automation == Some("true")
+}
+
+fn remote_debugging_port(extra: &str) -> Option<&str> {
+    extra.split_whitespace().find_map(|token| {
+        let value = token
+            .trim_matches('"')
+            .strip_prefix("--remote-debugging-port=")?;
+        if (1..=5).contains(&value.len()) && value.bytes().all(|byte| byte.is_ascii_digit()) {
+            Some(value)
+        } else {
+            None
+        }
+    })
+}
+
+fn open_configured_window(app: &tauri::App) -> Result<(), std::io::Error> {
+    let config = app
+        .config()
+        .app
+        .windows
+        .first()
+        .cloned()
+        .ok_or_else(|| std::io::Error::other("Lab-M4 window config is missing"))?;
+    let mut builder = tauri::WebviewWindowBuilder::from_config(app.handle(), &config)
+        .map_err(|error| std::io::Error::other(error.to_string()))?;
+    #[cfg(windows)]
+    {
+        let webview_automation = std::env::var("TAURI_WEBVIEW_AUTOMATION").ok();
+        let legacy_automation = std::env::var("TAURI_AUTOMATION").ok();
+        let webview_arguments = std::env::var("WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS").ok();
+        if let Some(args) = automation_browser_args(
+            webview_automation.as_deref(),
+            legacy_automation.as_deref(),
+            webview_arguments.as_deref(),
+        ) {
+            builder = builder.additional_browser_args(&args);
+            // The loader appends the environment copy after the API arguments.
+            // Keeping both lets the ignored copy win on the command line.
+            std::env::remove_var("WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS");
+        }
+        if let Some(dir) = automation_data_dir(
+            webview_automation.as_deref(),
+            legacy_automation.as_deref(),
+            std::env::var("WEBVIEW2_USER_DATA_FOLDER").ok().as_deref(),
+        ) {
+            builder = builder.data_directory(dir);
+        }
+    }
+    builder
+        .build()
+        .map_err(|error| std::io::Error::other(error.to_string()))?;
+    Ok(())
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -933,6 +1059,7 @@ pub fn run() {
             if let Ok(mut slot) = state.agent_hook_url.lock() {
                 *slot = Some(url);
             }
+            open_configured_window(app)?;
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -969,7 +1096,51 @@ pub fn run() {
 
 #[cfg(test)]
 mod tests {
-    use super::Utf8OutputDecoder;
+    use super::{automation_browser_args, automation_data_dir, Utf8OutputDecoder};
+
+    #[test]
+    fn webdriver_port_is_enabled_only_for_an_automation_session() {
+        assert!(automation_browser_args(None, None, None).is_none());
+        assert!(automation_browser_args(Some("false"), Some("1"), None).is_none());
+        let enabled = automation_browser_args(Some("true"), None, None).unwrap();
+        assert!(enabled.contains("--disable-features=msWebOOUI,msPdfOOUI,msSmartScreenProtection"));
+        assert!(enabled.contains("--remote-debugging-port=0"));
+        assert!(enabled.contains("--remote-allow-origins=*"));
+        let driver_port = automation_browser_args(
+            None,
+            Some("true"),
+            Some("--disable-gpu --remote-debugging-port=9333"),
+        )
+        .unwrap();
+        assert!(driver_port.contains("--remote-debugging-port=9333"));
+        assert!(!driver_port.contains("--remote-debugging-port=0"));
+        assert!(
+            automation_browser_args(Some("true"), None, Some("--remote-debugging-port=nope"))
+                .unwrap()
+                .contains("--remote-debugging-port=0")
+        );
+        let driver = "--enable-automation --disable-features=IgnoreDuplicateNavs,Prewarm --remote-debugging-port=0 --test-type=webdriver";
+        let kept = automation_browser_args(Some("true"), None, Some(driver)).unwrap();
+        assert!(kept.contains("--enable-automation"));
+        assert!(kept.contains("--test-type=webdriver"));
+        assert_eq!(kept.matches("--disable-features=").count(), 1);
+        assert!(kept.contains("IgnoreDuplicateNavs"));
+        assert!(kept.contains("msWebOOUI"));
+        assert_eq!(kept.matches("--remote-debugging-port=").count(), 1);
+    }
+
+    #[test]
+    fn automation_profile_accepts_only_an_absolute_driver_folder() {
+        let absolute = std::env::temp_dir();
+        let text = absolute.to_str().expect("temp dir is unicode");
+        assert_eq!(
+            automation_data_dir(Some("true"), None, Some(text)).as_deref(),
+            Some(absolute.as_path())
+        );
+        assert!(automation_data_dir(None, None, Some(text)).is_none());
+        assert!(automation_data_dir(Some("true"), None, Some("relative\\profile")).is_none());
+        assert!(automation_data_dir(Some("true"), None, Some("  ")).is_none());
+    }
 
     #[cfg(windows)]
     #[test]

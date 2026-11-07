@@ -1,5 +1,6 @@
 import { lstat } from 'node:fs/promises';
 import { createHash, type Hash } from 'node:crypto';
+import { estimateNoteFor } from '../core/estimate-note.js';
 import { scanCached } from './cache.js';
 import { parserRegistry, type Parser } from '../parsers/index.js';
 import { providers, type Provider } from '../core/types.js';
@@ -85,15 +86,20 @@ export async function handleRequest(input: unknown) {
   const parsed = (info.isFile() || (agent === 'codex' && info.isDirectory())) && request.params.cachePath
     ? await scanCached(parser, path, request.params.cachePath, request.params.force ?? false)
     : await parser.parse(path).then((result) => ({ ...result, records: result.records.map(normalizeRecord) }));
+  const countRisk = parsed.countRisk ?? (parsed.partial ? 'under-count' : 'none');
+  const warningDetails = parsed.warningDetails ?? [];
+  const estimateNote = estimateNoteFor(parsed.partial || countRisk !== 'none', warningDetails);
   return {
     version: 1, requestId: request.requestId,
     result: {
       status: parsed.partial ? 'partial' : 'ok',
-      countRisk: parsed.countRisk ?? 'none',
-      accounting: parsed.partial || parsed.countRisk ? 'orientational-estimate' : 'exact',
+      countRisk,
+      accounting: parsed.partial || countRisk !== 'none' ? 'orientational-estimate' : 'exact',
+      estimateNote,
       snapshotId: scanSnapshotId(parsed), totalRecords: parsed.records.length, offset, warnings: [
         ...(parsed.warnings ? [`${parsed.warnings} parser warnings`] : []),
-        ...(parsed.warningDetails ?? []),
+        ...warningDetails,
+        ...(estimateNote && !warningDetails.includes(estimateNote) ? [estimateNote] : []),
         ...Object.entries(parsed.mismatchFields).map(([kind, count]) => `${kind}: ${count}`),
       ],
       records: parsed.records.slice(offset, offset + limit).map((r) => ({

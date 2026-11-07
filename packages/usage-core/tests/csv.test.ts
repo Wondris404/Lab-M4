@@ -17,6 +17,9 @@ it('keeps partial scan status and price provenance in a portable export', () => 
   expect(csv).toContain('scan_status;cost_status;accounting;cost_usd');
   expect(csv).toContain('"partial";"unknown";"orientational-estimate:replay-or-double-count-or-under-count";""');
   expect(csv).toContain('"partial";"estimated";"orientational-estimate:replay-or-double-count-or-under-count";"0"');
+  expect(csv).toContain('len orientačný odhad');
+  expect(csv).toContain('započítať dvakrát');
+  expect(csv).toContain('podhodnotiť');
 });
 
 it('quotes semicolons, quotes, and line breaks and escapes formula prefixes', () => {

@@ -154,6 +154,11 @@ describe('grok', () => {
       expect(response.result.records.map((item) => item.model)).toEqual(['unknown', 'unknown', 'unknown']);
       expect(response.result.records[0]?.warnings).toContain('MODEL_UNVERIFIED');
       expect(response.result.status).toBe('partial');
+      expect(response.result.countRisk).toBe('double-count');
+      expect(response.result.estimateNote).toContain('len orientačný odhad');
+      expect(response.result.estimateNote).toContain('dvojité započítanie');
+      expect(response.result.estimateNote).toContain('nepodpočítavajú');
+      expect(response.result.records[0]).not.toHaveProperty('costEur');
       expect(r.records).toHaveLength(3);
       expect(r.warnings).toBe(2);
     }));

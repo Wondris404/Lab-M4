@@ -60,7 +60,7 @@ export function UsageTab() {
   };
   const download = () => {
     const url = URL.createObjectURL(
-      new Blob([usageCsv(shown, partial)], { type: 'text/csv;charset=utf-8' }),
+      new Blob([usageCsv(shown, partial, warnings)], { type: 'text/csv;charset=utf-8' }),
     );
     const link = document.createElement('a');
     link.href = url;

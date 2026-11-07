@@ -18,7 +18,7 @@ export interface GrokCursorState {
   seen: string[];
 }
 
-const AMBIGUOUS_EVENT = 'Grok Build: orientačný odhad. Zhodné záznamy sa počítajú všetky, takže súčet môže obsahovať replay (dvojité započítanie). Tieto riadky sa nepodpočítavajú.';
+const AMBIGUOUS_EVENT = 'Grok Build: orientačný odhad. Zhodné záznamy sa počítajú všetky, takže súčet môže obsahovať replay (dvojité započítanie). Tieto riadky sa nepodpočítavajú. Neistý súčet je len orientačný odhad.';
 
 /** With a pseudonymizer, persisted state contains no source session identifiers. */
 export function grokAccumulator(

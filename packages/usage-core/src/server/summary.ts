@@ -1,3 +1,4 @@
+import { estimateNoteFor } from '../core/estimate-note.js';
 import { loadSettings, type Settings } from '../core/settings.js';
 import { estimateCost } from '../pricing/index.js';
 import { parserRegistry, type ParseResult } from '../parsers/index.js';
@@ -8,13 +9,18 @@ export function describeAccounting(results: Array<ParseResult | undefined>) {
   const doubleCount = present.some((result) => result.countRisk === 'double-count');
   const underCount = present.some((result) => result.countRisk === 'under-count' || (result.partial && result.countRisk !== 'double-count'));
   const uncertain = doubleCount || underCount || present.some((result) => result.partial);
+  const note = ['Orientačný odhad, nie fakturácia.'];
+  if (doubleCount) note.push('Replay zhodných Grok riadkov sa môže započítať dvakrát.');
+  else if (uncertain) note.push('Tento súčet neoznačuje replay ani dvojité započítanie zhodných riadkov.');
+  if (underCount) note.push('Chýbajúci alebo poškodený zdroj sa môže podpočítať.');
+  else if (doubleCount) note.push('Tieto riadky sa nepodpočítavajú.');
   return {
     kind: uncertain ? 'orientational-estimate' as const : 'exact' as const,
     replay: doubleCount,
     doubleCount,
     underCount,
     note: uncertain
-      ? 'Orientačný odhad, nie fakturácia. Replay zhodných Grok riadkov sa môže započítať dvakrát. Chýbajúci alebo poškodený zdroj sa podpočíta.'
+      ? note.join(' ')
       : 'Súčet neoznačuje replay, dvojité započítanie ani podpočítanie.',
   };
 }
@@ -45,6 +51,9 @@ export async function summarize(settings: Settings) {
   const costUsd = known.length
     ? known.reduce((n, r) => n + (r.costUsd ?? 0), 0)
     : null;
+  const warningDetails = [...new Set(Object.values(agents).flatMap((agent) => agent.warningDetails ?? []))];
+  const accounting = describeAccounting(Object.values(agents));
+  const estimateNote = estimateNoteFor(incomplete, warningDetails) ?? (accounting.kind === 'orientational-estimate' ? accounting.note : null);
   return {
     recordCount: records.length,
     sourcesIncomplete: incomplete,
@@ -71,7 +80,9 @@ export async function summarize(settings: Settings) {
           reasoningTokens: records.reduce((n, r) => n + r.reasoningTokens, 0),
           costUsd,
           // Keep the legacy response shape until there is a verified FX rate.
+          // Never multiply costUsd by usdToEur.
           costEur: null,
+          estimateNote,
           costIncomplete:
             incomplete || known.length !== records.length,
           costSource: known.length
@@ -79,9 +90,12 @@ export async function summarize(settings: Settings) {
               ? 'odhad'
               : 'skutočné'
             : 'neznáme',
-          accounting: describeAccounting(Object.values(agents)),
+          accounting,
         }
       : null,
+    accounting,
+    warningDetails,
+    estimateNote,
     warnings: Object.fromEntries(
       Object.entries(agents).map(([k, v]) => [k, v.warnings]),
     ),

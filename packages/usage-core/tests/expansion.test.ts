@@ -2,6 +2,7 @@ import { resolve } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
+import { decompress } from 'fzstd';
 import sqlite3 from 'sqlite3';
 import { describe, expect, it } from 'vitest';
 import { codexParser } from '../src/parsers/codex.js';
@@ -24,6 +25,13 @@ const fixture = resolve(
 const checkedCodex = Buffer.from('KLUv/WR5APUFANKKIR1gR+MGEWq1t7CXpfsenPw9IQyCr2bU3w3IEPhYPMR77yF1KNNlzMJLoVYSGGg0I/LyCO325aB0bpcoywPZKQR7eweUqcuCPbip1jTIcoF0TgA6Bh0DUJzi6UnD5mwsHcm1rQ+ydQ2lBdfEe0emOdss9kP6wkUMmLwcO5vSZczJT8/E0D8EFQA/XVLo3QrLhiuH2+QIjMYZ9M8U2AfhI7AfYfogwMTk+cIb6cRwleZVCyuYATJppX1Fpp5MVcgJ', 'base64');
 const checkedGrok = Buffer.from('KLUv/STARQQAIskcG4C3OsZFgeRpIh9Db0OoDVmGdH20Mr/AwsoGDICmSWTbcjwU/hjLrdU9hRXTZB3rJ1F6XC1wq34Kw/eD0hdl29RjdmfSl14/12WmdK1CJWwrFhq6cE4TJCo/H6RMAUoCJREw0nh67J+v1pr0HuLTWYtnAgYAOEuaqo5nAEvPNlHZvq17ArcGk2s=', 'base64');
 const checkedEmpty = Buffer.from('KLUv/SQAAQAAmenYUQ==', 'base64');
+
+function rawFrame(content: Buffer): Buffer {
+  // A synthetic zstd frame with a 1 KiB window and one uncompressed block.
+  const header = Buffer.from([0x28, 0xb5, 0x2f, 0xfd, 0, 0, 0, 0, 0]);
+  header.writeUIntLE((content.length << 3) | 1, 6, 3);
+  return Buffer.concat([header, content]);
+}
 
 async function read(budget: { remaining: number; perFile: number }) {
   const result: string[] = [];
@@ -146,16 +154,20 @@ describe('compressed usage expansion limits', () => {
     expect(invalid.warnings).toBe(1);
   });
 
-  it('invalidates the previous compressed-file cache versions', async () => {
+  it('reads archive records without a final newline and invalidates previous cache versions', async () => {
     for (const [parser, frame, oldVersion] of [
-      [codexParser, checkedCodex, 9], [grokBuildParser, checkedGrok, 11],
+      [codexParser, checkedCodex, 11], [grokBuildParser, checkedGrok, 14],
     ] as const) {
       const dir = await testTempDir('zstd-cache-version-');
       const path = join(dir, 'usage.jsonl.zst');
       const cache = join(dir, 'cache.sqlite');
-      await writeFile(path, frame);
+      const text = Buffer.from(decompress(frame));
+      expect(text.at(-1)).toBe(10);
+      await writeFile(path, rawFrame(text.subarray(0, -1)));
+      expect((await parser.parse(path)).records).toHaveLength(1);
       const actual = await scanCached(parser, path, cache);
       expect(actual.records).toHaveLength(1);
+      expect(actual.warnings).toBe(0);
       const db = new sqlite3.Database(cache);
       try {
         const row = await new Promise<{ signature: string }>((resolve, reject) => db.get(
@@ -172,6 +184,16 @@ describe('compressed usage expansion limits', () => {
         await new Promise<void>((resolve, reject) => db.close((error) => error ? reject(error) : resolve()));
       }
       expect((await scanCached(parser, path, cache)).records).toHaveLength(1);
+      if (parser === codexParser) {
+        const folder = join(dir, 'sessions');
+        await mkdir(folder);
+        await writeFile(join(folder, 'usage.jsonl.zst'), rawFrame(text.subarray(0, -1)));
+        expect((await scanCached(parser, folder, cache)).records).toHaveLength(1);
+      }
+      await writeFile(path, rawFrame(Buffer.concat([text, Buffer.from('{broken')])));
+      const damaged = await scanCached(parser, path, cache);
+      expect(damaged.records).toHaveLength(1);
+      expect(damaged).toMatchObject({ warnings: 1, partial: true });
     }
   });
 

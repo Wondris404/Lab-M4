@@ -410,6 +410,12 @@
 - `pnpm --filter wraith exec tauri build --ci --bundles nsis` s Node v24.22.2 exit 0. Inštalátor `apps/desktop/src-tauri/target/release/bundle/nsis/Lab-M4_0.2.0_x64-setup.exe`, 30 761 348 bajtov, SHA-256 `C593422C822A7F60E290D6CF0617728FA0F81DAC21605C025E151C707838766C`, čas súboru 2026-11-07 21:01:04, strom `5bf789b`. Čistá inštalácia sa nespúšťala. Push nebol. PR #13 ostáva na `40d326d`. Živý Codex → Grok Build ostáva BLOCKED.
 - Report: `.lab-m4/reports/stav-2026-11-07-2105.md`.
 
+## 2026-11-07 21:06 +01:00 (Europe/Bratislava) – Regresia na 8a69230
+- Strom `8a69230f673fa145750c4094ceaa77b7f88be107`. Kód aplikácie je `5bf789b`; tento commit je denník nad ním. Node v24.22.2.
+- `pnpm lint` exit 0. `pnpm typecheck` exit 0, vrátane produkčného frontend buildu. `pnpm test` exit 0: 33 súborov, 111 testov. `pnpm test:orchestrator` exit 0: 18 pass, 0 fail.
+- `cargo clippy --offline --locked -- -D warnings` exit 0, `Finished dev profile` za 6,80 s, bez warningu. Ignorovaný `cargo test --test terminal_pty_smoke -- --ignored` exit 0: 1 passed, 0 failed.
+- `rustc --edition 2021 -D warnings` pre `agent_transport.rs` aj `supervisor_test.rs` exit 0. `node packages/orchestrator-core/tests/windows-agent-transport.mjs` exit 0: spawn failure, deadline, EOF, backpressure, surviving control.
+
 - Celý beh na `1eb061f` odhalil náhodný pád `grok-cursor` (104/105, exit 1): dočasná cesta mala suffix `KEYJLz`, ktorý blokuje zámerná kontrola citlivých názvov. Syntetické fixture používajú hexadecimálny UUID suffix. Kontrola zdrojových ciest v aplikácii zostala zachovaná.
 
 ## 2026-11-07 – Regresie z review Usage

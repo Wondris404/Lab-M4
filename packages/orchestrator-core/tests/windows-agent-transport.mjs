@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { execFile, spawn } from 'node:child_process';
 import { once } from 'node:events';
 import { basename, resolve } from 'node:path';
+import { createFakeSession, stopFake } from '../src/fake-engine.mjs';
 
 const [transport, sleeper] = process.argv.slice(2);
 assert.equal(process.platform, 'win32');
@@ -17,10 +18,11 @@ function track(child) {
 
 function launch(args) {
   const child = track(spawn(transportPath, args, { windowsHide: true }));
+  let stdout = '';
   let stderr = '';
-  child.stdout.resume();
-  child.stderr.on('data', (chunk) => { stderr = (stderr + chunk).slice(-512); });
-  return { child, stderr: () => stderr };
+  child.stdout.on('data', (chunk) => { stdout += chunk; });
+  child.stderr.on('data', (chunk) => { stderr = (stderr + chunk).slice(-1024); });
+  return { child, stdout: () => stdout, stderr: () => stderr };
 }
 
 async function finish(child, boundMs) {
@@ -72,12 +74,31 @@ try {
   assert.ok(Date.now() - started < 8000, 'the owned job must end inside the test bound');
   const counts = /^LAB_M4_JOB_STOP (\d+) 0\r?$/m.exec(deadline.stderr());
   assert.ok(counts, deadline.stderr());
+  assert.match(deadline.stderr(), /LAB_M4_RESULT timeout/);
   assert.ok(Number(counts[1]) >= 1, 'the job had an owned process before STOP');
   assert.equal(control.exitCode, null, 'the independent control process must survive');
 
-  const eof = launch(['2000', process.execPath, '-e', "process.stdin.resume(); process.stdin.on('end', () => process.exit(0))"]);
-  eof.child.stdin.end();
-  assert.equal(await finish(eof.child, 8000), 0);
+  const echo = launch(['4000', process.execPath, '-e', "process.stdin.on('data', (chunk) => process.stdout.write(chunk)); process.stdin.on('end', () => process.stdout.write('END'));"]);
+  async function echoed(text) {
+    echo.child.stdin.write(text);
+    await waitFor(text, async () => (echo.stdout().endsWith(text) ? echo.stdout() : null), 3000);
+  }
+  await echoed('one\n');
+  assert.equal(echo.stdout(), 'one\n');
+  await echoed('two\n');
+  assert.equal(echo.stdout(), 'one\ntwo\n');
+  await echoed('three\n');
+  assert.equal(echo.stdout(), 'one\ntwo\nthree\n');
+  echo.child.stdin.end();
+  assert.equal(await finish(echo.child, 8000), 0);
+  assert.equal(echo.stdout(), 'one\ntwo\nthree\nEND');
+  assert.match(echo.stderr(), /LAB_M4_RESULT parent-closed/);
+  assert.doesNotMatch(echo.stderr(), /LAB_M4_RESULT stop/);
+
+  const agentClosed = launch(['2000', process.execPath, '-e', "process.stdout.write('solo\\n')"]);
+  assert.equal(await finish(agentClosed.child, 8000), 2);
+  assert.equal(agentClosed.stdout(), 'solo\n');
+  assert.match(agentClosed.stderr(), /LAB_M4_RESULT agent-closed/);
 
   const full = launch(['5000', sleeperPath, '--unrelated']);
   full.child.stdin.on('error', () => {});
@@ -87,6 +108,7 @@ try {
       full.child.stdin.write(Buffer.alloc(8192, 66));
     }
     assert.equal(await finish(full.child, 8000), 4);
+    assert.match(full.stderr(), /LAB_M4_RESULT backpressure/);
     assert.match(full.stderr(), /LAB_M4_JOB_STOP \d+ 0/);
   } finally {
     clearTimeout(watchdog);
@@ -118,8 +140,16 @@ try {
   try {
     stoppedPid = await waitFor('STOP sleeper', async () =>
       (await imagePids(sleeperName)).find((pid) => !stopBefore.has(pid)), 8000);
-    stopped.child.stdin.end();
-    assert.equal(await finish(stopped.child, 8000), 0);
+    const stoppedSession = createFakeSession({ now: 1 });
+    await stopFake(stoppedSession, stopped.child);
+    assert.equal(stopped.child.exitCode, 5);
+    assert.equal(stoppedSession.status, 'cancelled');
+    assert.equal(stoppedSession.events.at(-1).type, 'supervisor_stop');
+    assert.equal(stoppedSession.jobStop.code, 5);
+    assert.ok(stoppedSession.jobStop.before >= 1);
+    assert.equal(stoppedSession.jobStop.after, 0);
+    assert.match(stopped.stderr(), /LAB_M4_RESULT stop/);
+    assert.doesNotMatch(stopped.stderr(), /LAB_M4_RESULT parent-closed/);
     assert.match(stopped.stderr(), /LAB_M4_JOB_STOP \d+ 0/);
     assert.equal(alive(stoppedPid), false, 'STOP must end the owned sleeper');
     assert.ok(Date.now() - stopStarted < 8000);
@@ -142,13 +172,16 @@ try {
       return fresh.length >= 2 ? fresh : null;
     }, 8000);
     [firstPid, secondPid] = spawned;
-    first.child.stdin.end();
-    second.child.stdin.end();
-    const [firstCode, secondCode] = await Promise.all([
-      finish(first.child, 8000), finish(second.child, 8000),
+    const [firstStop, secondStop] = await Promise.all([
+      stopFake(createFakeSession({ now: 1 }), first.child),
+      stopFake(createFakeSession({ now: 1 }), second.child),
     ]);
-    assert.equal(firstCode, 0);
-    assert.equal(secondCode, 0);
+    assert.equal(first.child.exitCode, 5);
+    assert.equal(second.child.exitCode, 5);
+    assert.equal(firstStop.jobStop.after, 0);
+    assert.equal(secondStop.jobStop.after, 0);
+    assert.match(first.stderr(), /LAB_M4_RESULT stop/);
+    assert.match(second.stderr(), /LAB_M4_RESULT stop/);
     assert.match(first.stderr(), /LAB_M4_JOB_STOP \d+ 0/);
     assert.match(second.stderr(), /LAB_M4_JOB_STOP \d+ 0/);
     assert.equal(alive(firstPid), false);
@@ -161,7 +194,7 @@ try {
   }
 
   assert.equal(control.exitCode, null);
-  console.log('Native transport passed: spawn failure, deadline, EOF, backpressure, interrupt, STOP, concurrent cleanup, surviving control');
+  console.log('Native transport passed: spawn failure, deadline, ordered stdout, parent-closed, agent-closed, backpressure, interrupt, STOP, concurrent cleanup, surviving control');
 } finally {
   for (const child of owned) {
     if (child.exitCode === null && !child.killed) child.kill();

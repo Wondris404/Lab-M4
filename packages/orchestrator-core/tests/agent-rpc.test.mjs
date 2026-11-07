@@ -6,7 +6,10 @@ import { connectAgent } from '../src/agent-rpc.mjs';
 function peer(script, signal) {
   const child = spawn(process.execPath, ['-e', `
     const lines = require('node:readline').createInterface({ input: process.stdin });
-    process.stdin.on('end', () => process.stderr.write('LAB_M4_JOB_STOP 1 0\\n'));
+    process.stdin.on('end', () => {
+      process.stderr.write('LAB_M4_RESULT stop\\nLAB_M4_JOB_STOP 1 0\\n');
+      process.exit(5);
+    });
     ${script}
   `], { windowsHide: true });
   return connectAgent(child, { jsonrpc: true, signal });
@@ -16,6 +19,7 @@ test('refuses provider approval and decodes a response split inside UTF-8', { ti
   const agent = peer(`
     let original;
     lines.on('line', line => {
+      if (line === 'LAB_M4_STOP') return;
       const message = JSON.parse(line);
       if (message.method === 'initialize') {
         original = message.id;
@@ -38,7 +42,7 @@ test('refuses provider approval and decodes a response split inside UTF-8', { ti
 });
 
 test('rejects oversized unterminated output and stops the transport', { timeout: 8000 }, async () => {
-  const agent = peer("lines.on('line', () => process.stdout.write(Buffer.alloc(1048577, 97)));");
+  const agent = peer("lines.on('line', line => { if (line === 'LAB_M4_STOP') return; process.stdout.write(Buffer.alloc(1048577, 97)); });");
   await assert.rejects(agent.request('initialize', {}), /frame exceeds/);
   assert.deepEqual(await agent.stop(), { before: 1, after: 0 });
 });

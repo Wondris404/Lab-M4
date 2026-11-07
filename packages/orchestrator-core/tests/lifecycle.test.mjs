@@ -12,7 +12,11 @@ test('fake manager delegates, reviews, requests one correction, then accepts', (
   assert.equal(state.status, 'waiting-approval');
   approve(state); stepFake(state, now);
   assert.equal(state.status, 'review');
-  assert.equal(state.task.review.diff, '+ draft\n');
+  assert.equal(state.task.review.decision, 'repair');
+  assert.equal(state.task.review.reason, 'tests-failed');
+  assert.match(state.task.review.diff, /^diff --git /m);
+  assert.match(state.task.review.diff, /^\+draft$/m);
+  assert.equal(state.task.review.test.status, 1);
   stepFake(state, now);
   assert.equal(state.status, 'queued');
   stepFake(state, now);
@@ -21,13 +25,16 @@ test('fake manager delegates, reviews, requests one correction, then accepts', (
   approve(state); stepFake(state, now); stepFake(state, now);
   assert.equal(state.status, 'completed');
   assert.equal(state.task.attempts, 2);
-  assert.equal(state.task.review.diff, '+ corrected\n');
+  assert.equal(state.task.review.decision, 'accept');
+  assert.equal(state.task.review.reason, 'diff-and-tests');
+  assert.match(state.task.review.diff, /^\+corrected$/m);
+  assert.equal(state.task.review.test.status, 0);
   assert.equal(state.budget.syntheticTokens, 1000);
   assert.throws(() => stepFake(state, now), /terminal/);
   assert.deepEqual(state.events.map((e) => e.sequence), state.events.map((_, i) => i + 1));
 });
 
-test('deny and STOP invalidate approval and cannot start a fake worker', () => {
+test('deny and STOP invalidate approval and cannot start a fake worker', async () => {
   const denied = createFakeSession({ now });
   stepFake(denied, now);
   decideFakeApproval(denied, denied.approval.id, 'deny', now);
@@ -37,7 +44,7 @@ test('deny and STOP invalidate approval and cannot start a fake worker', () => {
   const stopped = createFakeSession({ now });
   stepFake(stopped, now);
   const id = stopped.approval.id;
-  stopFake(stopped);
+  await stopFake(stopped);
   assert.equal(stopped.status, 'cancelled');
   assert.equal(stopped.approval, null);
   assert.throws(() => decideFakeApproval(stopped, id, 'approve', now), /terminal/);
@@ -73,14 +80,14 @@ test('restart invalidates pending approval and does not replay a running action'
   assert.equal(pending.task.attempts, 0);
 });
 
-test('approval cannot authorize changed action, and STOP survives a full event log', () => {
+test('approval cannot authorize changed action, and STOP survives a full event log', async () => {
   const state = createFakeSession({ now });
   stepFake(state, now);
   const id = state.approval.id;
   state.approval.action.workspace = '<different-synthetic-workspace>';
   assert.throws(() => decideFakeApproval(state, id, 'approve', now), /action has changed/);
   while (state.events.length < 64) state.events.push({ sequence: state.events.length + 1, type: 'fixture' });
-  stopFake(state);
+  await stopFake(state);
   assert.equal(state.status, 'cancelled');
   assert.equal(state.approval, null);
   assert.equal(state.events.at(-1).type, 'fake_stop');

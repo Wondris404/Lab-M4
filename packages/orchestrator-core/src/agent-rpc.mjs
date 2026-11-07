@@ -1,5 +1,6 @@
 import { once } from 'node:events';
 import { setTimeout as delay } from 'node:timers/promises';
+import { stopConfirmed } from './transport-stop.mjs';
 
 const frameLimit = 1024 * 1024;
 const outputLimit = 8 * frameLimit;
@@ -85,9 +86,11 @@ export function connectAgent(child, { jsonrpc, signal, onNotification = () => {}
     signal?.removeEventListener('abort', abort);
     if (!stopping) {
       const reason = code === 124 ? 'Agent timed out'
+        : code === 5 ? 'Agent stopped'
         : code === 4 ? 'Agent input queue is full'
         : code === 3 ? 'Agent input failed'
-        : code === 2 ? 'Agent closed its output' : 'Agent supervisor exited';
+        : code === 2 ? 'Agent closed its output'
+        : code === 0 ? 'Agent input closed' : 'Agent supervisor exited';
       failure ??= new Error(reason);
       settle(failure);
     }
@@ -103,7 +106,10 @@ export function connectAgent(child, { jsonrpc, signal, onNotification = () => {}
     if (!stopping) {
       stopping = (async () => {
         settle(failure ?? new Error('Agent stopped'));
-        child.stdin.end();
+        if (!child.stdin.destroyed) {
+          child.stdin.write('LAB_M4_STOP\n');
+          child.stdin.end();
+        }
         const timer = new AbortController();
         const code = await Promise.race([
           closed,
@@ -114,9 +120,9 @@ export function connectAgent(child, { jsonrpc, signal, onNotification = () => {}
           child.kill();
           throw new Error('Agent supervisor did not confirm STOP');
         }
-        const counts = /^LAB_M4_JOB_STOP (\d+) (\d+)\r?$/m.exec(diagnostics);
-        if (!counts || counts[2] !== '0') throw new Error('Agent job cleanup was not confirmed');
-        return { before: Number(counts[1]), after: 0 };
+        const confirmed = stopConfirmed(code, diagnostics);
+        if (!confirmed) throw new Error('Agent job cleanup was not confirmed');
+        return { before: confirmed.before, after: 0 };
       })();
     }
     return stopping;

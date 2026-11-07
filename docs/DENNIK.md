@@ -475,6 +475,15 @@
 - K `windows-agent-transport.mjs` pribudli interrupt, explicitný STOP živého sleepra a súbežné zatvorenie dvoch jobov. Každý má limit 8 s a vlastné upratanie. Plná fronta ostáva exit 4.
 - Beh pri HEAD `05d9436085f4528b22e1cdcc070cdb6d882d51cc` pred týmto commitom: `rustc -D warnings` transport aj sleeper exit 0, test exit 0. Výstup: `Native transport passed: spawn failure, deadline, EOF, backpressure, interrupt, STOP, concurrent cleanup, surviving control`.
 
+## 2026-11-07 21:58 +01:00 (Europe/Bratislava) – Regresia a NSIS z bbf7c06
+- Checkout `bbf7c06870da027120df4d1ea236ae7ebd9054f1`, porcelain prázdny. Node v24.22.2. Balík z `9856895` už nie je odovzdaný artefakt.
+- `pnpm package:usage-sidecar` exit 0. `pnpm lint` exit 0. `pnpm typecheck` exit 0, produkčný frontend `built in 1.68s`. `pnpm test` exit 0: 33 súborov, 111 testov. `pnpm test:orchestrator` exit 0: 19 pass, 0 fail.
+- `cargo fmt --check` exit 0. `cargo clippy --offline --locked -- -D warnings` exit 0. Prvý `cargo test` exit 101, LNK1104 na zamknuté testovacie exe. Opakovaný `cargo test --offline --locked` exit 0: lib 17 passed, 0 failed, ConPTY v predvolenom behu 1 ignored.
+- `cargo test --test terminal_pty_smoke -- --ignored` exit 0: 1 passed, 0 failed, 0,71 s. `cargo test -- close` exit 0: 6 passed, 0 failed, 11 filtered out.
+- `rustc -D warnings` transport aj sleeper exit 0. `windows-agent-transport.mjs` exit 0: spawn failure, deadline, EOF, backpressure, interrupt, STOP, concurrent cleanup, surviving control.
+- `pnpm --filter wraith exec tauri build --ci --bundles nsis` exit 0. Inštalátor `apps/desktop/src-tauri/target/release/bundle/nsis/Lab-M4_0.2.0_x64-setup.exe`, 30 761 705 bajtov, SHA-256 `0465D164A7A526B377D68EB0E58F4DEC0B13B327B23376D1D8B051B9A221AA09`, čas súboru 2026-11-07 21:58:04, strom `bbf7c06`.
+- Push, prihlásenie a inštalácia sa nerobili. GUI ostáva NEOVERENÉ, čistá inštalácia NEOVERENÉ, živý cyklus BLOCKED.
+
 - Celý beh na `1eb061f` odhalil náhodný pád `grok-cursor` (104/105, exit 1): dočasná cesta mala suffix `KEYJLz`, ktorý blokuje zámerná kontrola citlivých názvov. Syntetické fixture používajú hexadecimálny UUID suffix. Kontrola zdrojových ciest v aplikácii zostala zachovaná.
 
 ## 2026-11-07 – Regresie z review Usage

@@ -430,6 +430,14 @@
 - `agent-preflight.mjs` predtým vytváral pri každom behu nový prázdny `CODEX_HOME` a `GROK_HOME`, takže bežné `grok login` v používateľskom profile tento beh nevidí.
 - Commit `b45d365266056ab50f5ba84fb426caefc61cf5b2` necháva oba domovy v gitignorovanom `.lab-m4/agent-homes`. `USERPROFILE` ostáva jednorazový. Test `agent-preflight.test.mjs` je v `pnpm test:orchestrator`: 19 pass, 0 fail, exit 0. Živý cyklus ostáva BLOCKED, kým sa používateľ neprihlási do týchto dvoch priečinkov.
 
+## 2026-11-07 21:28 +01:00 (Europe/Bratislava) – Overenie po b45d365 na jednom strome
+- Checkout `98568951f71771c5f8fcec7e2e2e1807600bcf32` obsahuje kód `b45d365` aj predchádzajúci denník. Node v24.22.2.
+- `pnpm lint` exit 0. `pnpm typecheck` exit 0. `pnpm test` exit 0: 33 súborov, 111 testov. `pnpm test:orchestrator` exit 0: 19 pass, 0 fail.
+- Desktop Rust tento balík neimportuje, preto sa fmt, Clippy a `cargo test` znova nespúšťali a nie sú PASS tohto SHA. `pnpm --filter wraith exec tauri build --ci --bundles nsis` exit 0 a release desktop preložil z tohto checkoutu.
+- Inštalátor `apps/desktop/src-tauri/target/release/bundle/nsis/Lab-M4_0.2.0_x64-setup.exe`, 30 764 218 bajtov, SHA-256 `2F361A7720F1E255279114FB1FA8921997782F0AB5CCB5BBBB60AC5CA13ECF14`, čas súboru 2026-11-07 21:27:45, strom `9856895`.
+- Push sa nerobil. Izolované prihlásenie, `DevToolsActivePort` a čistá inštalácia ostávajú krokom používateľa.
+- Report: `.lab-m4/reports/stav-2026-11-07-2128.md`.
+
 - Celý beh na `1eb061f` odhalil náhodný pád `grok-cursor` (104/105, exit 1): dočasná cesta mala suffix `KEYJLz`, ktorý blokuje zámerná kontrola citlivých názvov. Syntetické fixture používajú hexadecimálny UUID suffix. Kontrola zdrojových ciest v aplikácii zostala zachovaná.
 
 ## 2026-11-07 – Regresie z review Usage

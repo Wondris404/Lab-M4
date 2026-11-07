@@ -8,10 +8,22 @@ import {
 } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 import { decompress } from 'fzstd';
-import { expect, it } from 'vitest';
+import { expect, it, vi } from 'vitest';
 import { codexParser } from '../src/parsers/codex.js';
 import { scanCached } from '../src/service/cache.js';
 import { testTempDir } from './test-temp.js';
+
+const inaccessible = vi.hoisted(() => ({ path: '' }));
+vi.mock('node:fs/promises', async (importOriginal) => {
+  const filesystem = await importOriginal<typeof import('node:fs/promises')>();
+  return {
+    ...filesystem,
+    lstat: (...args: Parameters<typeof filesystem.lstat>) =>
+      args[0] === inaccessible.path
+        ? Promise.reject(Object.assign(new Error('Synthetic access failure'), { code: 'EACCES' }))
+        : filesystem.lstat(...args),
+  };
+});
 
 const fixture = resolve(
   'packages/usage-core/fixtures/synthetic/codex.jsonl.zst',
@@ -74,4 +86,25 @@ it('increments Codex directory files and deduplicates across plain and compresse
   expect((await readFile(cache)).includes(Buffer.from('sess-test-1'))).toBe(
     false,
   );
+});
+
+it('keeps healthy Codex files when a listed plain log is inaccessible', async () => {
+  const dir = await testTempDir('codex-unreadable-');
+  const source = join(dir, 'sessions');
+  const cache = join(dir, 'cache.sqlite');
+  await mkdir(source);
+  const healthy = join(source, 'healthy.jsonl');
+  const unreadable = join(source, 'unreadable.jsonl');
+  const metadata = JSON.stringify({ type: 'session_meta', payload: { id: 'synthetic' } });
+  await writeFile(healthy, `${metadata}\n${event(10, 10)}\n`);
+  await writeFile(unreadable, `${metadata}\n${event(30, 20)}\n`);
+  inaccessible.path = unreadable;
+  try {
+    const result = await scanCached(codexParser, source, cache);
+    expect(result.records.map((row) => row.inputTokens)).toEqual([10]);
+    expect(result).toMatchObject({ warnings: 1, partial: true });
+  } finally {
+    inaccessible.path = '';
+  }
+  expect((await scanCached(codexParser, source, cache)).records).toHaveLength(2);
 });

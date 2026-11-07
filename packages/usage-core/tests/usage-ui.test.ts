@@ -1,6 +1,9 @@
 import { describe, expect, it, vi } from 'vitest';
+import { createElement } from 'react';
+import { renderToStaticMarkup } from 'react-dom/server';
 import {
   fetchUsage,
+  useUsage,
   type Request,
 } from '../../../apps/desktop/src/usage/useUsage.js';
 import {
@@ -83,6 +86,85 @@ describe('usage view data', () => {
     expect(result.records).toHaveLength(501);
     expect(result.warnings).toContain('codex: partial scan');
     expect(request).toHaveBeenCalledTimes(2);
+  });
+
+  it('keeps healthy sources when another source fails midway and refreshes after recovery', async () => {
+    const sources = [
+      { id: 'first', agent: 'codex', name: 'first', coveredBy: null },
+      { id: 'lost', agent: 'codex', name: 'moved', coveredBy: null },
+      { id: 'other', agent: 'grok-build', name: 'other', coveredBy: null },
+    ];
+    let recovered = false;
+    const request = vi.fn(async (_command: string, args?: Record<string, unknown>) => {
+      const offset = args?.offset;
+      const lost = args?.id === 'lost';
+      if (lost && offset === 1 && !recovered)
+        throw new Error('Synthetic private path');
+      return {
+        result: {
+          status: lost ? 'partial' : 'ok',
+          totalRecords: lost ? 2 : 1,
+          offset,
+          snapshotId: 'a'.repeat(64),
+          records: [item(args?.id === 'other' ? 'grok-build' : 'codex', lost ? 99 : 10)],
+          warnings: lost ? ['source page warning'] : [],
+        },
+      };
+    }) as unknown as Request;
+    const partial = await fetchUsage(sources, request, () => true);
+    expect(partial).toEqual({
+      records: [item('codex', 10), item('grok-build', 10)],
+      warnings: ['codex (moved): zdroj sa nepodarilo načítať.'],
+      partial: true,
+    });
+    recovered = true;
+    expect((await fetchUsage(sources, request, () => true)).records.map((row) => row.input))
+      .toEqual([10, 99, 99, 10]);
+  });
+
+  it('isolates known sidecar source errors and rejects a total failure or invalid envelope', async () => {
+    const unavailable = { id: 'lost', agent: 'codex', name: 'moved', coveredBy: null };
+    const healthy = { id: 'other', agent: 'grok-build', name: 'other', coveredBy: null };
+    const request = vi.fn(async (_command: string, args?: Record<string, unknown>) =>
+      args?.id === 'lost'
+        ? { version: 1, error: 'INVALID_OR_UNREADABLE' }
+        : { result: { status: 'ok', totalRecords: 1, offset: 0, snapshotId: 'b'.repeat(64),
+          records: [item('grok-build', 10)], warnings: [] } },
+    ) as unknown as Request;
+    expect(await fetchUsage([unavailable, healthy], request, () => true)).toMatchObject({
+      records: [item('grok-build', 10)],
+      partial: true,
+    });
+    await expect(fetchUsage([unavailable], request, () => true)).rejects.toThrow('žiadny zdroj');
+    const invalid = vi.fn(async () => ({ version: 1, error: 'unexpected response' })) as unknown as Request;
+    await expect(fetchUsage([unavailable, healthy], invalid, () => true)).rejects.toThrow('Neplatná odpoveď');
+  });
+
+  it('removes only the selected saved source and refreshes the remaining sources', async () => {
+    const remaining = { id: 'other', agent: 'grok-build', name: 'other', coveredBy: null };
+    const invoke = vi.fn(async (command: string) => {
+      if (command === 'usage_list_sources') return [remaining];
+      if (command === 'usage_scan')
+        return { result: { status: 'ok', totalRecords: 0, offset: 0, snapshotId: 'a'.repeat(64), records: [], warnings: [] } };
+    });
+    vi.stubGlobal('window', { __TAURI_INTERNALS__: { invoke } });
+    let removeSource: ReturnType<typeof useUsage>['removeSource'] | undefined;
+    function CaptureAction() {
+      ({ removeSource } = useUsage());
+      return null;
+    }
+    try {
+      renderToStaticMarkup(createElement(CaptureAction));
+      expect(removeSource).toBeTypeOf('function');
+      await removeSource?.('lost');
+      expect(invoke.mock.calls).toEqual([
+        ['usage_remove_source', { id: 'lost' }, undefined],
+        ['usage_list_sources', {}, undefined],
+        ['usage_scan', { id: 'other', force: false, offset: 0 }, undefined],
+      ]);
+    } finally {
+      vi.unstubAllGlobals();
+    }
   });
 
   it('rejects a source changed between pages even when its record count is unchanged', async () => {

@@ -5,13 +5,14 @@ import { UsageTab } from "./usage/UsageTab";
 
 function Root() {
   const [view, setView] = useState<'terminal' | 'usage'>('terminal');
+  const [openedUsage, setOpenedUsage] = useState(false);
   return <>
     <nav className="lab-tabs" aria-label="Hlavné karty">
       <button aria-selected={view === 'terminal'} onClick={() => { setView('terminal'); requestAnimationFrame(() => window.dispatchEvent(new Event('resize'))); }}>Terminal</button>
-      <button aria-selected={view === 'usage'} onClick={() => setView('usage')}>Usage</button>
+      <button aria-selected={view === 'usage'} onClick={() => { setOpenedUsage(true); setView('usage'); }}>Usage</button>
     </nav>
     <div className="lab-terminal" style={{ display: view === 'terminal' ? undefined : 'none' }}><App /></div>
-    {view === 'usage' && <UsageTab />}
+    {openedUsage && <div hidden={view !== 'usage'}><UsageTab /></div>}
   </>;
 }
 ReactDOM.createRoot(document.getElementById("root") as HTMLElement).render(<React.StrictMode><Root /></React.StrictMode>);

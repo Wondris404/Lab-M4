@@ -175,7 +175,7 @@ export class ZstdFrameGuard {
       throw new Error('Incomplete zstd frame');
   }
 }
-export async function assertSafeFile(path: string): Promise<void> {
+export async function assertSafePath(path: string): Promise<void> {
   const absolute = resolve(path);
   const root = parse(absolute).root;
   const parts = absolute.slice(root.length).split(sep).filter(Boolean);
@@ -186,6 +186,10 @@ export async function assertSafeFile(path: string): Promise<void> {
     if ((await lstat(parent)).isSymbolicLink())
       throw new Error('Nepovolený odkaz.');
   }
+}
+
+export async function assertSafeFile(path: string): Promise<void> {
+  await assertSafePath(path);
   if (forbidden.test(basename(path)))
     throw new Error('Nepovolený názov súboru.');
   const info = await lstat(path);
@@ -291,7 +295,9 @@ export async function* lines(
       if (pending !== undefined) yield pending;
       pending = line;
     }
-    if (endsWithNewline && pending !== undefined) yield pending;
+    // A validated archive has a definite EOF. A live plain log can still append
+    // to its last line, so it needs a newline before that line is committed.
+    if (pending !== undefined && (compressed || endsWithNewline)) yield pending;
   } finally {
     stream.destroy();
     decompressed.destroy();

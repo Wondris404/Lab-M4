@@ -20,7 +20,7 @@ export interface UsageItem {
   warnings: string[];
 }
 export function UsageTab() {
-  const { records, sources, warnings, partial, loading, error, refresh, addSource } =
+  const { records, sources, warnings, partial, loading, error, refresh, addSource, removeSource } =
     useUsage();
   const [sourceAgent, setSourceAgent] = useState('codex');
   const [folder, setFolder] = useState(true);
@@ -116,6 +116,25 @@ export function UsageTab() {
       )}
       {status === 'needs-source' && (
         <p>Vyberte zdroj, ktorý chcete zahrnúť do Usage.</p>
+      )}
+      {sources.length > 0 && (
+        <>
+          <h2>Uložené zdroje</h2>
+          <ul>
+            {sources.map((source) => (
+              <li key={source.id}>
+                {source.agent} ({source.name}){' '}
+                <button
+                  disabled={loading}
+                  aria-label={`Odobrať z Usage: ${source.agent} (${source.name})`}
+                  onClick={() => void removeSource(source.id)}
+                >
+                  Odobrať z Usage
+                </button>
+              </li>
+            ))}
+          </ul>
+        </>
       )}
       <div className="usage-filters">
         <label>

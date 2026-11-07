@@ -14,6 +14,7 @@ it('grants the terminal and persistence permissions used by the main window', as
     'allow-spawn-powershell', 'allow-write-powershell', 'allow-resize-powershell',
     'allow-kill-powershell', 'allow-load-sessions', 'allow-save-sessions',
     'allow-agent-hook-url', 'allow-load-app-settings', 'allow-save-app-settings',
+    'allow-usage-list-sources', 'allow-usage-select-source', 'allow-usage-remove-source', 'allow-usage-scan',
   ]) expect(capability.permissions).toContain(permission);
   expect(capability.permissions).not.toContain('core:default');
 });

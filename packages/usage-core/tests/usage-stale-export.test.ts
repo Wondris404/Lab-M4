@@ -11,7 +11,7 @@ vi.mock('../../../apps/desktop/src/usage/useUsage.js', () => ({
     }],
     sources: [{ id: 'source', agent: 'codex', name: 'synthetic' }],
     warnings: [], loading: false, error: 'Obnovenie zlyhalo',
-    refresh: () => {}, addSource: () => {},
+    refresh: () => {}, addSource: () => {}, removeSource: () => {},
   }),
 }));
 
@@ -22,4 +22,5 @@ it('blocks CSV export after refresh fails while showing the error and retaining 
   expect(html).toContain('<p role="alert">Obnovenie zlyhalo</p>');
   expect(html).toContain('<button disabled="">Exportovať CSV</button>');
   expect(html).toContain('<option>previous-model</option>');
+  expect(html).toContain('aria-label="Odobrať z Usage: codex (synthetic)"');
 });

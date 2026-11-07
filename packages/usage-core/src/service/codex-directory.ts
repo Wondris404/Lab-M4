@@ -44,14 +44,23 @@ export async function scanCodexDirectory(
       const key = createHash('sha256')
         .update(`${sourceKey}\0${file}`)
         .digest('hex');
-      parsed = await scanJsonlAppend(
-        db,
-        `${key}:v5`,
-        file,
-        (previous) =>
-          codexAccumulator(previous as CodexCursorState | undefined, pseudonym),
-        force,
-      );
+      try {
+        parsed = await scanJsonlAppend(
+          db,
+          `${key}:v5`,
+          file,
+          (previous) =>
+            codexAccumulator(previous as CodexCursorState | undefined, pseudonym),
+          force,
+        );
+      } catch (error) {
+        const code = (error as NodeJS.ErrnoException).code;
+        if (!code || !['EACCES', 'EPERM', 'ENOENT', 'ENOTDIR', 'EBUSY', 'EIO', 'ESTALE'].includes(code))
+          throw error;
+        result.warnings++;
+        result.partial = true;
+        continue;
+      }
     }
     if (parsed.records.length !== (parsed._fingerprints?.length ?? 0))
       throw new Error('Invalid Codex cursor');

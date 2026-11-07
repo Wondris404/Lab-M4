@@ -27,6 +27,7 @@
     "allow-save-app-settings",
     "allow-usage-list-sources",
     "allow-usage-select-source",
+    "allow-usage-remove-source",
     "allow-usage-scan"
   ]
 }

@@ -10,7 +10,9 @@ export interface Source {
   coveredBy: string | null;
 }
 interface Page {
-  result: {
+  version?: number;
+  error?: string;
+  result?: {
     status: string;
     totalRecords: number;
     offset: number;
@@ -49,23 +51,40 @@ export async function fetchUsage(
   }
   if (sources.some((source) => source.coveredBy !== null))
     warnings.push('Prekrývajúce sa zdroje sa započítali iba raz.');
-  for (const source of sources) {
+  let failed = 0;
+  let scanned = 0;
+  scan: for (const source of sources) {
     if (source.coveredBy !== null) continue;
+    const sourceRecords: UsageItem[] = [];
+    const sourceWarnings: string[] = [];
+    let sourcePartial = false;
     let offset = 0;
     let total = 0;
     let snapshot: string | undefined;
     do {
       if (!active()) return { records, warnings, partial };
-      const page = await request<Page>('usage_scan', {
-        id: source.id,
-        force: false,
-        offset,
-      });
-      const data = page.result;
+      const page = await request<Page | null>('usage_scan', { id: source.id, force: false, offset })
+        .catch((reason: unknown): Page => {
+          if (reason === 'Sidecar output invalid')
+            throw new Error('Neplatná odpoveď služby Usage.');
+          return { version: 1, error: 'INVALID_OR_UNREADABLE' };
+        });
+      if (!active()) return { records, warnings, partial };
+      if (page?.version === 1 && page.result === undefined &&
+          (page.error === 'INVALID_OR_UNREADABLE' || page.error === 'LIVE_WAL')) {
+        warnings.push(`${source.agent} (${source.name}): zdroj sa nepodarilo načítať.`);
+        partial = true;
+        failed++;
+        continue scan;
+      }
+      const data = page?.result;
       if (
         !data ||
+        page?.error !== undefined ||
         !Array.isArray(data.records) ||
         !Array.isArray(data.warnings) ||
+        data.warnings.some((warning) => typeof warning !== 'string') ||
+        !['ok', 'partial', 'not-supported'].includes(data.status) ||
         !Number.isSafeInteger(data.totalRecords) ||
         data.totalRecords < 0 ||
         data.offset !== offset ||
@@ -77,12 +96,12 @@ export async function fetchUsage(
       if (offset === 0) {
         total = data.totalRecords;
         snapshot = data.snapshotId;
-        warnings.push(
+        sourceWarnings.push(
           ...data.warnings.map((warning) => `${source.agent}: ${warning}`),
         );
         if (data.status !== 'ok') {
-          partial = true;
-          warnings.push(
+          sourcePartial = true;
+          sourceWarnings.push(
             `${source.agent}: čiastočné alebo nepodporované údaje.`,
           );
         }
@@ -93,10 +112,15 @@ export async function fetchUsage(
         throw new Error('Služba Usage vrátila neplatnú stránku.');
       if (!data.records.length && offset < total)
         throw new Error('Služba Usage vrátila neúplnú stránku.');
-      records.push(...data.records.slice(0, Math.max(0, total - offset)));
+      sourceRecords.push(...data.records);
       offset += data.records.length;
     } while (offset < total);
+    for (const record of sourceRecords) records.push(record);
+    warnings.push(...sourceWarnings);
+    partial ||= sourcePartial;
+    scanned++;
   }
+  if (failed && !scanned) throw new Error('Nepodarilo sa načítať žiadny zdroj Usage.');
   return { records, warnings, partial };
 }
 
@@ -117,9 +141,9 @@ export function useUsage() {
     try {
       const nextSources = await invoke<Source[]>('usage_list_sources');
       if (!active()) return;
+      setSources(nextSources);
       const result = await fetchUsage(nextSources, invoke, active);
       if (!active()) return;
-      setSources(nextSources);
       setRecords(result.records);
       setWarnings(result.warnings);
       setPartial(result.partial);
@@ -145,7 +169,6 @@ export function useUsage() {
           folder,
         });
         if (selected) await refresh();
-        else setError(undefined);
       } catch (reason) {
         setError(String(reason));
       }
@@ -153,5 +176,19 @@ export function useUsage() {
     [refresh],
   );
 
-  return { sources, records, warnings, partial, loading, error, refresh, addSource };
+  const removeSource = useCallback(
+    async (id: string) => {
+      setLoading(true);
+      try {
+        await invoke('usage_remove_source', { id });
+        await refresh();
+      } catch (reason) {
+        setError(String(reason));
+        setLoading(false);
+      }
+    },
+    [refresh],
+  );
+
+  return { sources, records, warnings, partial, loading, error, refresh, addSource, removeSource };
 }

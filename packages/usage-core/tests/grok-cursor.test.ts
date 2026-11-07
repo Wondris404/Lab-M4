@@ -130,10 +130,37 @@ it('defers a split UTF-8 character across append and read-buffer boundaries', as
   expect((await scanCached(grokBuildParser, file, cache, true)).records).toEqual(appended.records);
 });
 
-it('does not publish a snapshot when the file grows during cursor parsing', async () => {
+it('keeps a stable Grok prefix before an oversized row without moving the persisted cursor', async () => {
+  const dir = await testTempDir('grok-oversized-');
+  const file = join(dir, 'grok.jsonl');
+  const cache = join(dir, 'cache.sqlite');
+  const original = `${context('synthetic-session')}\n${usage(1)}\n${usage(1)}\n`;
+  await writeFile(file, original);
+  expect((await scanCached(grokBuildParser, file, cache)).countRisk).toBe('double-count');
+  await appendFile(file, `${usage(2)}\n${'x'.repeat(1024 * 1024 + 1)}\n${usage(3)}\n`);
+  const partial = await scanCached(grokBuildParser, file, cache);
+  expect(partial.records.map((record) => record.inputTokens)).toEqual([10, 10, 20]);
+  expect(partial).toMatchObject({ partial: true, countRisk: 'both', warnings: 2 });
+  expect(await scanCached(grokBuildParser, file, cache, true)).toEqual(partial);
+  const db = new sqlite3.Database(cache);
+  try {
+    const row = await new Promise<{ offset: number }>((resolve, reject) => db.get(
+      'SELECT offset FROM grok_cursor', (error, value) => error ? reject(error) : resolve(value as { offset: number }),
+    ));
+    expect(row.offset).toBe(Buffer.byteLength(original));
+  } finally {
+    await new Promise<void>((resolve, reject) => db.close((error) => error ? reject(error) : resolve()));
+  }
+  await writeFile(file, `${original}${usage(2)}\n${usage(3)}\n`);
+  expect((await scanCached(grokBuildParser, file, cache)).records.map((record) => record.inputTokens))
+    .toEqual([10, 10, 20, 30]);
+});
+
+it.each([false, true])('does not publish a changing cursor snapshot with oversized line = %s', async (oversized) => {
   const dir = await testTempDir('grok-live-append-');
   const file = join(dir, 'grok.jsonl');
   await writeFile(file, `${context('synthetic-session')}\n${usage(1)}\n`);
+  if (oversized) await appendFile(file, `${'x'.repeat(1024 * 1024 + 1)}\n`);
   const db = new sqlite3.Database(join(dir, 'cache.sqlite'));
   try {
     let appended = false;
@@ -152,7 +179,7 @@ it('does not publish a snapshot when the file grows during cursor parsing', asyn
     }, false);
     expect(changing).toMatchObject({ partial: true, records: [] });
     const stable = await scanJsonlAppend(db, 'synthetic', file, () => grokAccumulator(), false);
-    expect(stable.records.map((record) => record.inputTokens)).toEqual([10, 20]);
+    expect(stable.records.map((record) => record.inputTokens)).toEqual(oversized ? [10] : [10, 20]);
   } finally {
     await new Promise<void>((resolve, reject) => db.close((error) => error ? reject(error) : resolve()));
   }

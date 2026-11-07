@@ -471,6 +471,10 @@
 - Na tomto checkoute `rustc --edition 2021 -D warnings` pre `agent_transport.rs` aj `supervisor_test.rs` exit 0. `node packages/orchestrator-core/tests/windows-agent-transport.mjs` exit 0. Výstup: `Native transport passed: spawn failure, deadline, EOF, backpressure, surviving control`.
 - Invariant: testovaný job skončil v limite (deadline, exit 124), po `LAB_M4_JOB_STOP` neostal žiadny vlastný proces a nezávislý kontrolný proces prežil. Push, prihlásenie a inštalácia sa nerobili.
 
+## 2026-11-07 21:55 +01:00 (Europe/Bratislava) – Interrupt, STOP a súbežný cleanup
+- K `windows-agent-transport.mjs` pribudli interrupt, explicitný STOP živého sleepra a súbežné zatvorenie dvoch jobov. Každý má limit 8 s a vlastné upratanie. Plná fronta ostáva exit 4.
+- Beh pri HEAD `05d9436085f4528b22e1cdcc070cdb6d882d51cc` pred týmto commitom: `rustc -D warnings` transport aj sleeper exit 0, test exit 0. Výstup: `Native transport passed: spawn failure, deadline, EOF, backpressure, interrupt, STOP, concurrent cleanup, surviving control`.
+
 - Celý beh na `1eb061f` odhalil náhodný pád `grok-cursor` (104/105, exit 1): dočasná cesta mala suffix `KEYJLz`, ktorý blokuje zámerná kontrola citlivých názvov. Syntetické fixture používajú hexadecimálny UUID suffix. Kontrola zdrojových ciest v aplikácii zostala zachovaná.
 
 ## 2026-11-07 – Regresie z review Usage

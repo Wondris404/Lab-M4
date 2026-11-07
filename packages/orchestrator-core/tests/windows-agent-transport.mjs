@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
-import { spawn } from 'node:child_process';
+import { execFile, spawn } from 'node:child_process';
 import { once } from 'node:events';
-import { resolve } from 'node:path';
+import { basename, resolve } from 'node:path';
 
 const [transport, sleeper] = process.argv.slice(2);
 assert.equal(process.platform, 'win32');
@@ -31,6 +31,32 @@ async function finish(child, boundMs) {
   } finally {
     clearTimeout(timer);
   }
+}
+function imagePids(image) {
+  const command = `(Get-CimInstance Win32_Process -Filter \"Name='${image.replaceAll("'", "''")}'\" | Select-Object -ExpandProperty ProcessId) -join ' '`;
+  return new Promise((resolvePids, reject) => {
+    execFile('powershell.exe', ['-NoProfile', '-Command', command], { windowsHide: true, timeout: 8000 }, (error, stdout) => {
+      if (error) reject(error);
+      else resolvePids(String(stdout).split(/\s+/).map(Number).filter(Number.isInteger));
+    });
+  });
+}
+function alive(pid) {
+  try { process.kill(pid, 0); return true; }
+  catch (error) { if (error.code === 'ESRCH') return false; throw error; }
+}
+async function waitFor(label, read, boundMs) {
+  const deadline = Date.now() + boundMs;
+  while (Date.now() < deadline) {
+    const value = await read();
+    if (value) return value;
+    await new Promise((resolveWait) => setTimeout(resolveWait, 50));
+  }
+  throw new Error(`Timed out waiting for ${label}`);
+}
+function endOwned(child, pid) {
+  if (child.exitCode === null) child.kill();
+  if (pid !== undefined && alive(pid)) { try { process.kill(pid); } catch { /* already reaped */ } }
 }
 
 const control = track(spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], { windowsHide: true }));
@@ -64,9 +90,78 @@ try {
     assert.match(full.stderr(), /LAB_M4_JOB_STOP \d+ 0/);
   } finally {
     clearTimeout(watchdog);
+    if (full.child.exitCode === null) full.child.kill();
   }
+
+  const sleeperName = basename(sleeperPath);
+  const interruptBefore = new Set(await imagePids(sleeperName));
+  const interrupt = launch(['20000', sleeperPath, '--unrelated']);
+  let interruptPid;
+  const interruptStarted = Date.now();
+  try {
+    interruptPid = await waitFor('interrupt sleeper', async () =>
+      (await imagePids(sleeperName)).find((pid) => !interruptBefore.has(pid)), 8000);
+    interrupt.child.kill();
+    await finish(interrupt.child, 8000);
+    assert.equal(alive(interruptPid), false, 'interrupt must end the owned sleeper');
+    assert.ok(Date.now() - interruptStarted < 8000);
+    assert.equal(control.exitCode, null);
+  } finally {
+    endOwned(interrupt.child, interruptPid);
+  }
+
+  const stopBefore = new Set(await imagePids(sleeperName));
+  const stopped = launch(['20000', sleeperPath, '--unrelated']);
+  stopped.child.stdin.on('error', () => {});
+  let stoppedPid;
+  const stopStarted = Date.now();
+  try {
+    stoppedPid = await waitFor('STOP sleeper', async () =>
+      (await imagePids(sleeperName)).find((pid) => !stopBefore.has(pid)), 8000);
+    stopped.child.stdin.end();
+    assert.equal(await finish(stopped.child, 8000), 0);
+    assert.match(stopped.stderr(), /LAB_M4_JOB_STOP \d+ 0/);
+    assert.equal(alive(stoppedPid), false, 'STOP must end the owned sleeper');
+    assert.ok(Date.now() - stopStarted < 8000);
+    assert.equal(control.exitCode, null);
+  } finally {
+    endOwned(stopped.child, stoppedPid);
+  }
+
+  const concurrentBefore = new Set(await imagePids(sleeperName));
+  const first = launch(['20000', sleeperPath, '--unrelated']);
+  const second = launch(['20000', sleeperPath, '--unrelated']);
+  first.child.stdin.on('error', () => {});
+  second.child.stdin.on('error', () => {});
+  let firstPid;
+  let secondPid;
+  const concurrentStarted = Date.now();
+  try {
+    const spawned = await waitFor('two sleepers', async () => {
+      const fresh = (await imagePids(sleeperName)).filter((pid) => !concurrentBefore.has(pid));
+      return fresh.length >= 2 ? fresh : null;
+    }, 8000);
+    [firstPid, secondPid] = spawned;
+    first.child.stdin.end();
+    second.child.stdin.end();
+    const [firstCode, secondCode] = await Promise.all([
+      finish(first.child, 8000), finish(second.child, 8000),
+    ]);
+    assert.equal(firstCode, 0);
+    assert.equal(secondCode, 0);
+    assert.match(first.stderr(), /LAB_M4_JOB_STOP \d+ 0/);
+    assert.match(second.stderr(), /LAB_M4_JOB_STOP \d+ 0/);
+    assert.equal(alive(firstPid), false);
+    assert.equal(alive(secondPid), false);
+    assert.ok(Date.now() - concurrentStarted < 8000);
+    assert.equal(control.exitCode, null);
+  } finally {
+    endOwned(first.child, firstPid);
+    endOwned(second.child, secondPid);
+  }
+
   assert.equal(control.exitCode, null);
-  console.log('Native transport passed: spawn failure, deadline, EOF, backpressure, surviving control');
+  console.log('Native transport passed: spawn failure, deadline, EOF, backpressure, interrupt, STOP, concurrent cleanup, surviving control');
 } finally {
   for (const child of owned) {
     if (child.exitCode === null && !child.killed) child.kill();

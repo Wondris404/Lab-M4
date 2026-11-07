@@ -19,7 +19,7 @@ use windows_sys::Win32::System::Pipes::CreatePipe;
 use windows_sys::Win32::System::SystemInformation::GetSystemDirectoryW;
 use windows_sys::Win32::System::Threading::{
     CreateProcessW, DeleteProcThreadAttributeList, InitializeProcThreadAttributeList,
-    UpdateProcThreadAttribute, WaitForSingleObject, EXTENDED_STARTUPINFO_PRESENT, INFINITE,
+    UpdateProcThreadAttribute, WaitForSingleObject, EXTENDED_STARTUPINFO_PRESENT,
     LPPROC_THREAD_ATTRIBUTE_LIST, PROCESS_INFORMATION, PROC_THREAD_ATTRIBUTE_JOB_LIST,
     PROC_THREAD_ATTRIBUTE_PSEUDOCONSOLE, STARTF_USESTDHANDLES, STARTUPINFOEXW,
 };
@@ -230,6 +230,19 @@ pub(crate) struct WindowsChild {
     process: OwnedHandle,
 }
 
+const CLOSE_WAIT_MS: u32 = 5_000;
+
+pub(crate) fn wait_for_exit(process: HANDLE, timeout_ms: u32) -> io::Result<()> {
+    match unsafe { WaitForSingleObject(process, timeout_ms) } {
+        WAIT_OBJECT_0 => Ok(()),
+        0x0000_0102 => Err(io::Error::new(
+            io::ErrorKind::TimedOut,
+            "process did not exit before the close timeout",
+        )),
+        _ => Err(io::Error::last_os_error()),
+    }
+}
+
 impl WindowsChild {
     pub(crate) fn close(self) -> io::Result<()> {
         let result = if unsafe { TerminateJobObject(self.job.as_raw_handle(), 1) } == 0 {
@@ -239,10 +252,7 @@ impl WindowsChild {
         };
         // Kill-on-close is also the fallback if explicit termination failed.
         drop(self.job);
-        if unsafe { WaitForSingleObject(self.process.as_raw_handle(), INFINITE) } != WAIT_OBJECT_0 {
-            return Err(io::Error::last_os_error());
-        }
-        result
+        wait_for_exit(self.process.as_raw_handle(), CLOSE_WAIT_MS).and(result)
     }
 }
 
@@ -253,6 +263,7 @@ mod tests {
     use std::sync::mpsc;
     use std::thread;
     use std::time::{Duration, Instant};
+    use windows_sys::Win32::Foundation::HANDLE;
     use windows_sys::Win32::System::JobObjects::IsProcessInJob;
     use windows_sys::Win32::System::Threading::{
         OpenProcess, PROCESS_QUERY_LIMITED_INFORMATION, PROCESS_SYNCHRONIZE,
@@ -364,5 +375,58 @@ mod tests {
         );
         assert!((2020..=2200).contains(&year));
         second.close();
+    }
+
+    #[test]
+    fn close_wait_returns_while_the_process_is_still_alive() {
+        let terminal = Terminal::start(false);
+        let error = wait_for_exit(terminal.child.process.as_raw_handle(), 1).unwrap_err();
+        assert_eq!(error.kind(), io::ErrorKind::TimedOut);
+        terminal.close();
+    }
+
+    #[test]
+    fn close_returns_while_powershell_is_printing() {
+        let mut terminal = Terminal::start(false);
+        terminal
+            .writer
+            .write_all(b"1..20000 | ForEach-Object { \"LAB-M4-OUTPUT-$_\" }\r")
+            .unwrap();
+        terminal
+            .output
+            .recv_timeout(Duration::from_secs(8))
+            .expect("PowerShell produced output");
+        let started = Instant::now();
+        terminal.close();
+        assert!(started.elapsed() < Duration::from_secs(8));
+    }
+
+    #[test]
+    fn close_cancels_a_blocked_conpty_input_write() {
+        #[link(name = "ntdll")]
+        extern "system" {
+            fn NtSuspendProcess(process: HANDLE) -> i32;
+        }
+        let terminal = Terminal::start(false);
+        assert_eq!(
+            unsafe { NtSuspendProcess(terminal.child.process.as_raw_handle()) },
+            0,
+            "suspend PowerShell so it stops reading ConPTY input"
+        );
+        let input = crate::pty_input::PtyInput::start(terminal.writer).unwrap();
+        let mut blocked = input.enqueue("x".repeat(256 * 1024)).unwrap();
+        thread::sleep(Duration::from_millis(300));
+        assert!(
+            blocked.try_recv().is_err(),
+            "the ConPTY input write is still blocked"
+        );
+        let started = Instant::now();
+        drop(input);
+        assert!(started.elapsed() < Duration::from_secs(3));
+        let started = Instant::now();
+        terminal.child.close().unwrap();
+        drop(terminal.console);
+        terminal.reader.join().unwrap();
+        assert!(started.elapsed() < Duration::from_secs(8));
     }
 }

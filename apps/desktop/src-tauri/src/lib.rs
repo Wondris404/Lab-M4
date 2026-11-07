@@ -1,6 +1,8 @@
 mod pty_input;
 mod usage;
 mod usage_integrity;
+#[cfg(windows)]
+mod windows_pty;
 
 use std::collections::HashMap;
 use std::io::{Read, Write};
@@ -11,6 +13,7 @@ use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::Duration;
 
+#[cfg(not(windows))]
 use portable_pty::{native_pty_system, CommandBuilder, PtySize};
 use serde::Serialize;
 use serde_json::{json, Value};
@@ -18,8 +21,14 @@ use tauri::{AppHandle, Emitter, Manager, State};
 
 struct PtyInstance {
     input: pty_input::PtyInput,
-    master: Box<dyn portable_pty::MasterPty + Send>,
+    #[cfg(windows)]
+    child: windows_pty::WindowsChild,
+    #[cfg(not(windows))]
     child: Box<dyn portable_pty::Child + Send + Sync>,
+    #[cfg(windows)]
+    master: windows_pty::WindowsPty,
+    #[cfg(not(windows))]
+    master: Box<dyn portable_pty::MasterPty + Send>,
     kill_flag: Arc<AtomicBool>,
     reader: thread::JoinHandle<()>,
 }
@@ -29,17 +38,27 @@ impl PtyInstance {
         let Self {
             input,
             master,
-            mut child,
+            child,
             kill_flag,
             reader,
         } = self;
         // Keep draining ConPTY until it closes. Stopping the reader first
         // can block ClosePseudoConsole when its output pipe is full.
         kill_flag.store(true, Ordering::Release);
-        drop(input);
-        let child_result = match child.try_wait() {
-            Ok(Some(_)) => Ok(()),
-            _ => child.kill().and_then(|()| child.wait().map(|_| ())),
+        #[cfg(windows)]
+        let child_result = {
+            drop(input);
+            child.close()
+        };
+        #[cfg(not(windows))]
+        let child_result = {
+            let mut child = child;
+            let result = match child.try_wait() {
+                Ok(Some(_)) => Ok(()),
+                _ => child.kill().and_then(|()| child.wait().map(|_| ())),
+            };
+            drop(input);
+            result
         };
         drop(master);
         reader.join().map_err(|_| "PTY output reader panicked")?;
@@ -679,33 +698,29 @@ fn spawn_powershell(
             return Err("Terminal session limit reached".into());
         }
     }
-    let pty_system = native_pty_system();
-    let pty_pair = pty_system
-        .openpty(PtySize {
-            rows: 24,
-            cols: 80,
-            pixel_width: 0,
-            pixel_height: 0,
-        })
-        .map_err(|e| format!("openpty failed: {e}"))?;
-
-    let mut cmd = CommandBuilder::new("powershell.exe");
-    cmd.arg("-NoLogo");
-    if let Some(path) = cwd.as_deref() {
-        if !path.trim().is_empty() {
-            cmd.cwd(path);
-        }
-    }
-
-    let reader = pty_pair
-        .master
-        .try_clone_reader()
-        .map_err(|e| format!("clone reader failed: {e}"))?;
-
-    let writer = pty_pair
-        .master
-        .take_writer()
-        .map_err(|e| format!("take writer failed: {e}"))?;
+    #[cfg(windows)]
+    let (master, reader, writer) = windows_pty::WindowsPty::open(24, 80)
+        .map_err(|error| format!("openpty failed: {error}"))?;
+    #[cfg(not(windows))]
+    let (master, slave, reader, writer) = {
+        let pty_pair = native_pty_system()
+            .openpty(PtySize {
+                rows: 24,
+                cols: 80,
+                pixel_width: 0,
+                pixel_height: 0,
+            })
+            .map_err(|e| format!("openpty failed: {e}"))?;
+        let reader = pty_pair
+            .master
+            .try_clone_reader()
+            .map_err(|e| format!("clone reader failed: {e}"))?;
+        let writer = pty_pair
+            .master
+            .take_writer()
+            .map_err(|e| format!("take writer failed: {e}"))?;
+        (pty_pair.master, pty_pair.slave, reader, writer)
+    };
     let input = pty_input::PtyInput::start(writer)
         .map_err(|e| format!("start input worker failed: {e}"))?;
 
@@ -758,14 +773,23 @@ fn spawn_powershell(
         })
         .map_err(|e| format!("start output reader failed: {e}"))?;
 
-    let child = pty_pair.slave.spawn_command(cmd);
-    drop(pty_pair.slave);
+    #[cfg(windows)]
+    let child = master.spawn(cwd.as_deref());
+    #[cfg(not(windows))]
+    let child = {
+        let mut cmd = CommandBuilder::new("powershell.exe");
+        cmd.arg("-NoLogo");
+        if let Some(path) = cwd.as_deref().filter(|path| !path.trim().is_empty()) {
+            cmd.cwd(path);
+        }
+        slave.spawn_command(cmd)
+    };
     let child = match child {
         Ok(child) => child,
         Err(error) => {
             kill_flag.store(true, Ordering::Release);
             drop(input);
-            drop(pty_pair.master);
+            drop(master);
             let _ = reader.join();
             return Err(format!("spawn failed: {error}"));
         }
@@ -773,7 +797,7 @@ fn spawn_powershell(
 
     let instance = PtyInstance {
         input,
-        master: pty_pair.master,
+        master,
         child,
         kill_flag,
         reader,
@@ -821,16 +845,25 @@ fn resize_powershell(
         .lock()
         .map_err(|e| format!("lock poisoned: {e}"))?;
     let instance = slot.instances.get(&id).ok_or("no such pty")?;
-    instance
-        .master
-        .resize(PtySize {
-            rows,
-            cols,
-            pixel_width: 0,
-            pixel_height: 0,
-        })
-        .map_err(|e| format!("resize failed: {e}"))?;
-    Ok(())
+    #[cfg(windows)]
+    {
+        instance
+            .master
+            .resize(cols, rows)
+            .map_err(|e| format!("resize failed: {e}"))
+    }
+    #[cfg(not(windows))]
+    {
+        instance
+            .master
+            .resize(PtySize {
+                rows,
+                cols,
+                pixel_width: 0,
+                pixel_height: 0,
+            })
+            .map_err(|e| format!("resize failed: {e}"))
+    }
 }
 
 #[tauri::command]
@@ -937,6 +970,63 @@ pub fn run() {
 #[cfg(test)]
 mod tests {
     use super::Utf8OutputDecoder;
+
+    #[cfg(windows)]
+    #[test]
+    fn concurrent_terminal_close_claims_cleanup_only_once() {
+        use super::{
+            kill_instance, pty_input::PtyInput, windows_pty::WindowsPty, AppState, PtyInstance,
+        };
+        use std::io;
+        use std::sync::atomic::AtomicBool;
+        use std::sync::{mpsc, Arc, Barrier};
+        use std::thread;
+        use std::time::Duration;
+
+        let (master, mut output, writer) = WindowsPty::open(24, 80).unwrap();
+        let reader = thread::spawn(move || {
+            let _ = io::copy(&mut output, &mut io::sink());
+        });
+        let input = PtyInput::start(writer).unwrap();
+        let child = master.spawn(None).unwrap();
+        let state = Arc::new(AppState::default());
+        state.pty.lock().unwrap().instances.insert(
+            "owned".into(),
+            PtyInstance {
+                input,
+                child,
+                master,
+                kill_flag: Arc::new(AtomicBool::new(false)),
+                reader,
+            },
+        );
+        let gate = Arc::new(Barrier::new(3));
+        let (finished, results) = mpsc::channel();
+        let closers: Vec<_> = (0..2)
+            .map(|_| {
+                let (state, gate, finished) = (state.clone(), gate.clone(), finished.clone());
+                thread::spawn(move || {
+                    gate.wait();
+                    let _ = finished.send(kill_instance("owned", &state));
+                })
+            })
+            .collect();
+        gate.wait();
+        let mut closed: Vec<_> = (0..2)
+            .map(|_| {
+                results
+                    .recv_timeout(Duration::from_secs(10))
+                    .unwrap()
+                    .unwrap()
+            })
+            .collect();
+        for closer in closers {
+            closer.join().unwrap();
+        }
+        closed.sort();
+        assert_eq!(closed, [false, true]);
+        assert!(!kill_instance("owned", &state).unwrap());
+    }
 
     #[test]
     fn pty_text_preserves_characters_split_across_reads() {

@@ -452,6 +452,13 @@
 - `cargo test --offline --locked --manifest-path apps/desktop/src-tauri/Cargo.toml -- native_terminal` exit 0. 1 passed, 0 failed. Je to ten istý process-tree test, spustený ešte raz.
 - Prihlásenie do izolovaných domovov, `DevToolsActivePort` a čistá inštalácia ostávajú BLOCKED alebo NEOVERENÉ. Push sa nerobil.
 
+## 2026-11-07 21:40 +01:00 (Europe/Bratislava) – Diff voči NSIS a žiadny push
+- Na `5729c78f5d67ca552fcd5d3e35c1ee0290999d95` je `git diff --stat 98568951f71771c5f8fcec7e2e2e1807600bcf32 HEAD` iba `docs/DENNIK.md`, 22 vložených riadkov. Medzi nimi sú commity `01190f8`, `95f3fdc` a `5729c78`, všetky denník. Inštalátor z `9856895` sa tým nemení.
+- `1dd6c1f` nie je predok PR #13 `40d326d`. Vetva `codex/orchestrator-transport` nad `40d326d` pridáva Usage commity `1dd6c1f`, `7fc8dbf`, `e83a0dc`, `570dc0c` a `7b84185`, ktoré na remote nie sú. Push tejto vetvy by tú zamietnutú publikáciu poslal pod iným menom. Neurobil som ho. `gh` ukazuje PR #13 stále OPEN draft, hlava `40d326d`, base `fix/terminal-zstd-integrity`. Remote `codex/orchestrator-transport` neexistuje.
+- GUI NEOVERENÉ. `scripts/windows-webdriver-smoke.mjs` dvakrát exit 1: `POST /session` TimeoutError a `hyper::Error(IncompleteMessage)`, log so zapísaným HEAD `4910bc1`. Po `5bf789b` mal `msedgewebview2.exe` prepínače drivera vrátane `--remote-debugging-port=0` a súbor `DevToolsActivePort` aj tak nevznikol. K terminálu sa test nedostal.
+- Čistá inštalácia NEOVERENÉ. `windows-installed-usage-smoke.ps1` exit 1: `Installer smoke must run on a disposable GitHub-hosted runner.` Inštalácia sa nespustila.
+- Živý cyklus BLOCKED. Prázdny profil Grok Build exit 1, hláška Not signed in. Prázdny profil Codex exit 1. Credential súbory sa nekopírovali. Izolované domovy `.lab-m4/agent-homes/codex` a `grok` čakajú na prihlásenie používateľa.
+
 - Celý beh na `1eb061f` odhalil náhodný pád `grok-cursor` (104/105, exit 1): dočasná cesta mala suffix `KEYJLz`, ktorý blokuje zámerná kontrola citlivých názvov. Syntetické fixture používajú hexadecimálny UUID suffix. Kontrola zdrojových ciest v aplikácii zostala zachovaná.
 
 ## 2026-11-07 – Regresie z review Usage

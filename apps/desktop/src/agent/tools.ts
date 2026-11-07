@@ -1,4 +1,4 @@
-import { invoke } from "@tauri-apps/api/core";
+import { writeTerminalInput } from "../terminalInput";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { buildAgentCommand, splitAgentCompletionMarkers, type AgentCompletionMarker } from "./commandMarker";
 import type { OrchestratorApi, PaneAgentName } from "./orchestratorTypes";
@@ -214,7 +214,7 @@ export async function runCommandInPane(
     });
   });
 
-  void invoke("write_powershell", { id: pane.ptyId, input }).catch(() => {
+  void writeTerminalInput(pane.ptyId, input).catch(() => {
     if (!resolved) {
       resolved = true;
       pendingRuns.get(token)?.({ output: "error: failed to write to pane", exitCode: 1 });

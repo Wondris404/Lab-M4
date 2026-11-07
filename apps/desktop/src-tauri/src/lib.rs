@@ -1,3 +1,4 @@
+mod pty_input;
 mod usage;
 mod usage_integrity;
 
@@ -16,15 +17,45 @@ use serde_json::{json, Value};
 use tauri::{AppHandle, Emitter, Manager, State};
 
 struct PtyInstance {
-    writer: Box<dyn std::io::Write + Send>,
+    input: pty_input::PtyInput,
     master: Box<dyn portable_pty::MasterPty + Send>,
     child: Box<dyn portable_pty::Child + Send + Sync>,
     kill_flag: Arc<AtomicBool>,
+    reader: thread::JoinHandle<()>,
+}
+
+impl PtyInstance {
+    fn close(self) -> Result<(), String> {
+        let Self {
+            input,
+            master,
+            mut child,
+            kill_flag,
+            reader,
+        } = self;
+        // Keep draining ConPTY until it closes. Stopping the reader first
+        // can block ClosePseudoConsole when its output pipe is full.
+        kill_flag.store(true, Ordering::Release);
+        drop(input);
+        let child_result = match child.try_wait() {
+            Ok(Some(_)) => Ok(()),
+            _ => child.kill().and_then(|()| child.wait().map(|_| ())),
+        };
+        drop(master);
+        reader.join().map_err(|_| "PTY output reader panicked")?;
+        child_result.map_err(|error| format!("PowerShell cleanup failed: {error}"))
+    }
+}
+
+#[derive(Default)]
+struct PtyRegistry {
+    closing: bool,
+    instances: HashMap<String, PtyInstance>,
 }
 
 #[derive(Default)]
 struct AppState {
-    pty: Mutex<HashMap<String, PtyInstance>>,
+    pty: Mutex<PtyRegistry>,
     agent_hook_url: Mutex<Option<String>>,
 }
 
@@ -98,26 +129,36 @@ struct AgentAudioTranscriptionResponse {
     body: String,
 }
 
-fn kill_instance(id: &str, state: &AppState) {
-    let removed = state.pty.lock().ok().and_then(|mut map| map.remove(id));
-    if let Some(mut instance) = removed {
-        instance.kill_flag.store(true, Ordering::SeqCst);
-        let _ = instance.child.kill();
-    }
+fn kill_instance(id: &str, state: &AppState) -> Result<bool, String> {
+    let removed = state
+        .pty
+        .lock()
+        .map_err(|_| "PTY registry unavailable")?
+        .instances
+        .remove(id);
+    let Some(instance) = removed else {
+        return Ok(false);
+    };
+    instance.close()?;
+    Ok(true)
 }
 
 fn kill_all(state: &AppState) {
-    let instances: Vec<PtyInstance> = if let Ok(mut map) = state.pty.lock() {
-        map.drain().map(|(_, instance)| instance).collect()
+    let instances: Vec<PtyInstance> = if let Ok(mut registry) = state.pty.lock() {
+        registry.closing = true;
+        registry
+            .instances
+            .drain()
+            .map(|(_, instance)| instance)
+            .collect()
     } else {
         return;
     };
 
-    for mut instance in instances {
-        instance.kill_flag.store(true, Ordering::SeqCst);
-        thread::spawn(move || {
-            let _ = instance.child.kill();
-        });
+    for instance in instances {
+        if let Err(error) = instance.close() {
+            eprintln!("{error}");
+        }
     }
 }
 
@@ -628,6 +669,16 @@ fn spawn_powershell(
     state: State<'_, AppState>,
     cwd: Option<String>,
 ) -> Result<String, String> {
+    const MAX_SESSIONS: usize = 32;
+    {
+        let registry = state.pty.lock().map_err(|_| "PTY registry unavailable")?;
+        if registry.closing {
+            return Err("Terminal is closing".into());
+        }
+        if registry.instances.len() >= MAX_SESSIONS {
+            return Err("Terminal session limit reached".into());
+        }
+    }
     let pty_system = native_pty_system();
     let pty_pair = pty_system
         .openpty(PtySize {
@@ -646,11 +697,6 @@ fn spawn_powershell(
         }
     }
 
-    let child = pty_pair
-        .slave
-        .spawn_command(cmd)
-        .map_err(|e| format!("spawn failed: {e}"))?;
-
     let reader = pty_pair
         .master
         .try_clone_reader()
@@ -660,6 +706,8 @@ fn spawn_powershell(
         .master
         .take_writer()
         .map_err(|e| format!("take writer failed: {e}"))?;
+    let input = pty_input::PtyInput::start(writer)
+        .map_err(|e| format!("start input worker failed: {e}"))?;
 
     let id = new_id();
     let kill_flag = Arc::new(AtomicBool::new(false));
@@ -667,77 +715,98 @@ fn spawn_powershell(
     let app_handle = app.clone();
     let id_for_thread = id.clone();
 
-    thread::spawn(move || {
-        let mut reader = reader;
-        let mut buf = [0u8; 4096];
-        let mut decoder = Utf8OutputDecoder::default();
-        loop {
-            if kill_flag_reader.load(Ordering::SeqCst) {
-                break;
-            }
-            match reader.read(&mut buf) {
-                Ok(0) => break,
-                Ok(n) => {
-                    let data = decoder.push(&buf[..n]);
-                    if data.is_empty() {
-                        continue;
+    let reader = thread::Builder::new()
+        .name("pty-output".into())
+        .spawn(move || {
+            let mut reader = reader;
+            let mut buf = [0u8; 4096];
+            let mut decoder = Utf8OutputDecoder::default();
+            loop {
+                match reader.read(&mut buf) {
+                    Ok(0) => break,
+                    Ok(n) => {
+                        if kill_flag_reader.load(Ordering::Acquire) {
+                            continue;
+                        }
+                        let data = decoder.push(&buf[..n]);
+                        if data.is_empty() {
+                            continue;
+                        }
+                        let payload = PtyOutput {
+                            id: id_for_thread.clone(),
+                            data,
+                        };
+                        let _ = app_handle.emit("pty-output", payload);
                     }
-                    let payload = PtyOutput {
-                        id: id_for_thread.clone(),
-                        data,
-                    };
-                    if app_handle.emit("pty-output", payload).is_err() {
-                        break;
-                    }
+                    Err(_) => break,
                 }
-                Err(_) => break,
             }
+            if kill_flag_reader.load(Ordering::Acquire) {
+                return;
+            }
+            let remaining = decoder.finish();
+            if !remaining.is_empty() {
+                let _ = app_handle.emit(
+                    "pty-output",
+                    PtyOutput {
+                        id: id_for_thread.clone(),
+                        data: remaining,
+                    },
+                );
+            }
+            let _ = app_handle.emit("pty-exit", id_for_thread);
+        })
+        .map_err(|e| format!("start output reader failed: {e}"))?;
+
+    let child = pty_pair.slave.spawn_command(cmd);
+    drop(pty_pair.slave);
+    let child = match child {
+        Ok(child) => child,
+        Err(error) => {
+            kill_flag.store(true, Ordering::Release);
+            drop(input);
+            drop(pty_pair.master);
+            let _ = reader.join();
+            return Err(format!("spawn failed: {error}"));
         }
-        let remaining = decoder.finish();
-        if !remaining.is_empty() {
-            let _ = app_handle.emit(
-                "pty-output",
-                PtyOutput {
-                    id: id_for_thread.clone(),
-                    data: remaining,
-                },
-            );
-        }
-        let _ = app_handle.emit("pty-exit", id_for_thread);
-    });
+    };
 
     let instance = PtyInstance {
-        writer,
+        input,
         master: pty_pair.master,
         child,
         kill_flag,
+        reader,
     };
 
-    state
-        .pty
-        .lock()
-        .map_err(|e| format!("lock poisoned: {e}"))?
-        .insert(id.clone(), instance);
-
-    Ok(id)
+    if let Ok(mut registry) = state.pty.lock() {
+        if !registry.closing && registry.instances.len() < MAX_SESSIONS {
+            registry.instances.insert(id.clone(), instance);
+            return Ok(id);
+        }
+    }
+    instance.close()?;
+    Err("Cannot register another terminal session".into())
 }
 
 #[tauri::command]
-fn write_powershell(id: String, input: String, state: State<'_, AppState>) -> Result<(), String> {
-    let mut slot = state
-        .pty
-        .lock()
-        .map_err(|e| format!("lock poisoned: {e}"))?;
-    let instance = slot.get_mut(&id).ok_or("no such pty")?;
-    instance
-        .writer
-        .write_all(input.as_bytes())
-        .map_err(|e| format!("write failed: {e}"))?;
-    instance
-        .writer
-        .flush()
-        .map_err(|e| format!("flush failed: {e}"))?;
-    Ok(())
+async fn write_powershell(
+    id: String,
+    input: String,
+    state: State<'_, AppState>,
+) -> Result<(), String> {
+    let completed = {
+        let registry = state.pty.lock().map_err(|_| "PTY registry unavailable")?;
+        registry
+            .instances
+            .get(&id)
+            .ok_or("Terminal session is closed")?
+            .input
+            .enqueue(input)?
+    };
+    completed
+        .await
+        .map_err(|_| "Terminal input was cancelled")?
 }
 
 #[tauri::command]
@@ -751,7 +820,7 @@ fn resize_powershell(
         .pty
         .lock()
         .map_err(|e| format!("lock poisoned: {e}"))?;
-    let instance = slot.get(&id).ok_or("no such pty")?;
+    let instance = slot.instances.get(&id).ok_or("no such pty")?;
     instance
         .master
         .resize(PtySize {
@@ -765,8 +834,10 @@ fn resize_powershell(
 }
 
 #[tauri::command]
-fn kill_powershell(id: String, state: State<'_, AppState>) -> Result<(), String> {
-    kill_instance(&id, &state);
+fn kill_powershell(id: String, app: AppHandle, state: State<'_, AppState>) -> Result<(), String> {
+    if kill_instance(&id, &state)? {
+        let _ = app.emit("pty-exit", id);
+    }
     Ok(())
 }
 
@@ -776,7 +847,7 @@ fn list_powershell(state: State<'_, AppState>) -> Result<Vec<String>, String> {
         .pty
         .lock()
         .map_err(|e| format!("lock poisoned: {e}"))?;
-    Ok(slot.keys().cloned().collect())
+    Ok(slot.instances.keys().cloned().collect())
 }
 
 fn sessions_path(app: &AppHandle) -> Result<std::path::PathBuf, String> {
@@ -850,7 +921,10 @@ pub fn run() {
             usage::usage_cancel_scan
         ])
         .on_window_event(|window, event| {
-            if let tauri::WindowEvent::CloseRequested { .. } = event {
+            if matches!(
+                event,
+                tauri::WindowEvent::CloseRequested { .. } | tauri::WindowEvent::Destroyed
+            ) {
                 if let Some(state) = window.app_handle().try_state::<AppState>() {
                     kill_all(&state);
                 }

@@ -973,9 +973,10 @@ mod tests {
 
     #[cfg(windows)]
     #[test]
-    fn concurrent_terminal_close_claims_cleanup_only_once() {
+    fn concurrent_terminal_close_cancels_blocked_input_only_once() {
         use super::{
-            kill_instance, pty_input::PtyInput, windows_pty::WindowsPty, AppState, PtyInstance,
+            kill_instance, pty_input::tests::blocked_input, windows_pty::WindowsPty, AppState,
+            PtyInstance,
         };
         use std::io;
         use std::sync::atomic::AtomicBool;
@@ -983,12 +984,14 @@ mod tests {
         use std::thread;
         use std::time::Duration;
 
-        let (master, mut output, writer) = WindowsPty::open(24, 80).unwrap();
+        let (master, mut output, _writer) = WindowsPty::open(24, 80).unwrap();
         let reader = thread::spawn(move || {
             let _ = io::copy(&mut output, &mut io::sink());
         });
-        let input = PtyInput::start(writer).unwrap();
         let child = master.spawn(None).unwrap();
+        // The anonymous pipe gives this real session a deterministically
+        // blocked Windows writer without depending on ConHost buffer sizes.
+        let (blocked_peer, input, blocked) = blocked_input();
         let state = Arc::new(AppState::default());
         state.pty.lock().unwrap().instances.insert(
             "owned".into(),
@@ -1012,19 +1015,18 @@ mod tests {
             })
             .collect();
         gate.wait();
-        let mut closed: Vec<_> = (0..2)
-            .map(|_| {
-                results
-                    .recv_timeout(Duration::from_secs(10))
-                    .unwrap()
-                    .unwrap()
-            })
+        let closed: Result<Vec<_>, _> = (0..2)
+            .map(|_| results.recv_timeout(Duration::from_secs(10)))
             .collect();
+        // Ensure a cancellation regression can still release its own workers.
+        drop(blocked_peer);
         for closer in closers {
             closer.join().unwrap();
         }
+        let mut closed: Vec<_> = closed.unwrap().into_iter().map(Result::unwrap).collect();
         closed.sort();
         assert_eq!(closed, [false, true]);
+        assert!(blocked.blocking_recv().unwrap().is_err());
         assert!(!kill_instance("owned", &state).unwrap());
     }
 

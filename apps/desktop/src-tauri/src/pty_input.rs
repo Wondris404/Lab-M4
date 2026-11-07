@@ -103,7 +103,7 @@ fn cancel_blocking_write(worker: &JoinHandle<()>) {
 }
 
 #[cfg(all(test, windows))]
-mod tests {
+pub(super) mod tests {
     use super::*;
     use std::ffi::c_void;
     use std::fs::File;
@@ -134,8 +134,7 @@ mod tests {
         }
     }
 
-    #[test]
-    fn close_cancels_a_blocked_windows_pipe_and_rejects_queued_input() {
+    pub(crate) fn blocked_input() -> (File, PtyInput, oneshot::Receiver<Result<(), String>>) {
         let (mut read, mut write) = (null_mut(), null_mut());
         assert_ne!(
             unsafe { CreatePipe(&mut read, &mut write, null_mut(), 4096) },
@@ -151,7 +150,12 @@ mod tests {
             blocked.try_recv(),
             Err(oneshot::error::TryRecvError::Empty)
         ));
+        (read, input, blocked)
+    }
 
+    #[test]
+    fn close_cancels_a_blocked_windows_pipe_and_rejects_queued_input() {
+        let (read, input, blocked) = blocked_input();
         let queued: Vec<_> = (0..QUEUE_CAPACITY)
             .map(|_| input.enqueue("pending".into()).unwrap())
             .collect();

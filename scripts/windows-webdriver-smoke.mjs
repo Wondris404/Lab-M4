@@ -90,10 +90,7 @@ async function readMarker(name) {
   catch (error) { if (error.code === 'ENOENT') return ''; throw error; }
 }
 async function marker(name, expected) {
-  const result = await until(name, async () => {
-    const value = await readMarker(name);
-    return value.startsWith(expected + '|') ? value : '';
-  });
+  const result = await until(`PowerShell to write ${name}`, () => readMarker(name));
   const [value, year, pid] = result.split('|');
   if (value !== expected || Number(year) < 2020 || Number(year) > 2200 || !/^\d+$/.test(pid))
     throw new Error(`Unexpected PowerShell result for ${name}`);
@@ -125,7 +122,9 @@ async function closeWindow() {
   session = undefined;
 }
 function writeMarker(name, expr) {
-  return `"${expr}|$((Get-Date).Year)|$PID" | Set-Content -Encoding utf8 -LiteralPath (Join-Path $env:LAB_E2E_DIR '${name}')`;
+  // Print the computed result before writing the out-of-band marker so a
+  // screenshot can distinguish PowerShell execution from marker I/O failure.
+  return `$labMarker="${expr}|$((Get-Date).Year)|$PID"; Write-Output $labMarker; [IO.File]::WriteAllText([IO.Path]::Combine($env:LAB_E2E_DIR,'${name}'),$labMarker)`;
 }
 
 try {
@@ -139,33 +138,47 @@ try {
     await typeLine(writeMarker('first.txt', '$global:labSession-$global:labOrder'));
   });
   const firstPid = await step('read first terminal marker', () => marker('first.txt', 'first-AB'));
-  console.log('[webdriver] create second terminal');
-  stage = 'create second terminal';
-  await click('[aria-label="Actions menu"]');
-  await click('.sidebar-menu button:nth-of-type(2)');
-  await until('second session', async () => (await elements('.session-item')).length === 2);
+  await step('create second terminal', async () => {
+    await click('[aria-label="Actions menu"]');
+    await click('.sidebar-menu button:nth-of-type(2)');
+    await until('second session', async () => (await elements('.session-item')).length === 2);
+  });
   await step('send input to second terminal', () =>
     typeLine(`$global:labSession='second'; ${writeMarker('second.txt', '$global:labSession')}`));
   const secondPid = await step('read second terminal marker', () => marker('second.txt', 'second'));
   if (firstPid === secondPid) throw new Error('Sessions unexpectedly share a PowerShell process');
-  await click('.session-item', 0);
-  await typeLine(writeMarker('first-again.txt', '$global:labSession-$global:labOrder'));
-  await marker('first-again.txt', 'first-AB');
-  await click('.session-item', 1);
-  await click('.session-item .close-btn', 1);
-  await click('.confirm-modal-btn-danger');
-  await until('second session closed', async () => (await elements('.session-item')).length === 1);
-  await until('second PowerShell exit', async () => !isRunning(secondPid));
-  await typeLine(writeMarker('after-close.txt', '$global:labSession-$global:labOrder'));
-  await marker('after-close.txt', 'first-AB');
+  await step('verify first terminal state after switching', async () => {
+    await click('.session-item', 0);
+    await typeLine(writeMarker('first-again.txt', '$global:labSession-$global:labOrder'));
+    await marker('first-again.txt', 'first-AB');
+  });
+  await step('close second terminal and wait for PowerShell exit', async () => {
+    await click('.session-item', 1);
+    await click('.session-item .close-btn', 1);
+    await click('.confirm-modal-btn-danger');
+    await until('second session closed', async () => (await elements('.session-item')).length === 1);
+    await until('second PowerShell exit', async () => !isRunning(secondPid));
+  });
+  await step('verify first terminal after closing the second', async () => {
+    await typeLine(writeMarker('after-close.txt', '$global:labSession-$global:labOrder'));
+    await marker('after-close.txt', 'first-AB');
+  });
   await step('close window with idle terminal', closeWindow);
   await until('first PowerShell exit', async () => !isRunning(firstPid));
   await startSession();
   await typeLine(writeMarker('relaunch.txt', 'relaunch'));
   const relaunchPid = await marker('relaunch.txt', 'relaunch');
-  await typeLine('1..100000 | ForEach-Object { "LAB-M4-OUTPUT-$_" }');
-  await step('close window with active terminal output', closeWindow);
-  await until('PowerShell exit while producing output', async () => !isRunning(relaunchPid));
+  await step('wait for active terminal output before closing', async () => {
+    await typeLine(`Write-Output 'LAB-M4-OUTPUT-0'; ${writeMarker('output-start.txt', 'output-start')}; 1..2000 | ForEach-Object { "LAB-M4-OUTPUT-$_"; Start-Sleep -Milliseconds 20 }; ${writeMarker('output-end.txt', 'output-end')}`);
+    if (await marker('output-start.txt', 'output-start') !== relaunchPid) {
+      throw new Error('Output was started in a different PowerShell process');
+    }
+  });
+  await step('close window with active terminal output', async () => {
+    await closeWindow();
+    await until('PowerShell exit while producing output', async () => !isRunning(relaunchPid));
+    if (await readMarker('output-end.txt')) throw new Error('Output completed before the window closed');
+  });
   console.log('Windows WebDriver smoke passed: sessions, input ordering, Get-Date, close, relaunch and output cleanup');
 } catch (error) {
   console.error(`[webdriver] failed during ${stage}`, error);

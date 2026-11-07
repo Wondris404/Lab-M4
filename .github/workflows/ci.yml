@@ -77,3 +77,9 @@ jobs:
         run: |
           $env:TAURI_DRIVER = Join-Path $HOME '.cargo/bin/tauri-driver.exe'
           node scripts/windows-webdriver-smoke.mjs
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: lab-m4-webdriver-diagnostics
+          path: .lab-m4/webdriver-artifacts
+          if-no-files-found: ignore

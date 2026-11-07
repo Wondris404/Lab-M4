@@ -1,9 +1,20 @@
 import { spawn } from 'node:child_process';
 import { mkdir, mkdtemp, realpath } from 'node:fs/promises';
 import { isAbsolute, join, resolve } from 'node:path';
+import { pathToFileURL } from 'node:url';
 import { connectAgent } from './agent-rpc.mjs';
 
 const work = resolve('.lab-m4');
+const homes = join(work, 'agent-homes');
+
+export function agentHomeEnv(systemRoot, scratch, homeRoot) {
+  return {
+    SystemRoot: systemRoot, WINDIR: systemRoot, PATH: join(systemRoot, 'System32'),
+    USERPROFILE: scratch, HOME: scratch, APPDATA: join(scratch, 'roaming'),
+    LOCALAPPDATA: join(scratch, 'local'), CODEX_HOME: join(homeRoot, 'codex'),
+    GROK_HOME: join(homeRoot, 'grok'), TMP: scratch, TEMP: scratch,
+  };
+}
 
 async function executable(path) {
   if (!path || !isAbsolute(path) || !/\.exe$/i.test(path))
@@ -13,13 +24,9 @@ async function executable(path) {
 
 async function probe(host, provider, exe, systemRoot, signal) {
   const scratch = await mkdtemp(join(work, 'agent-preflight-'));
-  for (const name of ['roaming', 'local', 'codex', 'grok']) await mkdir(join(scratch, name));
-  const env = {
-    SystemRoot: systemRoot, WINDIR: systemRoot, PATH: join(systemRoot, 'System32'),
-    USERPROFILE: scratch, HOME: scratch, APPDATA: join(scratch, 'roaming'),
-    LOCALAPPDATA: join(scratch, 'local'), CODEX_HOME: join(scratch, 'codex'),
-    GROK_HOME: join(scratch, 'grok'), TMP: scratch, TEMP: scratch,
-  };
+  for (const name of ['roaming', 'local']) await mkdir(join(scratch, name));
+  for (const name of ['codex', 'grok']) await mkdir(join(homes, name), { recursive: true });
+  const env = agentHomeEnv(systemRoot, scratch, homes);
   const codex = provider === 'codex';
   const args = codex ? ['app-server'] : ['agent', '--no-leader', 'stdio'];
   signal.throwIfAborted();
@@ -77,7 +84,9 @@ async function main([host, codex, grok, ...extra]) {
   }
 }
 
-main(process.argv.slice(2)).catch((error) => {
-  console.error(error.message);
-  process.exitCode = 1;
-});
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+  main(process.argv.slice(2)).catch((error) => {
+    console.error(error.message);
+    process.exitCode = 1;
+  });
+}

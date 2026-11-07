@@ -17,7 +17,7 @@
     "usage": "node scripts/usage-cli.mjs",
     "orchestrator:fake": "node packages/orchestrator-core/src/cli.mjs",
     "orchestrator:preflight": "node packages/orchestrator-core/src/agent-preflight.mjs",
-    "test:orchestrator": "node --test packages/orchestrator-core/tests/lifecycle.test.mjs packages/orchestrator-core/tests/cli.test.mjs packages/orchestrator-core/tests/usage-ledger.test.mjs packages/orchestrator-core/tests/agent-rpc.test.mjs",
+    "test:orchestrator": "node --test packages/orchestrator-core/tests/lifecycle.test.mjs packages/orchestrator-core/tests/cli.test.mjs packages/orchestrator-core/tests/usage-ledger.test.mjs packages/orchestrator-core/tests/agent-rpc.test.mjs packages/orchestrator-core/tests/agent-preflight.test.mjs",
     "package:usage-sidecar": "node scripts/package-usage-sidecar.mjs"
   },
   "dependencies": {

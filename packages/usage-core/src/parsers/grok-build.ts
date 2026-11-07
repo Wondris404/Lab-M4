@@ -18,6 +18,8 @@ export interface GrokCursorState {
   seen: string[];
 }
 
+const AMBIGUOUS_EVENT = 'Grok Build: orientačný odhad. Zhodné záznamy sa počítajú všetky, takže súčet môže obsahovať replay (dvojité započítanie). Tieto riadky sa nepodpočítavajú.';
+
 /** With a pseudonymizer, persisted state contains no source session identifiers. */
 export function grokAccumulator(
   previous?: GrokCursorState,
@@ -34,6 +36,7 @@ export function grokAccumulator(
       event = obj(JSON.parse(line));
     } catch {
       result.warnings++;
+      result.partial = true;
       return;
     }
     const ctx = obj(event.ctx),
@@ -64,6 +67,7 @@ export function grokAccumulator(
       reasoningTokens > outputTokens
     ) {
       result.warnings++;
+      result.partial = true;
       return;
     }
     const fingerprint = createHash('sha256')
@@ -82,7 +86,14 @@ export function grokAccumulator(
         ]),
       )
       .digest('hex');
-    if (seen.has(fingerprint)) return;
+    // sid correlates context. Neither it nor this fingerprint establishes
+    // event identity. Preserve each physical record and disclose ambiguity.
+    if (seen.has(fingerprint)) {
+      result.warnings++;
+      result.partial = true;
+      result.countRisk = 'double-count';
+      result.warningDetails = [AMBIGUOUS_EVENT];
+    }
     seen.add(fingerprint);
     result.records.push({
       provider: 'grok-build',
@@ -135,6 +146,7 @@ export const grokBuildParser: Parser = {
       }
       result.warnings++;
       result.partial = true;
+      result.countRisk = 'under-count';
       if (error instanceof ZstdIntegrityError)
         result.warningDetails = ['Zstd checksum nesúhlasí; súbor bol vynechaný.'];
       else if (/\.zst$/i.test(path) && !(error instanceof ExpansionLimitError))

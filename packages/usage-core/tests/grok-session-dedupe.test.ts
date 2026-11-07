@@ -16,11 +16,13 @@ const usage = JSON.stringify({
   ctx: { loop_index: 1, prompt_tokens: 10, cached_prompt_tokens: 0, completion_tokens: 2, reasoning_tokens: 0 },
 });
 
-it('keeps identical-looking events when a trace is reassociated with a different session', async () => {
+it('preserves each record and reports ambiguous replays within each session', () => {
   const accumulator = grokAccumulator();
   for (const line of [context('first'), usage, usage, context('second'), usage, usage]) accumulator.consume(line);
-  expect(accumulator.result.records.map((record) => record.sessionId)).toEqual(['first', 'second']);
-  expect(accumulator.result.records.map((record) => record.inputTokens)).toEqual([10, 10]);
+  expect(accumulator.result.records.map((record) => record.sessionId)).toEqual(['first', 'first', 'second', 'second']);
+  expect(accumulator.result).toMatchObject({ partial: true, warnings: 2, countRisk: 'double-count' });
+  expect(accumulator.result.warningDetails?.[0]).toContain('orientačný odhad');
+  expect(accumulator.result.warningDetails?.[0]).toContain('dvojité započítanie');
 });
 
 it('invalidates a cursor created with the previous deduplication semantics', async () => {
@@ -31,9 +33,8 @@ it('invalidates a cursor created with the previous deduplication semantics', asy
   const fresh = await scanCached(grokBuildParser, source, cache);
   expect(fresh.records).toHaveLength(2);
 
-  // Simulate an otherwise valid, unchanged v2 cursor created by the old parser.
-  // A v3 scan must not reuse this stale result even if file metadata matches.
-  const oldKey = createHash('sha256').update(`grok-build\0${await realpath(source)}`).digest('hex') + ':v2';
+  // Simulate an otherwise valid unchanged v4 cursor created by the old parser.
+  const oldKey = createHash('sha256').update(`grok-build\0${await realpath(source)}`).digest('hex') + ':v4';
   const db = await new Promise<sqlite3.Database>((resolve, reject) => {
     const instance = new sqlite3.Database(cache, (error) => error ? reject(error) : resolve(instance));
   });

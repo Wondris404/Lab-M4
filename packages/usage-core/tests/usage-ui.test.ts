@@ -172,6 +172,7 @@ describe('usage view data', () => {
     expect(await fetchUsage([], request, () => true)).toEqual({
       records: [],
       warnings: [],
+      partial: false,
     });
     expect(
       await fetchUsage(
@@ -179,7 +180,7 @@ describe('usage view data', () => {
         request,
         () => false,
       ),
-    ).toEqual({ records: [], warnings: [] });
+    ).toEqual({ records: [], warnings: [], partial: false });
     const invalid = vi.fn(async () => ({
       result: { totalRecords: 2, records: [], warnings: [] },
     })) as unknown as Request;

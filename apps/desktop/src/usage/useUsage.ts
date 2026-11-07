@@ -31,6 +31,7 @@ export async function fetchUsage(
 ) {
   const records: UsageItem[] = [];
   const warnings: string[] = [];
+  let partial = false;
   const byId = new Map(sources.map((source) => [source.id, source]));
   if (byId.size !== sources.length) throw new Error('Neplatný zoznam zdrojov Usage.');
   for (const source of sources) {
@@ -54,7 +55,7 @@ export async function fetchUsage(
     let total = 0;
     let snapshot: string | undefined;
     do {
-      if (!active()) return { records, warnings };
+      if (!active()) return { records, warnings, partial };
       const page = await request<Page>('usage_scan', {
         id: source.id,
         force: false,
@@ -79,10 +80,12 @@ export async function fetchUsage(
         warnings.push(
           ...data.warnings.map((warning) => `${source.agent}: ${warning}`),
         );
-        if (data.status !== 'ok')
+        if (data.status !== 'ok') {
+          partial = true;
           warnings.push(
             `${source.agent}: čiastočné alebo nepodporované údaje.`,
           );
+        }
       }
       if (data.snapshotId !== snapshot || data.totalRecords !== total)
         throw new Error('Zdroj Usage sa počas stránkovania zmenil; obnovte údaje.');
@@ -94,13 +97,14 @@ export async function fetchUsage(
       offset += data.records.length;
     } while (offset < total);
   }
-  return { records, warnings };
+  return { records, warnings, partial };
 }
 
 export function useUsage() {
   const [sources, setSources] = useState<Source[]>([]);
   const [records, setRecords] = useState<UsageItem[]>([]);
   const [warnings, setWarnings] = useState<string[]>([]);
+  const [partial, setPartial] = useState(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string>();
   const generation = useRef(0);
@@ -118,6 +122,7 @@ export function useUsage() {
       setSources(nextSources);
       setRecords(result.records);
       setWarnings(result.warnings);
+      setPartial(result.partial);
     } catch (reason) {
       if (active()) setError(String(reason));
     } finally {
@@ -134,13 +139,13 @@ export function useUsage() {
 
   const addSource = useCallback(
     async (agent: string, folder: boolean) => {
-      setError(undefined);
       try {
         const selected = await invoke<Source | null>('usage_select_source', {
           agent,
           folder,
         });
         if (selected) await refresh();
+        else setError(undefined);
       } catch (reason) {
         setError(String(reason));
       }
@@ -148,5 +153,5 @@ export function useUsage() {
     [refresh],
   );
 
-  return { sources, records, warnings, loading, error, refresh, addSource };
+  return { sources, records, warnings, partial, loading, error, refresh, addSource };
 }

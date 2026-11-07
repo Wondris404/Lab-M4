@@ -33,9 +33,9 @@ Tento krok obsahuje dev spúšťanie; produkčné servírovanie webu ešte nie j
 ## Nastavenia a výpočty
 
 config/settings.example.json obsahuje iba zástupné hodnoty. Všetci agenti sú vypnutí,
-cesty sú prázdne, kurz 1 a ceny pri REPLACE_WITH_MODEL sú iba ukážka štruktúry,
-nie reálny kurz ani cenník. Pred použitím treba usdToEur nastaviť na vlastný kurz. Vlastný config/settings.json je v .gitignore.
-Server načíta config/settings.json. Skopírujte settings.example.json na settings.json a zapnite len vybraných agentov s ich cestami. Codex prijíma cestu ku .codex, k sessions, archived_sessions alebo ku konkrétnemu JSONL/JSONL.zst. Grok prijíma cestu k unified.jsonl a OpenCode k opencode.db. Antigravity je zatiaľ stub. Databáza sa číta v režime immutable, ktorý nemusí obsahovať nezapísaný WAL.
+cesty sú prázdne a ceny pri REPLACE_WITH_MODEL sú iba ukážka štruktúry cenníka.
+Výsledky používajú USD. Staršie nastavenie usdToEur sa načíta kvôli kompatibilite a pri výpočte sa nepoužíva. Vlastný config/settings.json je v .gitignore.
+Server načíta config/settings.json. Skopírujte settings.example.json na settings.json a zapnite len vybraných agentov s ich cestami. Codex prijíma cestu ku .codex, k sessions, archived_sessions alebo ku konkrétnemu JSONL/JSONL.zst. Grok prijíma cestu k unified.jsonl a OpenCode k opencode.db. Antigravity je zatiaľ stub. Čítanie OpenCode SQLite je vypnuté, kým neexistuje snapshot bez zápisu do zdroja.
 
 Ceny sú v USD za milión tokenov, osobitne pre standard a fast. Neznámy model alebo
 chýbajúca rýchlostná sadzba vracia null. Cached input je súčasť inputTokens a reasoning

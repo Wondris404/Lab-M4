@@ -17,6 +17,8 @@ export interface ParseResult {
   mismatchFields: Record<string, number>;
   warningDetails?: string[];
   partial?: boolean;
+  /** Why an uncertain total must not be treated as an invoice. */
+  countRisk?: 'double-count' | 'under-count' | 'none';
 }
 export const emptyResult = (): ParseResult => ({
   records: [],

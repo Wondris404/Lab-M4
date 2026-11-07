@@ -3,6 +3,22 @@ import { estimateCost } from '../pricing/index.js';
 import { parserRegistry, type ParseResult } from '../parsers/index.js';
 import type { Provider } from '../core/types.js';
 
+export function describeAccounting(results: Array<ParseResult | undefined>) {
+  const present = results.filter((result): result is ParseResult => Boolean(result));
+  const doubleCount = present.some((result) => result.countRisk === 'double-count');
+  const underCount = present.some((result) => result.countRisk === 'under-count' || (result.partial && result.countRisk !== 'double-count'));
+  const uncertain = doubleCount || underCount || present.some((result) => result.partial);
+  return {
+    kind: uncertain ? 'orientational-estimate' as const : 'exact' as const,
+    replay: doubleCount,
+    doubleCount,
+    underCount,
+    note: uncertain
+      ? 'Orientačný odhad, nie fakturácia. Replay zhodných Grok riadkov sa môže započítať dvakrát. Chýbajúci alebo poškodený zdroj sa podpočíta.'
+      : 'Súčet neoznačuje replay, dvojité započítanie ani podpočítanie.',
+  };
+}
+
 export async function summarize(settings: Settings) {
   const agents: Partial<Record<Provider, ParseResult>> = {};
   const errors: Partial<Record<Provider, string>> = {};
@@ -54,7 +70,8 @@ export async function summarize(settings: Settings) {
           outputTokens: records.reduce((n, r) => n + r.outputTokens, 0),
           reasoningTokens: records.reduce((n, r) => n + r.reasoningTokens, 0),
           costUsd,
-          costEur: costUsd === null ? null : costUsd * settings.usdToEur,
+          // Keep the legacy response shape until there is a verified FX rate.
+          costEur: null,
           costIncomplete:
             incomplete || known.length !== records.length,
           costSource: known.length
@@ -62,6 +79,7 @@ export async function summarize(settings: Settings) {
               ? 'odhad'
               : 'skutočné'
             : 'neznáme',
+          accounting: describeAccounting(Object.values(agents)),
         }
       : null,
     warnings: Object.fromEntries(

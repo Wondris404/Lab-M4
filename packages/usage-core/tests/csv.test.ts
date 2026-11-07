@@ -11,6 +11,14 @@ it('escapes spreadsheet formulas and leaves unknown cost empty', () => {
   expect(csv).toContain('""\r\n');
 });
 
+it('keeps partial scan status and price provenance in a portable export', () => {
+  const row = { timestamp: '2025-01-01', agent: 'codex', model: 'm', session: 'example', input: 10, output: 2, cached: 0, reasoning: 0, warnings: [] };
+  const csv = usageCsv([row, { ...row, costUsd: 0, costSource: 'odhad' }], true);
+  expect(csv).toContain('scan_status;cost_status;accounting;cost_usd');
+  expect(csv).toContain('"partial";"unknown";"orientational-estimate:replay-or-double-count-or-under-count";""');
+  expect(csv).toContain('"partial";"estimated";"orientational-estimate:replay-or-double-count-or-under-count";"0"');
+});
+
 it('quotes semicolons, quotes, and line breaks and escapes formula prefixes', () => {
   const base = { timestamp: '2025-01-01', agent: 'codex' as const, session: 'example', input: 10, output: 2, cached: 3, reasoning: 1, warnings: [] };
   const csv = usageCsv([

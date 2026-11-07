@@ -165,5 +165,6 @@ export function opencodeReadUnavailable(): ParseResult {
     warnings: 1,
     warningDetails: ['OpenCode je dočasne nedostupný: chýba bezpečný SQLite snapshot bez zápisu do zdroja.'],
     partial: true,
+    countRisk: 'under-count',
   };
 }

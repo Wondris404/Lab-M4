@@ -30,6 +30,7 @@ export function scanSnapshotId(parsed: ParseResult): string {
   const hash = createHash('sha256');
   hashField(hash, 'lab-m4-usage-snapshot-v1');
   hashField(hash, Boolean(parsed.partial));
+  hashField(hash, parsed.countRisk);
   hashField(hash, parsed.warnings);
   const warningDetails = parsed.warningDetails ?? [];
   hashField(hash, warningDetails.length);
@@ -87,7 +88,10 @@ export async function handleRequest(input: unknown) {
   return {
     version: 1, requestId: request.requestId,
     result: {
-      status: parsed.partial ? 'partial' : 'ok', snapshotId: scanSnapshotId(parsed), totalRecords: parsed.records.length, offset, warnings: [
+      status: parsed.partial ? 'partial' : 'ok',
+      countRisk: parsed.countRisk ?? 'none',
+      accounting: parsed.partial || parsed.countRisk ? 'orientational-estimate' : 'exact',
+      snapshotId: scanSnapshotId(parsed), totalRecords: parsed.records.length, offset, warnings: [
         ...(parsed.warnings ? [`${parsed.warnings} parser warnings`] : []),
         ...(parsed.warningDetails ?? []),
         ...Object.entries(parsed.mismatchFields).map(([kind, count]) => `${kind}: ${count}`),
@@ -95,7 +99,8 @@ export async function handleRequest(input: unknown) {
       records: parsed.records.slice(offset, offset + limit).map((r) => ({
         agent: r.provider, model: r.model, session: r.sessionId, sessionKnown: r.sessionKnown !== false, timestamp: r.timestamp,
         input: r.inputTokens, output: r.outputTokens, cached: r.cachedInputTokens,
-        reasoning: r.reasoningTokens, ...(r.costUsd !== undefined && { costUsd: r.costUsd }), warnings: r.warnings ?? [],
+        reasoning: r.reasoningTokens, costSource: r.costSource,
+        ...(r.costUsd !== undefined && { costUsd: r.costUsd }), warnings: r.warnings ?? [],
       })),
     },
   };

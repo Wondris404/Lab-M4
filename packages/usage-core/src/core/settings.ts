@@ -31,7 +31,8 @@ export const settingsSchema = z
         antigravity: agentSchema,
       })
       .strict(),
-    usdToEur: z.number().finite().positive(),
+    // Accept old settings files. This number had no FX source or date.
+    usdToEur: z.number().finite().positive().optional(),
     priceTable: z.record(
       z
         .object({

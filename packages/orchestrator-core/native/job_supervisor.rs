@@ -4,17 +4,24 @@
 #![cfg(windows)]
 
 use std::ffi::{c_void, OsStr};
+use std::fs::File;
 use std::io;
 use std::mem::{size_of, zeroed};
 use std::os::windows::ffi::OsStrExt;
+use std::os::windows::io::{AsRawHandle, FromRawHandle};
 use std::path::Path;
 use std::ptr::{null, null_mut};
 use std::thread::sleep;
 use std::time::{Duration, Instant};
 
 type Handle = *mut c_void;
-const CREATE_SUSPENDED: u32 = 4;
 const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+const CREATE_UNICODE_ENVIRONMENT: u32 = 0x400;
+const EXTENDED_STARTUPINFO_PRESENT: u32 = 0x0008_0000;
+const STARTF_USESTDHANDLES: u32 = 0x100;
+const HANDLE_FLAG_INHERIT: u32 = 1;
+const PROC_THREAD_ATTRIBUTE_HANDLE_LIST: usize = 0x0002_0002;
+const PROC_THREAD_ATTRIBUTE_JOB_LIST: usize = 0x0002_000d;
 const KILL_ON_CLOSE: u32 = 0x2000;
 const EXTENDED_LIMIT_INFORMATION: u32 = 9;
 const BASIC_ACCOUNTING_INFORMATION: u32 = 1;
@@ -41,6 +48,11 @@ struct StartupInfoW {
     stdin: Handle,
     stdout: Handle,
     stderr: Handle,
+}
+#[repr(C)]
+struct StartupInfoExW {
+    startup: StartupInfoW,
+    attributes: *mut c_void,
 }
 #[repr(C)]
 struct ProcessInformation {
@@ -101,9 +113,26 @@ extern "system" {
         len: u32,
         returned: *mut u32,
     ) -> i32;
-    fn AssignProcessToJobObject(job: Handle, process: Handle) -> i32;
     fn IsProcessInJob(process: Handle, job: Handle, result: *mut i32) -> i32;
     fn TerminateJobObject(job: Handle, code: u32) -> i32;
+    fn CreatePipe(read: *mut Handle, write: *mut Handle, attrs: *const c_void, size: u32) -> i32;
+    fn SetHandleInformation(handle: Handle, mask: u32, flags: u32) -> i32;
+    fn InitializeProcThreadAttributeList(
+        list: *mut c_void,
+        count: u32,
+        flags: u32,
+        size: *mut usize,
+    ) -> i32;
+    fn UpdateProcThreadAttribute(
+        list: *mut c_void,
+        flags: u32,
+        key: usize,
+        value: *const c_void,
+        size: usize,
+        previous: *mut c_void,
+        returned: *mut usize,
+    ) -> i32;
+    fn DeleteProcThreadAttributeList(list: *mut c_void);
     fn CreateProcessW(
         app: *const u16,
         command: *mut u16,
@@ -116,8 +145,6 @@ extern "system" {
         startup: *mut StartupInfoW,
         information: *mut ProcessInformation,
     ) -> i32;
-    fn ResumeThread(thread: Handle) -> u32;
-    fn TerminateProcess(process: Handle, code: u32) -> i32;
     fn WaitForSingleObject(handle: Handle, millis: u32) -> u32;
     fn CloseHandle(handle: Handle) -> i32;
 }
@@ -180,8 +207,89 @@ fn quote(value: &OsStr) -> io::Result<Vec<u16>> {
     Ok(out)
 }
 
+fn pipe() -> io::Result<(File, File)> {
+    let (mut reader, mut writer) = (null_mut(), null_mut());
+    check(unsafe { CreatePipe(&mut reader, &mut writer, null(), 0) })?;
+    // Successful CreatePipe returns two owned handles, initially non-inheritable.
+    Ok(unsafe { (File::from_raw_handle(reader), File::from_raw_handle(writer)) })
+}
+
+fn environment_block(environment: &[(&str, &OsStr)]) -> io::Result<Vec<u16>> {
+    let mut entries = Vec::with_capacity(environment.len());
+    for &(name, value) in environment {
+        if name.is_empty() || !name.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'_') {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "Invalid environment name",
+            ));
+        }
+        entries.push((name.to_ascii_uppercase(), value));
+    }
+    entries.sort_unstable_by(|a, b| a.0.cmp(&b.0));
+    if entries.windows(2).any(|pair| pair[0].0 == pair[1].0) {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "Duplicate environment name",
+        ));
+    }
+    let mut block = Vec::new();
+    for (name, value) in entries {
+        block.extend(name.encode_utf16());
+        block.push(b'=' as u16);
+        block.extend(wide(value)?);
+    }
+    if block.is_empty() {
+        block.push(0);
+    }
+    block.push(0);
+    Ok(block)
+}
+
+struct Attributes(Vec<usize>);
+impl Attributes {
+    fn new() -> io::Result<Self> {
+        let mut size = 0;
+        unsafe { InitializeProcThreadAttributeList(null_mut(), 2, 0, &mut size) };
+        if size == 0 {
+            return Err(io::Error::last_os_error());
+        }
+        let mut storage = vec![0usize; size.div_ceil(size_of::<usize>())];
+        check(unsafe {
+            InitializeProcThreadAttributeList(storage.as_mut_ptr().cast(), 2, 0, &mut size)
+        })?;
+        Ok(Self(storage))
+    }
+    fn ptr(&mut self) -> *mut c_void {
+        self.0.as_mut_ptr().cast()
+    }
+    fn set(&mut self, key: usize, handles: &[Handle]) -> io::Result<()> {
+        check(unsafe {
+            UpdateProcThreadAttribute(
+                self.ptr(),
+                0,
+                key,
+                handles.as_ptr().cast(),
+                std::mem::size_of_val(handles),
+                null_mut(),
+                null_mut(),
+            )
+        })
+    }
+}
+impl Drop for Attributes {
+    fn drop(&mut self) {
+        unsafe { DeleteProcThreadAttributeList(self.ptr()) };
+    }
+}
+
+pub(crate) struct ChildPipes {
+    pub(crate) stdin: File,
+    pub(crate) stdout: File,
+    pub(crate) stderr: File,
+}
+
 /// Owns exactly one job and its initial process. Dropping it closes the last
-/// supervisor job handle, triggering kill-on-close. No handles are inherited.
+/// supervisor job handle, triggering kill-on-close.
 pub(crate) struct Supervised {
     job: Owned,
     process: Owned,
@@ -189,8 +297,13 @@ pub(crate) struct Supervised {
 impl Supervised {
     /// Low-level lifecycle only. Callers must separately enforce authorization,
     /// workspace/network boundaries, input redaction and agent protocol policy.
-    /// stdio is intentionally not wired; this primitive is not a live adapter.
-    pub(crate) fn spawn(exe: &Path, args: &[&OsStr], cwd: &Path) -> io::Result<Self> {
+    /// The caller supplies the complete child environment and owns pipe I/O deadlines.
+    pub(crate) fn spawn(
+        exe: &Path,
+        args: &[&OsStr],
+        cwd: &Path,
+        environment: &[(&str, &OsStr)],
+    ) -> io::Result<(Self, ChildPipes)> {
         if !exe.is_absolute()
             || !cwd.is_absolute()
             || !exe
@@ -204,6 +317,7 @@ impl Supervised {
         }
         let app = wide(exe.as_os_str())?;
         let directory = wide(cwd.as_os_str())?;
+        let mut environment = environment_block(environment)?;
         let mut command = quote(exe.as_os_str())?;
         for arg in args {
             command.push(b' ' as u16);
@@ -221,8 +335,31 @@ impl Supervised {
                 size_of::<ExtendedLimits>() as u32,
             )
         })?;
-        let mut startup: StartupInfoW = unsafe { zeroed() };
-        startup.cb = size_of::<StartupInfoW>() as u32;
+        let (child_in, stdin) = pipe()?;
+        let (stdout, child_out) = pipe()?;
+        let (stderr, child_err) = pipe()?;
+        let child_handles = [
+            child_in.as_raw_handle(),
+            child_out.as_raw_handle(),
+            child_err.as_raw_handle(),
+        ];
+        for handle in child_handles {
+            check(unsafe {
+                SetHandleInformation(handle, HANDLE_FLAG_INHERIT, HANDLE_FLAG_INHERIT)
+            })?;
+        }
+        let jobs = [job.0];
+        let mut attributes = Attributes::new()?;
+        attributes.set(PROC_THREAD_ATTRIBUTE_HANDLE_LIST, &child_handles)?;
+        // Atomic assignment also avoids a suspended orphan if the host dies in spawn.
+        attributes.set(PROC_THREAD_ATTRIBUTE_JOB_LIST, &jobs)?;
+        let mut startup: StartupInfoExW = unsafe { zeroed() };
+        startup.startup.cb = size_of::<StartupInfoExW>() as u32;
+        startup.startup.flags = STARTF_USESTDHANDLES;
+        startup.startup.stdin = child_handles[0];
+        startup.startup.stdout = child_handles[1];
+        startup.startup.stderr = child_handles[2];
+        startup.attributes = attributes.ptr();
         let mut info: ProcessInformation = unsafe { zeroed() };
         check(unsafe {
             CreateProcessW(
@@ -230,37 +367,24 @@ impl Supervised {
                 command.as_mut_ptr(),
                 null_mut(),
                 null_mut(),
-                0,
-                CREATE_SUSPENDED | CREATE_NO_WINDOW,
-                null_mut(),
+                1,
+                CREATE_NO_WINDOW | CREATE_UNICODE_ENVIRONMENT | EXTENDED_STARTUPINFO_PRESENT,
+                environment.as_mut_ptr().cast(),
                 directory.as_ptr(),
-                &mut startup,
+                &mut startup.startup,
                 &mut info,
             )
         })?;
         let process = Owned::new(info.process)?;
-        let thread = match Owned::new(info.thread) {
-            Ok(handle) => handle,
-            Err(error) => {
-                unsafe {
-                    TerminateProcess(process.0, 1);
-                    WaitForSingleObject(process.0, 5_000);
-                }
-                return Err(error);
-            }
-        };
-        if let Err(error) = check(unsafe { AssignProcessToJobObject(job.0, process.0) }) {
-            // This exact process is still suspended and was created by this call.
-            unsafe {
-                TerminateProcess(process.0, 1);
-                WaitForSingleObject(process.0, 5_000);
-            }
-            return Err(error);
-        }
-        if unsafe { ResumeThread(thread.0) } == u32::MAX {
-            return Err(io::Error::last_os_error());
-        }
-        Ok(Self { job, process })
+        let _thread = Owned::new(info.thread)?;
+        Ok((
+            Self { job, process },
+            ChildPipes {
+                stdin,
+                stdout,
+                stderr,
+            },
+        ))
     }
     pub(crate) fn running(&self) -> io::Result<bool> {
         match unsafe { WaitForSingleObject(self.process.0, 0) } {

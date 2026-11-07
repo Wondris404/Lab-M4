@@ -400,6 +400,7 @@
 - `pnpm --filter wraith exec tauri build --ci --bundles nsis` exit 0. Inštalátor `apps/desktop/src-tauri/target/release/bundle/nsis/Lab-M4_0.2.0_x64-setup.exe`, 30 780 068 bajtov, SHA-256 `AE618BA4E48FBF7BF4A602BAE3E3B2CF42131F70A0E8BFFB6CEA50CEC7104645`, zo stromu `84a9e4f`. Nie je to starý balík z `5e0eee4`.
 - `windows-installed-usage-smoke.ps1` exit 1: vyžaduje disposable GitHub-hosted runner a pred inštaláciou skončil. Používateľova aplikácia sa neinštalovala. Čistá inštalácia a GUI na `84a9e4f` ostávajú NEOVERENÉ.
 - Živý Codex → Grok Build cyklus ostáva BLOCKED. Iný model sa nenasadil. Push sa nerobil.
+- Na `4e128295` som dvakrát spustil `node scripts/windows-webdriver-smoke.mjs` proti čerstvému debug `wraith.exe`, s `tauri-driver` 2.1.0 a EdgeDriver 156.0.4314.58. Oba behy exit 1: `POST /session` TimeoutError a `hyper::Error(IncompleteMessage)` ešte pred terminálom. GUI na tomto SHA je NEOVERENÉ. Čistá inštalácia ostáva NEOVERENÉ, lebo inštalačný smoke skončil pred inštaláciou požiadavkou na GitHub-hosted runner.
 
 - Celý beh na `1eb061f` odhalil náhodný pád `grok-cursor` (104/105, exit 1): dočasná cesta mala suffix `KEYJLz`, ktorý blokuje zámerná kontrola citlivých názvov. Syntetické fixture používajú hexadecimálny UUID suffix. Kontrola zdrojových ciest v aplikácii zostala zachovaná.
 

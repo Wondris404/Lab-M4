@@ -19,7 +19,6 @@ for (const name of ['SystemRoot', 'WINDIR', 'SystemDrive', 'PATH', 'PATHEXT', 'C
 Object.assign(env, {
   USERPROFILE: join(scratch, 'profile'), APPDATA: join(scratch, 'appdata'),
   LOCALAPPDATA: join(scratch, 'local'), TEMP: scratch, TMP: scratch, LAB_E2E_DIR: scratch,
-  WEBVIEW2_USER_DATA_FOLDER: join(scratch, 'webview'),
 });
 const driverArgs = process.env.TAURI_NATIVE_DRIVER ? ['--native-driver', process.env.TAURI_NATIVE_DRIVER] : [];
 const driver = spawn(driverPath, driverArgs, { env, stdio: ['ignore', 'inherit', 'inherit'], windowsHide: true });

@@ -489,6 +489,12 @@
 - WebView2 je teraz `157.0.4341.42`. Probe bez `TAURI_WEBVIEW_AUTOMATION`, teda cestou ako `40d326d`, dal na príkazový riadok `--edge-webview-switches=--remote-debugging-port`. Port `9333` neodpovedal a `DevToolsActivePort` nevznikol.
 - Jeden beh `node scripts/windows-webdriver-smoke.mjs` pri HEAD `f8446b6`, debug `wraith.exe`, EdgeDriver `157.0.4341.42` zhodný s runtime: exit 1, `POST /session` TimeoutError, `hyper::Error(IncompleteMessage)`. Po behu `DevToolsActivePort` nebol v `wraith.exe.WebView2` ani v `Temp\lab-m4-webdriver-*`. K session, Get-Date ani zatvoreniu sa test nedostal. Kód som kvôli tomu nemenil: runtime port nezapíše ani na pôvodnej ceste.
 
+## 2026-11-07 22:10 +01:00 (Europe/Bratislava) – Odovzdanie na 23bedc9
+- HEAD `23bedc9fa69b8e0b2f21aa5dd56cb616a1ecef7c`. `git diff --stat bbf7c06870da027120df4d1ea236ae7ebd9054f1 HEAD` je iba `docs/DENNIK.md`. Inštalátor ostáva z `bbf7c06`: `Lab-M4_0.2.0_x64-setup.exe`, 30 761 705 bajtov, SHA-256 `0465D164A7A526B377D68EB0E58F4DEC0B13B327B23376D1D8B051B9A221AA09`.
+- Jedna neinteraktívna kontrola bez kopírovania credential súborov. `CODEX_HOME` aj `GROK_HOME` boli prázdne `.lab-m4/agent-homes/codex` a `grok`. `codex login status` exit 1, text `Not logged in`. `grok.exe -p ping --output-format json --disable-web-search --no-plan --max-turns 1` exit 1, text `Not signed in`. Živý cyklus je BLOCKED na tomto hlásení.
+- Čistá inštalácia ostáva NEOVERENÉ. Lokálne `windows-installed-usage-smoke.ps1` končí pred inštaláciou: `Installer smoke must run on a disposable GitHub-hosted runner.`
+- Push sa nerobil. Report: `.lab-m4/reports/stav-2026-11-07-2210.md`.
+
 - Celý beh na `1eb061f` odhalil náhodný pád `grok-cursor` (104/105, exit 1): dočasná cesta mala suffix `KEYJLz`, ktorý blokuje zámerná kontrola citlivých názvov. Syntetické fixture používajú hexadecimálny UUID suffix. Kontrola zdrojových ciest v aplikácii zostala zachovaná.
 
 ## 2026-11-07 – Regresie z review Usage

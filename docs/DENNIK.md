@@ -502,6 +502,11 @@
 - Na `dcf2f27`: `package`, `lint`, `typecheck`, `pnpm test` 111/111 a `pnpm test:orchestrator` 22/22 exit 0. `cargo fmt` a `clippy -D warnings` exit 0. Prvé dva `cargo test` exit 101, LNK1104. Ďalší beh exit 0: lib 17 passed, 0 failed. Ignorovaný ConPTY exit 0, 1 passed, 0,64 s. `cargo test -- close` exit 0, 6 passed. Natívny transport exit 0.
 - Čistá inštalácia ostáva NEOVERENÉ. GUI ostáva NEOVERENÉ. Push sa nerobil. Report: `.lab-m4/reports/stav-2026-11-07-2255.md`.
 
+## 2026-11-07 23:05 +01:00 (Europe/Bratislava) – Dva GUI smokes na 38b089a
+- Kód je `dcf2f27`, HEAD pri behu `38b089ab7d2cc19a7ea77e5a70fac6e5a124c8c7`, rozdiel len `docs/DENNIK.md`. Debug `wraith.exe` 2026-11-07 22:52:37, 16 670 208 bajtov. WebView2 aj EdgeDriver `157.0.4341.42`.
+- `node scripts/windows-webdriver-smoke.mjs` dvakrát, exit 1 a exit 1. Oba skončili na `POST /session` TimeoutError a `hyper::Error(IncompleteMessage)`. K reláciám, `Get-Date`, poradiu, zatvoreniu, relaunch ani blokovanému writeru sa test nedostal.
+- `DevToolsActivePort` po oboch behoch chýba. `wraith.exe`, `tauri-driver.exe` a `msedgedriver.exe` neostali. GUI ostáva NEOVERENÉ. Ďalší rovnaký beh nespúšťam.
+
 - Celý beh na `1eb061f` odhalil náhodný pád `grok-cursor` (104/105, exit 1): dočasná cesta mala suffix `KEYJLz`, ktorý blokuje zámerná kontrola citlivých názvov. Syntetické fixture používajú hexadecimálny UUID suffix. Kontrola zdrojových ciest v aplikácii zostala zachovaná.
 
 ## 2026-11-07 – Regresie z review Usage

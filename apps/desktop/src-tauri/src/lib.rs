@@ -924,6 +924,7 @@ fn save_sessions(app: AppHandle, state: Value) -> Result<(), String> {
 /// `TAURI_WEBVIEW_AUTOMATION` is set by tauri-driver. wry treats that flag as a no-op on
 /// Windows, and WebView2 150+ does not open a DevTools port from
 /// `WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS` alone. The port stays closed for a normal launch.
+#[cfg_attr(not(feature = "webdriver"), allow(dead_code))]
 pub(crate) fn automation_browser_args(
     webview_automation: Option<&str>,
     legacy_automation: Option<&str>,
@@ -947,6 +948,7 @@ pub(crate) fn automation_browser_args(
     Some(with_required_disabled_features(&args))
 }
 
+#[cfg_attr(not(feature = "webdriver"), allow(dead_code))]
 fn with_required_disabled_features(args: &str) -> String {
     const REQUIRED: [&str; 3] = ["msWebOOUI", "msPdfOOUI", "msSmartScreenProtection"];
     let mut kept = Vec::new();
@@ -973,6 +975,7 @@ fn with_required_disabled_features(args: &str) -> String {
     kept.join(" ")
 }
 
+#[cfg_attr(not(feature = "webdriver"), allow(dead_code))]
 pub(crate) fn automation_data_dir(
     webview_automation: Option<&str>,
     legacy_automation: Option<&str>,
@@ -989,10 +992,13 @@ pub(crate) fn automation_data_dir(
     Some(path)
 }
 
+#[cfg_attr(not(feature = "webdriver"), allow(dead_code))]
 fn automation_requested(webview_automation: Option<&str>, legacy_automation: Option<&str>) -> bool {
-    webview_automation == Some("true") || legacy_automation == Some("true")
+    cfg!(feature = "webdriver")
+        && (webview_automation == Some("true") || legacy_automation == Some("true"))
 }
 
+#[cfg_attr(not(feature = "webdriver"), allow(dead_code))]
 fn remote_debugging_port(extra: &str) -> Option<&str> {
     extra.split_whitespace().find_map(|token| {
         let value = token
@@ -1007,6 +1013,15 @@ fn remote_debugging_port(extra: &str) -> Option<&str> {
 }
 
 fn open_configured_window(app: &tauri::App) -> Result<(), std::io::Error> {
+    #[cfg(all(windows, not(feature = "webdriver")))]
+    for name in [
+        "TAURI_WEBVIEW_AUTOMATION",
+        "TAURI_AUTOMATION",
+        "WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS",
+    ] {
+        // WebView2 also reads arguments directly from the environment.
+        std::env::remove_var(name);
+    }
     let config = app
         .config()
         .app
@@ -1014,9 +1029,10 @@ fn open_configured_window(app: &tauri::App) -> Result<(), std::io::Error> {
         .first()
         .cloned()
         .ok_or_else(|| std::io::Error::other("Lab-M4 window config is missing"))?;
+    #[allow(unused_mut)]
     let mut builder = tauri::WebviewWindowBuilder::from_config(app.handle(), &config)
         .map_err(|error| std::io::Error::other(error.to_string()))?;
-    #[cfg(windows)]
+    #[cfg(all(windows, feature = "webdriver"))]
     {
         let webview_automation = std::env::var("TAURI_WEBVIEW_AUTOMATION").ok();
         let legacy_automation = std::env::var("TAURI_AUTOMATION").ok();
@@ -1098,6 +1114,7 @@ pub fn run() {
 mod tests {
     use super::{automation_browser_args, automation_data_dir, Utf8OutputDecoder};
 
+    #[cfg(feature = "webdriver")]
     #[test]
     fn webdriver_port_is_enabled_only_for_an_automation_session() {
         assert!(automation_browser_args(None, None, None).is_none());
@@ -1129,6 +1146,7 @@ mod tests {
         assert_eq!(kept.matches("--remote-debugging-port=").count(), 1);
     }
 
+    #[cfg(feature = "webdriver")]
     #[test]
     fn automation_profile_accepts_only_an_absolute_driver_folder() {
         let absolute = std::env::temp_dir();
@@ -1140,6 +1158,18 @@ mod tests {
         assert!(automation_data_dir(None, None, Some(text)).is_none());
         assert!(automation_data_dir(Some("true"), None, Some("relative\\profile")).is_none());
         assert!(automation_data_dir(Some("true"), None, Some("  ")).is_none());
+    }
+
+    #[cfg(not(feature = "webdriver"))]
+    #[test]
+    fn production_ignores_automation_environment_values() {
+        assert!(automation_browser_args(
+            Some("true"),
+            Some("true"),
+            Some("--remote-debugging-port=9333")
+        )
+        .is_none());
+        assert!(automation_data_dir(Some("true"), Some("true"), Some("C:\\test")).is_none());
     }
 
     #[cfg(windows)]

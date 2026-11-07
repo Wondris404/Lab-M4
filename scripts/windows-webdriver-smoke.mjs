@@ -89,12 +89,18 @@ async function click(selector, index = 0) {
 }
 async function typeLine(line) {
   await click('.session-view.active .xterm-screen');
-  const actions = [...line, '\uE007'].flatMap((value) => [
+  const actions = [...line].flatMap((value) => [
     { type: 'keyDown', value }, { type: 'keyUp', value },
   ]);
   await request('POST', endpoint('/actions'), { actions: [{ type: 'key', id: 'keyboard', actions }] }, 30_000);
   await request('DELETE', endpoint('/actions'));
+  // A separate action tick releases the text keyboard state before Return.
+  await request('POST', endpoint('/actions'), { actions: [{ type: 'key', id: 'keyboard', actions: [
+    { type: 'keyDown', value: '\uE007' }, { type: 'keyUp', value: '\uE007' },
+  ] }] });
+  await request('DELETE', endpoint('/actions'));
 }
+
 async function readMarker(name) {
   try { return (await readFile(join(scratch, name), 'utf8')).replace(/^\uFEFF/, '').trim(); }
   catch (error) { if (error.code === 'ENOENT') return ''; throw error; }
@@ -122,6 +128,9 @@ async function startSession() {
       script: 'return typeof window.__TAURI_INTERNALS__?.invoke === "function";', args: [],
     });
     if (!available) throw new Error('Tauri invoke bridge is unavailable');
+    await request('POST', endpoint('/execute/sync'), {
+      script: `window.labKeyTrace = []; for (const type of ['keydown','keyup','beforeinput','input']) document.addEventListener(type, e => { window.labKeyTrace.push({type, key:e.key, data:e.data, target:e.target?.className}); if(window.labKeyTrace.length > 512) window.labKeyTrace.shift(); }, true);`, args: [],
+    });
   });
   await step('create initial terminal session', () =>
     until('initial terminal session', async () => (await elements('.session-item')).length === 1));
@@ -225,9 +234,11 @@ try {
   console.error(`[webdriver] failed during ${stage}`, error);
   if (session) {
     try {
+      const trace = await request('POST', endpoint('/execute/sync'), { script: 'return window.labKeyTrace;', args: [] }, 3000);
       const png = await request('GET', endpoint('/screenshot'), undefined, 3000);
       const artifacts = resolve('.lab-m4/webdriver-artifacts');
       await mkdir(artifacts, { recursive: true });
+      await writeFile(join(artifacts, 'keys.json'), JSON.stringify({stage, trace}));
       await writeFile(join(artifacts, 'failure.png'), Buffer.from(png, 'base64'));
     } catch (screenshotError) {
       console.error('[webdriver] screenshot unavailable:', screenshotError.message);

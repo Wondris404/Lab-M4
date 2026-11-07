@@ -75,7 +75,7 @@ jobs:
         run: |
           $config = Join-Path $env:RUNNER_TEMP 'lab-m4-terminal-smoke.json'
           '{"identifier":"com.wondris.labm4.terminal-smoke"}' | Set-Content -LiteralPath $config -Encoding utf8NoBOM
-          pnpm tauri build --debug --no-bundle --config $config
+          pnpm tauri build --debug --no-bundle --features webdriver --config $config
       - name: Exercise terminal and window through WebDriver
         shell: pwsh
         run: |
@@ -87,9 +87,26 @@ jobs:
           name: lab-m4-webdriver-diagnostics
           path: .lab-m4/webdriver-artifacts
           if-no-files-found: ignore
+  automation-installer:
+    runs-on: windows-2022
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24.22.2
+      - run: corepack enable
+      - run: pnpm install --frozen-lockfile
+      - uses: dtolnay/rust-toolchain@stable
+      - run: pnpm package:usage-sidecar
+      - run: cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml --features webdriver
+      - run: pnpm tauri build --features webdriver --bundles nsis
+      - uses: actions/upload-artifact@v4
+        with:
+          name: lab-m4-automation-only
+          path: apps/desktop/src-tauri/target/release/bundle
   windows-installed-usage:
     runs-on: windows-2022
-    needs: desktop
+    needs: automation-installer
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
@@ -104,9 +121,9 @@ jobs:
         run: ./scripts/windows-webdriver-setup.ps1
       - uses: actions/download-artifact@v4
         with:
-          name: lab-m4-windows-x64
+          name: lab-m4-automation-only
           path: ${{ runner.temp }}/lab-m4-bundle
-      - name: Install the release artifact and scan Usage
+      - name: Install automation-only artifact and scan Usage
         shell: pwsh
         run: |
           $env:TAURI_DRIVER = Join-Path $HOME '.cargo/bin/tauri-driver.exe'
@@ -117,3 +134,17 @@ jobs:
           name: lab-m4-installed-usage-diagnostics
           path: .lab-m4/webdriver-artifacts
           if-no-files-found: ignore
+
+  windows-production-installed:
+    runs-on: windows-2022
+    needs: desktop
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: lab-m4-windows-x64
+          path: ${{ runner.temp }}/lab-m4-production
+      - name: Production NSIS launch, DevTools denial and installed sidecar
+        shell: pwsh
+        run: ./scripts/windows-production-smoke.ps1 -BundleDirectory (Join-Path $env:RUNNER_TEMP 'lab-m4-production')

@@ -815,10 +815,14 @@ fn spawn_powershell(
 
 #[tauri::command]
 async fn write_powershell(
+    _app: AppHandle,
     id: String,
     input: String,
     state: State<'_, AppState>,
 ) -> Result<(), String> {
+    #[cfg(feature = "webdriver")]
+    let mut trace =
+        json!({"id": id.clone(), "bytes": input.len(), "carriageReturn": input.ends_with('\r')});
     let completed = {
         let registry = state.pty.lock().map_err(|_| "PTY registry unavailable")?;
         registry
@@ -828,9 +832,15 @@ async fn write_powershell(
             .input
             .enqueue(input)?
     };
-    completed
+    let result = completed
         .await
-        .map_err(|_| "Terminal input was cancelled")?
+        .map_err(|_| "Terminal input was cancelled")?;
+    #[cfg(feature = "webdriver")]
+    {
+        trace["ok"] = json!(result.is_ok());
+        let _ = _app.emit("terminal-input-completed", trace);
+    }
+    result
 }
 
 #[tauri::command]

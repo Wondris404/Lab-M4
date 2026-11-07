@@ -129,7 +129,7 @@ async function startSession() {
     });
     if (!available) throw new Error('Tauri invoke bridge is unavailable');
     await request('POST', endpoint('/execute/sync'), {
-      script: `window.labKeyTrace = []; for (const type of ['keydown','keyup','beforeinput','input']) document.addEventListener(type, e => { window.labKeyTrace.push({type, key:e.key, data:e.data, target:e.target?.className}); if(window.labKeyTrace.length > 512) window.labKeyTrace.shift(); }, true);`, args: [],
+      script: `window.labNativeTrace = []; window.__TAURI_INTERNALS__.invoke('plugin:event|listen', {event:'terminal-input-completed', target:{kind:'Any'}, handler:window.__TAURI_INTERNALS__.transformCallback(e => {window.labNativeTrace.push(e.payload); if(window.labNativeTrace.length > 512) window.labNativeTrace.shift();})}); window.labKeyTrace = []; for (const type of ['keydown','keyup','beforeinput','input']) document.addEventListener(type, e => { window.labKeyTrace.push({type, key:e.key, data:e.data, shift:e.shiftKey, ctrl:e.ctrlKey, alt:e.altKey, target:e.target?.className}); if(window.labKeyTrace.length > 512) window.labKeyTrace.shift(); }, true);`, args: [],
     });
   });
   await step('create initial terminal session', () =>
@@ -234,7 +234,7 @@ try {
   console.error(`[webdriver] failed during ${stage}`, error);
   if (session) {
     try {
-      const trace = await request('POST', endpoint('/execute/sync'), { script: 'return window.labKeyTrace;', args: [] }, 3000);
+      const trace = await request('POST', endpoint('/execute/sync'), { script: 'return {keys:window.labKeyTrace, native:window.labNativeTrace};', args: [] }, 3000);
       const png = await request('GET', endpoint('/screenshot'), undefined, 3000);
       const artifacts = resolve('.lab-m4/webdriver-artifacts');
       await mkdir(artifacts, { recursive: true });

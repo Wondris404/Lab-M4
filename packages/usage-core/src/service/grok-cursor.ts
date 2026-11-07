@@ -2,7 +2,7 @@ import { createHash } from 'node:crypto';
 import { lstat, open } from 'node:fs/promises';
 import type { FileHandle } from 'node:fs/promises';
 import sqlite3 from 'sqlite3';
-import { emptyResult, type ParseResult } from '../parsers/contracts.js';
+import { emptyResult, mergeCountRisk, type ParseResult } from '../parsers/contracts.js';
 import { assertSafeFile, LineLimitError } from '../parsers/shared.js';
 import { normalizeRecord } from './normalize.js';
 
@@ -158,9 +158,7 @@ export async function scanJsonlAppend(
       warnings: oldResult.warnings + fresh.warnings,
       ...(fresh.partial && { partial: true }),
       ...((fresh.countRisk || oldResult.countRisk) && {
-        countRisk: fresh.countRisk === 'under-count' || oldResult.countRisk === 'under-count'
-          ? 'under-count' as const
-          : (fresh.countRisk ?? oldResult.countRisk),
+        countRisk: mergeCountRisk(oldResult.countRisk ?? 'none', fresh.countRisk ?? 'none'),
       }),
       ...(fresh.warningDetails && {
         warningDetails: [...new Set([...(oldResult.warningDetails ?? []), ...fresh.warningDetails])],

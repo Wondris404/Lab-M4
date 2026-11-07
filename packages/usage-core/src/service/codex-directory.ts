@@ -46,7 +46,7 @@ export async function scanCodexDirectory(
         .digest('hex');
       parsed = await scanJsonlAppend(
         db,
-        `${key}:v4`,
+        `${key}:v5`,
         file,
         (previous) =>
           codexAccumulator(previous as CodexCursorState | undefined, pseudonym),

@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { emptyResult, type Parser } from './contracts.js';
+import { emptyResult, mergeCountRisk, type Parser } from './contracts.js';
 import {
   count,
   assertSafeFile,
@@ -37,6 +37,7 @@ export function grokAccumulator(
     } catch {
       result.warnings++;
       result.partial = true;
+      result.countRisk = mergeCountRisk(result.countRisk ?? 'none', 'under-count');
       return;
     }
     const ctx = obj(event.ctx),
@@ -68,6 +69,7 @@ export function grokAccumulator(
     ) {
       result.warnings++;
       result.partial = true;
+      result.countRisk = mergeCountRisk(result.countRisk ?? 'none', 'under-count');
       return;
     }
     const fingerprint = createHash('sha256')
@@ -91,7 +93,7 @@ export function grokAccumulator(
     if (seen.has(fingerprint)) {
       result.warnings++;
       result.partial = true;
-      result.countRisk = 'double-count';
+      result.countRisk = mergeCountRisk(result.countRisk ?? 'none', 'double-count');
       result.warningDetails = [AMBIGUOUS_EVENT];
     }
     seen.add(fingerprint);
@@ -143,10 +145,12 @@ export const grokBuildParser: Parser = {
         result.records.length = 0;
         result.limits.length = 0;
         result.warnings = 0;
+        delete result.warningDetails;
+        delete result.countRisk;
       }
       result.warnings++;
       result.partial = true;
-      result.countRisk = 'under-count';
+      result.countRisk = mergeCountRisk(result.countRisk ?? 'none', 'under-count');
       if (error instanceof ZstdIntegrityError)
         result.warningDetails = ['Zstd checksum nesúhlasí; súbor bol vynechaný.'];
       else if (/\.zst$/i.test(path) && !(error instanceof ExpansionLimitError))

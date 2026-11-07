@@ -52,6 +52,10 @@ it('scans appends, defers partial lines, and rescans on truncation and rotation'
   expect(ambiguous.warningDetails?.[0]).toContain('dvojité započítanie');
   expect(ambiguous.countRisk).toBe('double-count');
   expect(await scanCached(grokBuildParser, file, cache)).toEqual(ambiguous);
+  await appendFile(file, '{broken\n');
+  const damaged = await scanCached(grokBuildParser, file, cache);
+  expect(damaged).toMatchObject({ partial: true, warnings: 2, countRisk: 'both' });
+  expect(damaged.records).toEqual(ambiguous.records);
   expect(
     (await readFile(cache)).includes(Buffer.from('synthetic-private-session')),
   ).toBe(false);

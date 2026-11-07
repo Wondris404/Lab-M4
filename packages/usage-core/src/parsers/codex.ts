@@ -33,6 +33,7 @@ export const codexParser: Parser = {
             event = obj(JSON.parse(line));
           } catch {
             result.warnings++;
+            result.partial = true;
             continue;
           }
           const p = obj(event.payload);
@@ -96,6 +97,7 @@ export const codexParser: Parser = {
             Object.keys(total).length === 0
           ) {
             result.warnings++;
+            result.partial = true;
             continue;
           }
           const signature = codexTotalSignature(total);

@@ -88,7 +88,7 @@ export async function handleRequest(input: unknown) {
     : await parser.parse(path).then((result) => ({ ...result, records: result.records.map(normalizeRecord) }));
   const countRisk = parsed.countRisk ?? (parsed.partial ? 'under-count' : 'none');
   const warningDetails = parsed.warningDetails ?? [];
-  const estimateNote = estimateNoteFor(parsed.partial || countRisk !== 'none', warningDetails);
+  const estimateNote = estimateNoteFor(parsed.partial || countRisk !== 'none', countRisk === 'both' ? [] : warningDetails);
   return {
     version: 1, requestId: request.requestId,
     result: {

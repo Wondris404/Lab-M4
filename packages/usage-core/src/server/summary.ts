@@ -4,10 +4,12 @@ import { estimateCost } from '../pricing/index.js';
 import { parserRegistry, type ParseResult } from '../parsers/index.js';
 import type { Provider } from '../core/types.js';
 
-export function describeAccounting(results: Array<ParseResult | undefined>) {
+export function describeAccounting(results: Array<ParseResult | undefined>, sourceFailed = false) {
   const present = results.filter((result): result is ParseResult => Boolean(result));
-  const doubleCount = present.some((result) => result.countRisk === 'double-count');
-  const underCount = present.some((result) => result.countRisk === 'under-count' || (result.partial && result.countRisk !== 'double-count'));
+  const doubleCount = present.some((result) => result.countRisk === 'double-count' || result.countRisk === 'both');
+  const underCount = sourceFailed || present.some((result) =>
+    result.countRisk === 'under-count' || result.countRisk === 'both' ||
+    (result.partial && result.countRisk !== 'double-count'));
   const uncertain = doubleCount || underCount || present.some((result) => result.partial);
   const note = ['Orientačný odhad, nie fakturácia.'];
   if (doubleCount) note.push('Replay zhodných Grok riadkov sa môže započítať dvakrát.');
@@ -52,8 +54,10 @@ export async function summarize(settings: Settings) {
     ? known.reduce((n, r) => n + (r.costUsd ?? 0), 0)
     : null;
   const warningDetails = [...new Set(Object.values(agents).flatMap((agent) => agent.warningDetails ?? []))];
-  const accounting = describeAccounting(Object.values(agents));
-  const estimateNote = estimateNoteFor(incomplete, warningDetails) ?? (accounting.kind === 'orientational-estimate' ? accounting.note : null);
+  const accounting = describeAccounting(Object.values(agents), Object.keys(errors).length > 0);
+  const estimateNote = accounting.doubleCount && accounting.underCount
+    ? accounting.note
+    : estimateNoteFor(incomplete, warningDetails) ?? (accounting.kind === 'orientational-estimate' ? accounting.note : null);
   return {
     recordCount: records.length,
     sourcesIncomplete: incomplete,

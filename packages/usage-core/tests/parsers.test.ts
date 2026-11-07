@@ -154,10 +154,10 @@ describe('grok', () => {
       expect(response.result.records.map((item) => item.model)).toEqual(['unknown', 'unknown', 'unknown']);
       expect(response.result.records[0]?.warnings).toContain('MODEL_UNVERIFIED');
       expect(response.result.status).toBe('partial');
-      expect(response.result.countRisk).toBe('double-count');
+      expect(response.result.countRisk).toBe('both');
       expect(response.result.estimateNote).toContain('len orientačný odhad');
-      expect(response.result.estimateNote).toContain('dvojité započítanie');
-      expect(response.result.estimateNote).toContain('nepodpočítavajú');
+      expect(response.result.estimateNote).toContain('započítať dvakrát');
+      expect(response.result.estimateNote).toContain('podhodnotiť');
       expect(response.result.records[0]).not.toHaveProperty('costEur');
       expect(r.records).toHaveLength(3);
       expect(r.warnings).toBe(2);
@@ -364,6 +364,7 @@ it('prices a known speed via settings and keeps warnings in the summary', () =>
     const result = await summarize(settings);
     expect(result.recordCount).toBe(1);
     expect(result.warnings.codex).toBe(1);
+    expect(result.sourcesIncomplete).toBe(true);
     expect(result.totals?.sessions).toBe(1);
     expect(result.totals?.costUsd).toBeCloseTo(0.000027);
     expect(result.totals?.costEur).toBeNull();

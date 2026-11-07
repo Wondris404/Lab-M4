@@ -10,6 +10,14 @@ export interface LimitSnapshot {
   primary?: LimitWindow;
   secondary?: LimitWindow;
 }
+export type CountRisk = 'double-count' | 'under-count' | 'both' | 'none';
+
+export function mergeCountRisk(left: CountRisk, right: CountRisk): CountRisk {
+  if (left === 'none') return right;
+  if (right === 'none' || left === right) return left;
+  return 'both';
+}
+
 export interface ParseResult {
   records: UsageRecord[];
   warnings: number;
@@ -18,7 +26,7 @@ export interface ParseResult {
   warningDetails?: string[];
   partial?: boolean;
   /** Why an uncertain total must not be treated as an invoice. */
-  countRisk?: 'double-count' | 'under-count' | 'none';
+  countRisk?: CountRisk;
 }
 export const emptyResult = (): ParseResult => ({
   records: [],

@@ -119,9 +119,15 @@ async function readMarker(name) {
   try { return (await readFile(join(scratch, name), 'utf8')).replace(/^\uFEFF/, '').trim(); }
   catch (error) { if (error.code === 'ENOENT') return ''; throw error; }
 }
-async function marker(name, expected) {
+async function marker(name, expr, expected) {
+  const escapedName = name.replace('.', '\\.');
+  await typeLine(`$y=(Get-Date).Year; 'LAB-'+'DATE:${name}:'+$y+':END'`);
+  const date = await waitForOutput(`Get-Date for ${name}`,
+    new RegExp(`LAB-DATE:${escapedName}:(\\d{4}):END`));
+  await typeLine(`$m="${expr}|$y|$PID"; 'LAB-'+'RESULT:${name}:'+$m+':END'`);
   const { match } = await waitForOutput(`PowerShell result for ${name}`,
-    new RegExp(`LAB-M4-RESULT:${name.replace('.', '\\.')}:(${expected}\\|\\d{4}\\|\\d+):END`));
+    new RegExp(`LAB-RESULT:${escapedName}:(${expected}\\|${date.match[1]}\\|\\d+):END`), date.id);
+  await typeLine(`[IO.File]::WriteAllText("$env:LAB_E2E_DIR\\${name}",$m)`);
   // These are independent observations. A missing file after a visible result
   // means the command ran and its marker write needs separate investigation.
   const result = await until(`marker file ${name} after confirmed PowerShell execution`, () => readMarker(name));
@@ -157,12 +163,6 @@ async function closeWindow() {
   try { await request('DELETE', endpoint(''), undefined, 5000); } catch { /* window close may already end the session */ }
   session = undefined;
 }
-function writeMarker(name, expr) {
-  // Print the computed result before writing the out-of-band marker so a
-  // screenshot can distinguish PowerShell execution from marker I/O failure.
-  return `$m="${expr}|$((Get-Date).Year)|$PID"; 'LAB-M4-'+'RESULT:${name}:'+$m+':END'; [IO.File]::WriteAllText("$env:LAB_E2E_DIR\\${name}",$m)`;
-}
-
 try {
   await step('start tauri-driver', () => until('tauri-driver', async () => {
     try { await request('GET', '/status', undefined, 1000); return true; } catch { return false; }
@@ -173,22 +173,22 @@ try {
     const first = await waitForOutput('first PowerShell assignment', /LAB-M4-ORDER:A:END/);
     await typeLine("$global:labOrder+='B'; 'LAB-M4-ORDER:'+$global:labOrder+':END'");
     await waitForOutput('second PowerShell assignment', /LAB-M4-ORDER:AB:END/, first.id);
-    await typeLine(writeMarker('first.txt', '$global:labSession-$global:labOrder'));
   });
-  const firstPid = await step('read first terminal marker', () => marker('first.txt', 'first-AB'));
+  const firstPid = await step('verify first terminal marker', () =>
+    marker('first.txt', '$global:labSession-$global:labOrder', 'first-AB'));
   await step('create second terminal', async () => {
     await click('[aria-label="Actions menu"]');
     await click('.sidebar-menu button:nth-of-type(2)');
     await until('second session', async () => (await elements('.session-item')).length === 2);
   });
-  await step('send input to second terminal', () =>
-    typeLine(`$global:labSession='second'; ${writeMarker('second.txt', '$global:labSession')}`));
-  const secondPid = await step('read second terminal marker', () => marker('second.txt', 'second'));
+  const secondPid = await step('verify second terminal marker', async () => {
+    await typeLine("$global:labSession='second'");
+    return marker('second.txt', '$global:labSession', 'second');
+  });
   if (firstPid === secondPid) throw new Error('Sessions unexpectedly share a PowerShell process');
   await step('verify first terminal state after switching', async () => {
     await click('.session-item', 0);
-    await typeLine(writeMarker('first-again.txt', '$global:labSession-$global:labOrder'));
-    await marker('first-again.txt', 'first-AB');
+    await marker('first-again.txt', '$global:labSession-$global:labOrder', 'first-AB');
   });
   await step('close second terminal and wait for PowerShell exit', async () => {
     await click('.session-item', 1);
@@ -198,19 +198,17 @@ try {
     await until('second PowerShell exit', async () => !isRunning(secondPid));
   });
   await step('verify first terminal after closing the second', async () => {
-    await typeLine(writeMarker('after-close.txt', '$global:labSession-$global:labOrder'));
-    await marker('after-close.txt', 'first-AB');
+    await marker('after-close.txt', '$global:labSession-$global:labOrder', 'first-AB');
   });
   await step('close window with idle terminal', closeWindow);
   await until('first PowerShell exit', async () => !isRunning(firstPid));
   await startSession();
-  await typeLine(writeMarker('relaunch.txt', 'relaunch'));
-  const relaunchPid = await marker('relaunch.txt', 'relaunch');
+  const relaunchPid = await marker('relaunch.txt', 'relaunch', 'relaunch');
   await step('wait for active terminal output before closing', async () => {
-    await typeLine(`Write-Output 'LAB-M4-OUTPUT-0'; ${writeMarker('output-start.txt', 'output-start')}; 1..2000 | ForEach-Object { "LAB-M4-OUTPUT-$_"; Start-Sleep -Milliseconds 20 }; ${writeMarker('output-end.txt', 'output-end')}`);
-    if (await marker('output-start.txt', 'output-start') !== relaunchPid) {
-      throw new Error('Output was started in a different PowerShell process');
-    }
+    await typeLine("$end=Join-Path $env:LAB_E2E_DIR 'output-end.txt'");
+    await typeLine("1..2000 | % { 'LAB-'+'ACTIVE:'+$PID+':'+$_; Start-Sleep -Milliseconds 20 }; 'finished' > $end");
+    await waitForOutput('repeated output from the relaunched PowerShell',
+      new RegExp(`LAB-ACTIVE:${relaunchPid}:10\\b`));
   });
   await step('close window with active terminal output', async () => {
     await closeWindow();

@@ -314,7 +314,7 @@ impl WindowsPtyHost {
             forced_members: OnceLock::new(),
         };
         let startup = (|| {
-            let mut payload = [0; BOOTSTRAP_HANDLES * size_of::<usize>()];
+            let mut payload = [[0; size_of::<usize>()]; BOOTSTRAP_HANDLES];
             for (handle, field) in [
                 console_input.as_raw_handle(),
                 console_output.as_raw_handle(),
@@ -324,14 +324,14 @@ impl WindowsPtyHost {
                 host.resize.as_raw_handle(),
             ]
             .into_iter()
-            .zip(payload.chunks_exact_mut(size_of::<usize>()))
+            .zip(&mut payload)
             {
                 // DuplicateHandle returns a value in the target process. The job
                 // releases it if startup fails before the broker can take ownership.
                 let target_handle = duplicate(handle, host.process.as_raw_handle(), false)?;
-                field.copy_from_slice(&(target_handle as usize).to_le_bytes());
+                *field = (target_handle as usize).to_le_bytes();
             }
-            bootstrap_writer.write_all(&payload)
+            bootstrap_writer.write_all(payload.as_flattened())
         })();
         drop(bootstrap_writer);
         drop(console_input);
@@ -457,13 +457,11 @@ fn run(args: impl Iterator<Item = std::ffi::OsString>) -> io::Result<()> {
         return Err(io::Error::other("Invalid terminal host arguments"));
     }
     let mut bootstrap = unsafe { File::from_raw_handle(bootstrap) };
-    let mut payload = [0; BOOTSTRAP_HANDLES * size_of::<usize>()];
-    bootstrap.read_exact(&mut payload)?;
+    let mut payload = [[0; size_of::<usize>()]; BOOTSTRAP_HANDLES];
+    bootstrap.read_exact(payload.as_flattened_mut())?;
     let mut handles = [null_mut(); BOOTSTRAP_HANDLES];
-    for (index, bytes) in payload.chunks_exact(size_of::<usize>()).enumerate() {
-        let mut raw = [0; size_of::<usize>()];
-        raw.copy_from_slice(bytes);
-        let handle = usize::from_le_bytes(raw) as HANDLE;
+    for (index, bytes) in payload.into_iter().enumerate() {
+        let handle = usize::from_le_bytes(bytes) as HANDLE;
         if handles[..index].contains(&handle) || handle_flags(handle)? & HANDLE_FLAG_INHERIT != 0 {
             return Err(io::Error::other("Invalid terminal host bootstrap handle"));
         }

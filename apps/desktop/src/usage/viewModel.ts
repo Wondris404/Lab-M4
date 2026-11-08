@@ -1,4 +1,5 @@
 import type { UsageItem } from './UsageTab';
+import { usageDay } from './dashboard';
 
 export type SortField =
   | 'timestamp'
@@ -40,7 +41,7 @@ export function selectUsage(
       (record) =>
         (!filters.agent || record.agent === filters.agent) &&
         (!filters.model || record.model === filters.model) &&
-        (!filters.day || record.timestamp.startsWith(filters.day)) &&
+        (!filters.day || usageDay(record.timestamp) === filters.day) &&
         (!filters.session || record.session === filters.session),
     )
     .sort((a, b) => {

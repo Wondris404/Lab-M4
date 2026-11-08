@@ -16,6 +16,8 @@ fn main() {
             "load_app_settings",
             "save_app_settings",
             "usage_list_sources",
+            "usage_remove_source",
+            "usage_set_auto_source",
             "usage_select_source",
             "usage_scan",
         ]),

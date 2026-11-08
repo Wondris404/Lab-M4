@@ -26,6 +26,8 @@
     "allow-load-app-settings",
     "allow-save-app-settings",
     "allow-usage-list-sources",
+    "allow-usage-remove-source",
+    "allow-usage-set-auto-source",
     "allow-usage-select-source",
     "allow-usage-scan"
   ]

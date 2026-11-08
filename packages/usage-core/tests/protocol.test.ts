@@ -52,6 +52,13 @@ describe('usage protocol', () => {
     const changed = (await handleRequest(request(1))).result;
     expect(changed.snapshotId).not.toBe(first.snapshotId);
     expect(changed.totalRecords).toBe(3);
+    const saved = await handleRequest({
+      ...request(0),
+      params: { ...request(0).params, full: true, cachePath: join(dir, 'cache.sqlite') },
+    });
+    expect(saved.result.totalRecords).toBe(3);
+    expect(saved.result.records).toHaveLength(3);
+    expect(saved.result.records[0]?.session).not.toBe('synthetic');
   });
   it('includes scan status, warnings, record fields and limits in the snapshot', () => {
     const base = emptyResult();

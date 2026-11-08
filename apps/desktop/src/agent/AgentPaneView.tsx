@@ -31,30 +31,36 @@ interface AgentPaneViewProps {
   orchestrator: OrchestratorApi;
   aiSettings: AiSettings;
   onOpenAiSettings: () => void;
+  unavailableReason?: string;
+  animation?: "off" | "subtle" | "pixel";
 }
 
 function statusLabel(status: AgentMessage["status"]): string {
   switch (status) {
     case "streaming":
-      return "thinking...";
+      return "Čakám na odpoveď…";
     case "awaiting-approval":
       return "approval needed";
     case "approved":
-      return "thinking...";
+      return "Schválené";
     case "running":
-      return "thinking...";
+      return "Vykonávam nástroj…";
     case "rejected":
       return "declined";
     case "error":
       return "error";
+    case "cancelled":
+      return "Zastavené";
     default:
       return "";
   }
 }
 
 
-function MessageBubble({ message }: {
+function MessageBubble({ message, animation, busy }: {
   message: AgentMessage;
+  animation: "off" | "subtle" | "pixel";
+  busy: boolean;
 }) {
   if (message.role === "user") {
     return (
@@ -64,11 +70,10 @@ function MessageBubble({ message }: {
     );
   }
 
-  if (message.role === "tool") {
-    return null;
-  }
-
-  const status = statusLabel(message.status);
+  const active = busy && (message.status === "running" || message.status === "streaming");
+  const status = active || message.status !== "running" && message.status !== "streaming"
+    ? message.status === "streaming" && message.content ? "Prijímam odpoveď…" : statusLabel(message.status)
+    : "";
   if (!message.content && !status) {
     return null;
   }
@@ -80,7 +85,16 @@ function MessageBubble({ message }: {
           <AgentMarkdown text={message.content} />
         </div>
       )}
-      {status && <div className="agent-msg-status">{status}</div>}
+      {status && (
+        <div className="agent-msg-status chat-message-status" role="status">
+          {active && animation !== "off" && (
+            <span className={`chat-indicator chat-indicator-${animation}`}
+              data-phase={message.status === "running" ? "tool" : message.content ? "stream" : "wait"}
+              aria-hidden="true"><i /><i /><i /></span>
+          )}
+          {message.toolName && `${message.toolName} · `}{status}
+        </div>
+      )}
     </div>
   );
 }
@@ -92,8 +106,10 @@ export function AgentPaneView({
   orchestrator,
   aiSettings,
   onOpenAiSettings,
+  unavailableReason,
+  animation = "off",
 }: AgentPaneViewProps) {
-  const api = useAgent(folder, sessionName, orchestrator, aiSettings);
+  const api = useAgent(folder, sessionName, orchestrator, aiSettings, !unavailableReason);
   const [draft, setDraft] = useState("");
   const [dictationStatus, setDictationStatus] = useState<DictationStatus>("idle");
   const [dictationError, setDictationError] = useState<string | null>(null);
@@ -323,7 +339,7 @@ export function AgentPaneView({
 
   const messages = api.thread.messages;
   const visibleMessages = messages.filter((message) => {
-    if (message.role === "tool") return false;
+    if (message.role === "tool") return message.status === "running";
     if (message.role !== "assistant") return true;
     return !!message.content || !!statusLabel(message.status);
   });
@@ -337,8 +353,8 @@ export function AgentPaneView({
     el.scrollTop = el.scrollHeight;
   }, [messagesLen, lastStatus]);
 
-  const canSend = !api.thread.busy && !!api.settings && draft.trim().length > 0;
-  const placeholder = api.settings
+  const canSend = !unavailableReason && !api.thread.busy && !!api.settings && draft.trim().length > 0;
+  const placeholder = unavailableReason ? "Rozpracovaná správa…" : api.settings
     ? "Add a follow up..."
     : "Configure a provider first...";
 
@@ -350,7 +366,7 @@ export function AgentPaneView({
   };
 
   const sendStarter = (prompt: string) => {
-    if (api.thread.busy || !api.settings) return;
+    if (unavailableReason || api.thread.busy || !api.settings) return;
     api.send(prompt);
   };
 
@@ -378,10 +394,10 @@ export function AgentPaneView({
     <div className="agent-pane" ref={rootRef}>
 
       <div className="agent-pane-scroll" ref={scrollRef}>
-        <div className="agent-thread-title">{sessionName}</div>
+        {!unavailableReason && <div className="agent-thread-title">{sessionName}</div>}
         {messages.length === 0 && (
           <div className="agent-pane-empty">
-            {STARTER_PROMPTS.map((prompt) => (
+            {unavailableReason ? <p role="status">{unavailableReason}</p> : STARTER_PROMPTS.map((prompt) => (
               <button
                 key={prompt}
                 type="button"
@@ -392,13 +408,14 @@ export function AgentPaneView({
                 {prompt}
               </button>
             ))}
-            <p>Ready for the next task.</p>
           </div>
         )}
         {visibleMessages.map((m) => (
           <MessageBubble
             key={m.id}
             message={m}
+            animation={animation}
+            busy={api.thread.busy}
           />
         ))}
         {api.thread.error && (
@@ -410,6 +427,7 @@ export function AgentPaneView({
         <textarea
           ref={inputRef}
           className="agent-pane-input"
+          aria-label="Správa v chate"
           value={draft}
           placeholder={placeholder}
           onChange={(e) => setDraft(e.target.value)}
@@ -426,7 +444,7 @@ export function AgentPaneView({
         />
         <div className="agent-pane-input-footer">
           <div className="agent-pane-input-tools">
-            <button
+            {!unavailableReason && <><button
               type="button"
               className="agent-pane-pill"
               onClick={onOpenAiSettings}
@@ -444,7 +462,7 @@ export function AgentPaneView({
             >
               <span>{modelLabel}</span>
               <span className="agent-pane-caret">⌄</span>
-            </button>
+            </button></>}
             {api.thread.busy && (
               <button
                 type="button"
@@ -471,7 +489,7 @@ export function AgentPaneView({
                 {dictationStatusText}
               </span>
             )}
-            <button
+            {!unavailableReason && <button
               type="button"
               className={`agent-pane-mic ${dictationStatus}`}
               disabled={dictationBusy}
@@ -481,7 +499,7 @@ export function AgentPaneView({
               onClick={toggleDictation}
             >
               <span aria-hidden="true">{dictationStatus === "recording" ? "■" : "🎙"}</span>
-            </button>
+            </button>}
             <button
               type="submit"
               className="agent-pane-send"

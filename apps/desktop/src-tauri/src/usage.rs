@@ -1,6 +1,10 @@
-use serde::Serialize;
+mod discovery;
+mod snapshot;
+
+use discovery::{covers, discover, AUTO_CODEX, AUTO_IDS};
+use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
-use std::collections::HashMap;
+use std::collections::{BTreeSet, HashMap};
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
@@ -15,51 +19,72 @@ use tauri_plugin_dialog::DialogExt;
 
 #[derive(Default)]
 pub struct UsageState {
-    sources: Mutex<Option<HashMap<String, (String, PathBuf)>>>,
+    sources: Mutex<Option<SourceSettings>>,
     next: AtomicU64,
     active: Mutex<HashMap<String, Arc<AtomicBool>>>,
 }
 #[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct UsageSource {
     id: String,
     agent: String,
     name: String,
+    automatic: bool,
+    enabled: bool,
+    covered_by: Option<String>,
 }
 
 type SourceMap = HashMap<String, (String, PathBuf)>;
 
-fn source_list_path(app: &AppHandle) -> Result<PathBuf, String> {
+#[derive(Default, Deserialize, Serialize)]
+struct SourceSettings {
+    #[serde(default, skip_serializing_if = "BTreeSet::is_empty")]
+    disabled_automatic: BTreeSet<String>,
+    #[serde(flatten)]
+    manual: SourceMap,
+}
+
+fn usage_dir(app: &AppHandle) -> Result<PathBuf, String> {
     Ok(app
         .path()
         .app_local_data_dir()
         .map_err(|_| "Data directory unavailable")?
-        .join("usage")
-        .join("sources.json"))
+        .join("usage"))
 }
 
-fn load_sources(app: &AppHandle, slot: &mut Option<SourceMap>) -> Result<(), String> {
+fn source_list_path(app: &AppHandle) -> Result<PathBuf, String> {
+    Ok(usage_dir(app)?.join("sources.json"))
+}
+
+fn load_sources(app: &AppHandle, slot: &mut Option<SourceSettings>) -> Result<(), String> {
     if slot.is_some() {
         return Ok(());
     }
-    let path = source_list_path(app)?;
-    let sources = match std::fs::symlink_metadata(&path) {
+    *slot = Some(read_source_settings(&source_list_path(app)?)?);
+    Ok(())
+}
+
+fn read_source_settings(path: &Path) -> Result<SourceSettings, String> {
+    let sources = match std::fs::symlink_metadata(path) {
         Ok(meta) if meta.file_type().is_symlink() || !meta.is_file() => {
             return Err("Source list invalid".into());
         }
         Ok(meta) if meta.len() > 1024 * 1024 => return Err("Source list too large".into()),
         Ok(_) => {
-            let bytes = std::fs::read(&path).map_err(|_| "Source list unavailable")?;
+            let bytes = std::fs::read(path).map_err(|_| "Source list unavailable")?;
             serde_json::from_slice(&bytes).map_err(|_| "Source list invalid")?
         }
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => HashMap::new(),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => SourceSettings::default(),
         Err(_) => return Err("Source list unavailable".into()),
     };
-    *slot = Some(sources);
-    Ok(())
+    Ok(sources)
 }
 
-fn save_sources(app: &AppHandle, sources: &SourceMap) -> Result<(), String> {
-    let path = source_list_path(app)?;
+fn save_sources(app: &AppHandle, sources: &SourceSettings) -> Result<(), String> {
+    write_source_settings(&source_list_path(app)?, sources)
+}
+
+fn write_source_settings(path: &Path, sources: &SourceSettings) -> Result<(), String> {
     let parent = path.parent().ok_or("Source directory unavailable")?;
     std::fs::create_dir_all(parent).map_err(|_| "Source directory unavailable")?;
     let bytes = serde_json::to_vec(sources).map_err(|_| "Source list invalid")?;
@@ -81,30 +106,155 @@ fn save_sources(app: &AppHandle, sources: &SourceMap) -> Result<(), String> {
 }
 
 #[tauri::command]
-pub fn usage_list_sources(
+pub async fn usage_list_sources(app: AppHandle) -> Result<Vec<UsageSource>, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let automatic = discover();
+        let state = app.state::<UsageState>();
+        let mut slot = state
+            .sources
+            .lock()
+            .map_err(|_| "Source state unavailable")?;
+        load_sources(&app, &mut slot)?;
+        let settings = slot.as_ref().ok_or("Source state unavailable")?;
+        let mut sources = list_sources(settings, automatic);
+        let dir = usage_dir(&app)?;
+        for id in AUTO_IDS {
+            if !sources.iter().any(|source| source.id == id) && snapshot::path(&dir, id)?.is_file()
+            {
+                let agent = id.trim_start_matches("auto-");
+                sources.push(source_info(
+                    id.into(),
+                    agent.into(),
+                    Path::new("uložená história"),
+                    true,
+                    !settings.disabled_automatic.contains(id),
+                ));
+            }
+        }
+        Ok(sources)
+    })
+    .await
+    .map_err(|_| "Source discovery failed")?
+}
+
+fn source_info(
+    id: String,
+    agent: String,
+    path: &Path,
+    automatic: bool,
+    enabled: bool,
+) -> UsageSource {
+    UsageSource {
+        id,
+        agent,
+        name: path
+            .file_name()
+            .and_then(|name| name.to_str())
+            .unwrap_or("source")
+            .to_owned(),
+        automatic,
+        enabled,
+        covered_by: None,
+    }
+}
+
+fn list_sources(
+    settings: &SourceSettings,
+    automatic: Vec<discovery::AutomaticSource>,
+) -> Vec<UsageSource> {
+    let mut sources: Vec<_> = automatic
+        .into_iter()
+        .map(|source| {
+            let info = source_info(
+                source.id.into(),
+                source.agent.into(),
+                &source.path,
+                true,
+                !settings.disabled_automatic.contains(source.id),
+            );
+            (info, Some(source.path))
+        })
+        .chain(settings.manual.iter().map(|(id, (agent, path))| {
+            (
+                source_info(id.clone(), agent.clone(), path, false, true),
+                safe_source(path, agent).ok(),
+            )
+        }))
+        .collect();
+    // Place wider directories first. A manually chosen custom Codex home may
+    // cover additional logs, while discovery only covers its history subtrees.
+    sources.sort_by(|(a, ap), (b, bp)| {
+        let key = |info: &UsageSource, path: &Option<PathBuf>| {
+            let depth = path
+                .as_ref()
+                .map_or(usize::MAX, |path| path.components().count());
+            let restricted = info.id == AUTO_CODEX
+                && path.as_ref().is_some_and(|p| {
+                    !p.file_name()
+                        .is_some_and(|name| name.eq_ignore_ascii_case(".codex"))
+                });
+            (depth, restricted, !info.automatic)
+        };
+        key(a, ap).cmp(&key(b, bp)).then_with(|| a.id.cmp(&b.id))
+    });
+    for index in 0..sources.len() {
+        let (previous, current) = sources.split_at_mut(index);
+        let (info, path) = &mut current[0];
+        if let Some(path) = path.as_ref().filter(|_| info.enabled) {
+            info.covered_by = previous.iter().find_map(|(candidate, root)| {
+                (candidate.enabled
+                    && candidate.agent == info.agent
+                    && root
+                        .as_ref()
+                        .is_some_and(|root| covers(root, path, candidate.id == AUTO_CODEX)))
+                .then(|| candidate.id.clone())
+            });
+        }
+    }
+    sources.into_iter().map(|(source, _)| source).collect()
+}
+
+#[tauri::command]
+pub fn usage_set_auto_source(
     app: AppHandle,
     state: State<'_, UsageState>,
-) -> Result<Vec<UsageSource>, String> {
+    id: String,
+    enabled: bool,
+) -> Result<(), String> {
+    if !AUTO_IDS.contains(&id.as_str()) {
+        return Err("Unknown automatic source".into());
+    }
     let mut slot = state
         .sources
         .lock()
         .map_err(|_| "Source state unavailable")?;
     load_sources(&app, &mut slot)?;
-    let sources = slot.as_ref().ok_or("Source state unavailable")?;
-    let mut result: Vec<UsageSource> = sources
-        .iter()
-        .map(|(id, (agent, path))| UsageSource {
-            id: id.clone(),
-            agent: agent.clone(),
-            name: path
-                .file_name()
-                .and_then(|s| s.to_str())
-                .unwrap_or("source")
-                .to_owned(),
-        })
-        .collect();
-    result.sort_by(|a, b| a.id.cmp(&b.id));
-    Ok(result)
+    let sources = slot.as_mut().ok_or("Source state unavailable")?;
+    set_auto_source(sources, &id, enabled, |sources| save_sources(&app, sources))
+}
+
+fn set_auto_source(
+    sources: &mut SourceSettings,
+    id: &str,
+    enabled: bool,
+    save: impl FnOnce(&SourceSettings) -> Result<(), String>,
+) -> Result<(), String> {
+    let changed = if enabled {
+        sources.disabled_automatic.remove(id)
+    } else {
+        sources.disabled_automatic.insert(id.into())
+    };
+    if changed {
+        if let Err(error) = save(sources) {
+            if enabled {
+                sources.disabled_automatic.insert(id.into());
+            } else {
+                sources.disabled_automatic.remove(id);
+            }
+            return Err(error);
+        }
+    }
+    Ok(())
 }
 
 #[tauri::command]
@@ -119,15 +269,21 @@ pub fn usage_remove_source(
         .map_err(|_| "Source state unavailable")?;
     load_sources(&app, &mut slot)?;
     let sources = slot.as_mut().ok_or("Source state unavailable")?;
-    let removed = sources.remove(&id).ok_or("Source not approved")?;
+    let removed = sources.manual.remove(&id).ok_or("Source not approved")?;
     if let Err(error) = save_sources(&app, sources) {
-        sources.insert(id, removed);
+        sources.manual.insert(id, removed);
         return Err(error);
+    }
+    if let Ok(path) = usage_dir(&app).and_then(|dir| snapshot::path(&dir, &id)) {
+        let _ = std::fs::remove_file(path);
     }
     Ok(())
 }
 
 fn safe_source(path: &Path, agent: &str) -> Result<PathBuf, String> {
+    if !path.is_absolute() {
+        return Err("Source must use an absolute path".into());
+    }
     let allowed = match agent {
         "codex" | "grok-build" => ["jsonl", "zst"].as_slice(),
         "opencode" => ["db", "sqlite"].as_slice(),
@@ -151,18 +307,29 @@ fn safe_source(path: &Path, agent: &str) -> Result<PathBuf, String> {
                 return Err("Sensitive source denied".into());
             }
         }
-        if std::fs::symlink_metadata(component)
-            .map_err(|_| "Source unavailable")?
-            .file_type()
-            .is_symlink()
+    }
+    for component in path.ancestors() {
+        let metadata = std::fs::symlink_metadata(component).map_err(|_| "Source unavailable")?;
+        #[cfg(windows)]
         {
+            use std::os::windows::fs::MetadataExt;
+            if metadata.file_attributes() & 0x400 != 0 {
+                return Err("Linked source denied".into());
+            }
+        }
+        if metadata.file_type().is_symlink() {
             return Err("Linked source denied".into());
         }
     }
     let metadata = std::fs::metadata(path).map_err(|_| "Source unavailable")?;
     if metadata.is_dir() {
-        if agent != "codex" {
-            return Err("Only Codex supports folders".into());
+        if agent != "codex"
+            && !(agent == "grok-build"
+                && path
+                    .file_name()
+                    .is_some_and(|name| name.eq_ignore_ascii_case("sessions")))
+        {
+            return Err("Unsupported history folder".into());
         }
     } else if metadata.is_file() {
         let extension = path.extension().and_then(|x| x.to_str()).unwrap_or("");
@@ -243,11 +410,6 @@ pub async fn usage_select_source(
     };
     let path = selected.into_path().map_err(|_| "Invalid path")?;
     let canonical = safe_source(&path, &agent)?;
-    let name = path
-        .file_name()
-        .and_then(|s| s.to_str())
-        .unwrap_or("source")
-        .to_owned();
     let timestamp = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map_err(|_| "Clock unavailable")?
@@ -262,12 +424,13 @@ pub async fn usage_select_source(
         .map_err(|_| "Source state unavailable")?;
     load_sources(&app, &mut slot)?;
     let sources = slot.as_mut().ok_or("Source state unavailable")?;
-    sources.insert(id.clone(), (agent.clone(), canonical));
+    let info = source_info(id.clone(), agent.clone(), &canonical, false, true);
+    sources.manual.insert(id.clone(), (agent, canonical));
     if let Err(error) = save_sources(&app, sources) {
-        sources.remove(&id);
+        sources.manual.remove(&id);
         return Err(error);
     }
-    Ok(Some(UsageSource { id, agent, name }))
+    Ok(Some(info))
 }
 
 // Always reap the sidecar, including failures while setting up pipes.
@@ -285,9 +448,9 @@ fn execute(
     source: PathBuf,
     agent: String,
     force: bool,
-    offset: usize,
+    codex_home: bool,
     cancelled: Arc<AtomicBool>,
-) -> Result<Value, String> {
+) -> Result<snapshot::Snapshot, String> {
     if cancelled.load(Ordering::Acquire) {
         return Err("Scan cancelled".into());
     }
@@ -303,13 +466,9 @@ fn execute(
         .join("usage-service");
     super::usage_integrity::verify(&sidecar)?;
     let runtime = sidecar.join(if cfg!(windows) { "node.exe" } else { "node" });
-    let cache_dir = app
-        .path()
-        .app_local_data_dir()
-        .map_err(|_| "Data directory unavailable")?
-        .join("usage");
+    let cache_dir = usage_dir(&app)?;
     std::fs::create_dir_all(&cache_dir).map_err(|_| "Cache unavailable")?;
-    let request = json!({"version":1,"requestId":"scan","method":"scan","params":{"agent":agent,"path":source,"cachePath":cache_dir.join("cache-v2.sqlite"),"force":force,"offset":offset,"limit":500}});
+    let request = json!({"version":1,"requestId":"scan","method":"scan","params":{"agent":agent,"path":source,"cachePath":cache_dir.join("cache-v2.sqlite"),"force":force,"full":true,"codexHome":codex_home}});
     let mut command = Command::new(runtime);
     command
         .arg(sidecar.join("main.cjs"))
@@ -318,6 +477,12 @@ fn execute(
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::null());
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+        command.creation_flags(CREATE_NO_WINDOW);
+    }
     if let Some(root) = std::env::var_os("SystemRoot") {
         command.env("SystemRoot", root);
     }
@@ -333,7 +498,7 @@ fn execute(
     let reader = thread::spawn(move || {
         let mut bytes = Vec::new();
         output
-            .take(8 * 1024 * 1024 + 1)
+            .take(snapshot::MAX_BYTES + 1)
             .read_to_end(&mut bytes)
             .map(|_| bytes)
     });
@@ -361,10 +526,11 @@ fn execute(
         .join()
         .map_err(|_| "Sidecar output failed")?
         .map_err(|_| "Sidecar output failed")?;
-    if !status.success() || bytes.len() > 8 * 1024 * 1024 {
+    if !status.success() || bytes.len() as u64 > snapshot::MAX_BYTES {
         return Err("Sidecar output invalid".into());
     }
-    serde_json::from_slice(&bytes).map_err(|_| "Sidecar output invalid".into())
+    let response = serde_json::from_slice(&bytes).map_err(|_| "Sidecar output invalid")?;
+    snapshot::Snapshot::from_sidecar(response)
 }
 
 #[tauri::command]
@@ -374,18 +540,40 @@ pub async fn usage_scan(
     id: String,
     force: bool,
     offset: Option<usize>,
-) -> Result<Value, String> {
-    let (agent, source) = {
+    saved: Option<bool>,
+) -> Result<Option<Value>, String> {
+    let automatic = AUTO_IDS.contains(&id.as_str());
+    let manual = {
         let mut slot = state
             .sources
             .lock()
             .map_err(|_| "Source state unavailable")?;
         load_sources(&app, &mut slot)?;
-        slot.as_ref()
-            .and_then(|sources| sources.get(&id))
-            .cloned()
-            .ok_or("Source not approved")?
+        let sources = slot.as_ref().ok_or("Source state unavailable")?;
+        if automatic {
+            if sources.disabled_automatic.contains(&id) {
+                return Err("Automatic source is disabled".into());
+            }
+            None
+        } else {
+            Some(
+                sources
+                    .manual
+                    .get(&id)
+                    .cloned()
+                    .ok_or("Source not approved")?,
+            )
+        }
     };
+    let path = snapshot::path(&usage_dir(&app)?, &id)?;
+    let offset = offset.unwrap_or(0);
+    if saved == Some(true) || offset != 0 {
+        return tauri::async_runtime::spawn_blocking(move || {
+            Ok(snapshot::read(&path)?.map(|value| value.page(offset, false)))
+        })
+        .await
+        .map_err(|_| "Saved Usage unavailable")?;
+    }
     let cancelled = Arc::new(AtomicBool::new(false));
     {
         let mut active = state.active.lock().map_err(|_| "Scan state unavailable")?;
@@ -394,8 +582,25 @@ pub async fn usage_scan(
         }
         active.insert(id.clone(), cancelled.clone());
     }
+    let codex_home = id == AUTO_CODEX;
+    let source_id = id.clone();
     let result = tauri::async_runtime::spawn_blocking(move || {
-        execute(app, source, agent, force, offset.unwrap_or(0), cancelled)
+        let (agent, source) = manual
+            .or_else(|| {
+                discover()
+                    .into_iter()
+                    .find(|source| source.id == source_id)
+                    .map(|source| (source.agent.to_owned(), source.path))
+            })
+            .ok_or("Source unavailable")?;
+        let fresh = execute(app, source, agent, force, codex_home, cancelled)?;
+        if let Ok(Some(previous)) = snapshot::read(&path) {
+            if fresh.keeps_previous(&previous) {
+                return Ok(Some(previous.page(0, true)));
+            }
+        }
+        snapshot::write(&path, &fresh)?;
+        Ok(Some(fresh.page(0, false)))
     })
     .await
     .map_err(|_| "Scan failed");
@@ -420,13 +625,67 @@ pub fn usage_cancel_scan(state: State<'_, UsageState>, id: String) -> Result<boo
 
 #[cfg(test)]
 mod tests {
-    use super::safe_source;
-    use std::path::Path;
+    use super::*;
 
     #[test]
     fn denies_sensitive_names_before_reading_files() {
-        assert!(safe_source(Path::new("auth.jsonl"), "codex").is_err());
-        assert!(safe_source(Path::new("credentials/usage.jsonl"), "codex").is_err());
+        let home = std::env::temp_dir();
+        assert_eq!(
+            safe_source(&home.join("auth.jsonl"), "codex").unwrap_err(),
+            "Sensitive source denied"
+        );
+        // The final filename itself can look like a valid transcript.
+        assert_eq!(
+            safe_source(&home.join("credentials").join("usage.jsonl"), "codex").unwrap_err(),
+            "Sensitive source denied"
+        );
         assert!(safe_source(Path::new("usage.jsonl"), "unknown").is_err());
+    }
+
+    #[test]
+    fn clean_profile_lists_automatic_history_and_persists_a_disable_with_manual_overlap() {
+        let nonce = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!("lab-m4-discovery-{nonce:x}"));
+        let home = root.join("custom-home");
+        let sessions = home.join("sessions");
+        std::fs::create_dir_all(&sessions).unwrap();
+        let manual = sessions.join("rollout.jsonl");
+        std::fs::write(&manual, "").unwrap();
+        let path = root.join("sources.json");
+        let auto = || {
+            vec![discovery::AutomaticSource {
+                id: AUTO_CODEX,
+                agent: "codex",
+                path: std::fs::canonicalize(&home).unwrap(),
+            }]
+        };
+        let settings = read_source_settings(&path).unwrap();
+        let clean = list_sources(&settings, auto());
+        assert_eq!(clean.len(), 1);
+        assert!(clean[0].automatic && clean[0].enabled);
+
+        // The legacy on-disk format is a flat map of picker IDs.
+        let legacy = json!({ "source-manual": ["codex", manual] });
+        std::fs::write(&path, legacy.to_string()).unwrap();
+        let mut settings = read_source_settings(&path).unwrap();
+        let covered = list_sources(&settings, auto());
+        assert_eq!(covered[1].covered_by.as_deref(), Some(AUTO_CODEX));
+        set_auto_source(&mut settings, AUTO_CODEX, false, |s| {
+            write_source_settings(&path, s)
+        })
+        .unwrap();
+
+        let restarted = list_sources(&read_source_settings(&path).unwrap(), auto());
+        assert!(!restarted[0].enabled);
+        assert!(restarted[1].enabled);
+        assert!(restarted[1].covered_by.is_none());
+        std::fs::remove_file(path).unwrap();
+        std::fs::remove_file(manual).unwrap();
+        std::fs::remove_dir(sessions).unwrap();
+        std::fs::remove_dir(home).unwrap();
+        std::fs::remove_dir(root).unwrap();
     }
 }

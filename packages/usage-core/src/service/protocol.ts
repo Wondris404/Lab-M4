@@ -5,12 +5,14 @@ import { parserRegistry, type Parser } from '../parsers/index.js';
 import { providers, type Provider } from '../core/types.js';
 import type { ParseResult } from '../parsers/contracts.js';
 import { normalizeRecord } from './normalize.js';
+import { codexParser } from '../parsers/codex.js';
+import { isGrokHistory } from '../parsers/grok-history.js';
 
 export interface ScanRequest {
   version: 1;
   requestId: string;
   method: 'scan';
-  params: { agent: Provider; path: string; cachePath?: string; force?: boolean; offset?: number; limit?: number };
+  params: { agent: Provider; path: string; cachePath?: string; force?: boolean; offset?: number; limit?: number; codexHome?: boolean; full?: boolean };
 }
 
 // Length framing prevents field-boundary collisions. Hash one field at a time,
@@ -74,15 +76,21 @@ export async function handleRequest(input: unknown) {
     throw new Error('Invalid request');
   }
   const { agent, path } = request.params;
+  const codexHome = request.params.codexHome === true;
   const offset = request.params.offset ?? 0;
   const limit = request.params.limit ?? 500;
+  const full = request.params.full === true;
   if (!Number.isSafeInteger(offset) || offset < 0 || !Number.isSafeInteger(limit) || limit < 1 || limit > 500) throw new Error('Invalid page');
+  if (full && (!request.params.cachePath || offset !== 0)) throw new Error('Full snapshot requires an application cache');
   if (agent === 'antigravity') return { version: 1, requestId: request.requestId, result: { status: 'not-supported', records: [], warnings: ['NEOVERENÉ'] } };
   const parser: Parser = parserRegistry[agent];
   const info = await lstat(path);
-  const parsed = (info.isFile() || (agent === 'codex' && info.isDirectory())) && request.params.cachePath
-    ? await scanCached(parser, path, request.params.cachePath, request.params.force ?? false)
-    : await parser.parse(path).then((result) => ({ ...result, records: result.records.map(normalizeRecord) }));
+  if (codexHome && (agent !== 'codex' || !info.isDirectory())) throw new Error('Invalid Codex history home');
+  const grokHistory = agent === 'grok-build' && isGrokHistory(path, info.isDirectory());
+  const parsed = (info.isFile() || ((agent === 'codex' || grokHistory) && info.isDirectory())) && request.params.cachePath
+    ? await scanCached(parser, path, request.params.cachePath, request.params.force ?? false, codexHome)
+    : await (codexHome ? codexParser.parse(path, true) : parser.parse(path))
+      .then((result) => grokHistory ? result : { ...result, records: result.records.map(normalizeRecord) });
   return {
     version: 1, requestId: request.requestId,
     result: {
@@ -91,7 +99,7 @@ export async function handleRequest(input: unknown) {
         ...(parsed.warningDetails ?? []),
         ...Object.entries(parsed.mismatchFields).map(([kind, count]) => `${kind}: ${count}`),
       ],
-      records: parsed.records.slice(offset, offset + limit).map((r) => ({
+      records: (full ? parsed.records : parsed.records.slice(offset, offset + limit)).map((r) => ({
         agent: r.provider, model: r.model, session: r.sessionId, timestamp: r.timestamp,
         input: r.inputTokens, output: r.outputTokens, cached: r.cachedInputTokens,
         reasoning: r.reasoningTokens, ...(r.costUsd !== undefined && { costUsd: r.costUsd }), warnings: r.warnings ?? [],

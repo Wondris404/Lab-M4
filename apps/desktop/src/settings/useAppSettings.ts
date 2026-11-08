@@ -1,19 +1,21 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import {
   clearLegacyFontSize,
+  asHexColor,
   DEFAULT_APP_SETTINGS,
   DEFAULT_TERMINAL_COLORS,
   normalizeAppSettings,
   readLegacyFontSize,
   type AiSettings,
+  type AppearanceSettings,
   type AppSettings,
   type GeneralSettings,
   type TerminalColorMode,
   type TerminalColors,
-  type ThemeId,
+  type SettingsTab,
 } from "./types";
-import { applyThemeToDocument } from "./applyAppearance";
+import { accentColors, applyThemeToDocument, resolveAppearance, SYSTEM_THEME_QUERY } from "./applyAppearance";
 import {
   ensureFontStackReady,
   preloadWebFonts,
@@ -43,28 +45,52 @@ export function useAppSettings() {
   const [settings, setSettings] = useState<AppSettings>(DEFAULT_APP_SETTINGS);
   const [ready, setReady] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
-  const [settingsTab, setSettingsTab] = useState<
-    "appearance" | "terminal" | "ai" | "general" | "about"
-  >("appearance");
+  const [settingsTab, setSettingsTab] = useState<SettingsTab>("appearance");
+  const [systemDark, setSystemDark] = useState(() => window.matchMedia(SYSTEM_THEME_QUERY).matches);
+  const appearance = resolveAppearance(settings.appearance, systemDark);
+  const { globalTheme, terminalTheme } = appearance;
+  const { accent } = settings.appearance;
+  const { fontFamily } = settings.terminal;
+
+  useEffect(() => {
+    const query = window.matchMedia(SYSTEM_THEME_QUERY);
+    const sync = () => setSystemDark(query.matches);
+    query.addEventListener("change", sync);
+    sync();
+    return () => query.removeEventListener("change", sync);
+  }, []);
+
+  useLayoutEffect(() => {
+    applyThemeToDocument(globalTheme, fontFamily);
+    const root = document.documentElement.style;
+    const light = accentColors(accent, false);
+    const dark = accentColors(accent, true);
+    const colors = globalTheme === "wraith" ? dark : light;
+    root.setProperty("--accent-fill", accent);
+    root.setProperty("--accent-ink", colors.foreground);
+    root.setProperty("--accent-light", light.readable);
+    root.setProperty("--accent-dark", dark.readable);
+    root.setProperty("--accent", colors.readable);
+    root.setProperty("--accent-hover", colors.readable);
+  }, [accent, fontFamily, globalTheme]);
 
   const settingsRef = useRef(settings);
   const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const readyRef = useRef(false);
+  const saveQueueRef = useRef(Promise.resolve());
 
-  settingsRef.current = settings;
-
-  const persist = useCallback(async (next: AppSettings) => {
-    try {
-      await invoke("save_app_settings", { state: toPersistedPayload(next) });
-    } catch {
-      // ignore persistence failures
-    }
+  const persist = useCallback((next: AppSettings) => {
+    const save = saveQueueRef.current.then(() =>
+      invoke<void>("save_app_settings", { state: toPersistedPayload(next) })
+    );
+    saveQueueRef.current = save.catch(() => undefined);
+    return saveQueueRef.current;
   }, []);
 
   const schedulePersist = useCallback(
     (next: AppSettings) => {
       if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
       saveTimerRef.current = setTimeout(() => {
+        saveTimerRef.current = null;
         void persist(next);
       }, SAVE_DEBOUNCE_MS);
     },
@@ -79,13 +105,24 @@ export function useAppSettings() {
     await persist(settingsRef.current);
   }, [persist]);
 
+  const updateSettings = useCallback(
+    (updater: (prev: AppSettings) => AppSettings, options?: { persist?: boolean }) => {
+      const next = updater(settingsRef.current);
+      settingsRef.current = next;
+      setSettings(next);
+      if (options?.persist !== false) schedulePersist(next);
+    },
+    [schedulePersist]
+  );
+
   useEffect(() => {
     let cancelled = false;
     void (async () => {
+      let next = DEFAULT_APP_SETTINGS;
       try {
         const raw = await invoke<unknown>("load_app_settings");
         if (cancelled) return;
-        let next = normalizeAppSettings(raw);
+        next = normalizeAppSettings(raw);
 
         // Frontend-only migration for localStorage font size.
         const legacySize = readLegacyFontSize();
@@ -103,65 +140,52 @@ export function useAppSettings() {
           clearLegacyFontSize();
         }
 
-        // Preload Google Fonts, then ensure the saved face is actually ready.
-        await preloadWebFonts().catch(() => undefined);
-        const usable = resolveUsableFontStack(next.terminal.fontFamily);
-        await ensureFontStackReady(usable).catch(() => undefined);
-        if (usable !== next.terminal.fontFamily) {
-          next = {
-            ...next,
-            terminal: { ...next.terminal, fontFamily: usable },
-          };
-          void persist(next);
-        }
-
-        setSettings(next);
-        settingsRef.current = next;
-        applyThemeToDocument(next.appearance.theme, next.terminal.fontFamily);
       } catch {
         if (cancelled) return;
-        applyThemeToDocument(
-          DEFAULT_APP_SETTINGS.appearance.theme,
-          DEFAULT_APP_SETTINGS.terminal.fontFamily
-        );
-      } finally {
-        if (!cancelled) {
-          readyRef.current = true;
-          setReady(true);
-        }
       }
+      settingsRef.current = next;
+      setSettings(next);
+      setReady(true);
+
+      // Font preparation may finish after the user changes another setting.
+      const savedFont = next.terminal.fontFamily;
+      await preloadWebFonts().catch(() => undefined);
+      const usable = resolveUsableFontStack(savedFont);
+      await ensureFontStackReady(usable).catch(() => undefined);
+      if (cancelled || usable === savedFont || settingsRef.current.terminal.fontFamily !== savedFont) return;
+      updateSettings((prev) => ({
+        ...prev,
+        terminal: { ...prev.terminal, fontFamily: usable },
+      }));
     })();
 
     return () => {
       cancelled = true;
       if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
     };
-  }, [persist]);
-
-  const updateSettings = useCallback(
-    (updater: (prev: AppSettings) => AppSettings, options?: { persist?: boolean }) => {
-      setSettings((prev) => {
-        const next = updater(prev);
-        settingsRef.current = next;
-        if (options?.persist !== false) {
-          schedulePersist(next);
-        }
-        return next;
-      });
-    },
-    [schedulePersist]
-  );
+  }, [persist, updateSettings]);
 
   const setTheme = useCallback(
-    (theme: ThemeId) => {
-      updateSettings((prev) => {
-        const next = {
-          ...prev,
-          appearance: { ...prev.appearance, theme },
-        };
-        applyThemeToDocument(theme, next.terminal.fontFamily);
-        return next;
-      });
+    (theme: AppearanceSettings["theme"]) => {
+      updateSettings((prev) => ({
+        ...prev,
+        appearance: { ...prev.appearance, theme },
+        terminal: { ...prev.terminal, colorMode: "theme" },
+      }));
+    },
+    [updateSettings]
+  );
+
+  const setAppearance = useCallback(
+    (patch: Partial<AppearanceSettings>) => {
+      updateSettings((prev) => ({
+        ...prev,
+        appearance: {
+          ...prev.appearance,
+          ...patch,
+          accent: asHexColor(patch.accent, prev.appearance.accent),
+        },
+      }));
     },
     [updateSettings]
   );
@@ -182,14 +206,10 @@ export function useAppSettings() {
         const ready = await ensureFontStackReady(fontFamily).catch(
           () => fontFamily
         );
-        updateSettings((prev) => {
-          const next = {
-            ...prev,
-            terminal: { ...prev.terminal, fontFamily: ready },
-          };
-          applyThemeToDocument(next.appearance.theme, ready);
-          return next;
-        });
+        updateSettings((prev) => ({
+          ...prev,
+          terminal: { ...prev.terminal, fontFamily: ready },
+        }));
       })();
     },
     [updateSettings]
@@ -200,7 +220,7 @@ export function useAppSettings() {
       updateSettings((prev) => {
         // When switching to custom for the first time, seed from the active theme.
         if (colorMode === "custom" && prev.terminal.colorMode !== "custom") {
-          const themeColors = getTheme(prev.appearance.theme).terminal;
+          const themeColors = getTheme(terminalTheme).terminal;
           return {
             ...prev,
             terminal: {
@@ -223,7 +243,7 @@ export function useAppSettings() {
         };
       });
     },
-    [updateSettings]
+    [terminalTheme, updateSettings]
   );
 
   const setTerminalColor = useCallback(
@@ -245,7 +265,7 @@ export function useAppSettings() {
 
   const resetTerminalColorsFromTheme = useCallback(() => {
     updateSettings((prev) => {
-      const themeColors = getTheme(prev.appearance.theme).terminal;
+      const themeColors = getTheme(terminalTheme).terminal;
       return {
         ...prev,
         terminal: {
@@ -262,7 +282,7 @@ export function useAppSettings() {
         },
       };
     });
-  }, [updateSettings]);
+  }, [terminalTheme, updateSettings]);
 
   const setAiSettings = useCallback(
     async (ai: AiSettings) => {
@@ -354,7 +374,7 @@ export function useAppSettings() {
   );
 
   const openSettings = useCallback(
-    (tab: "appearance" | "terminal" | "ai" | "general" | "about" = "appearance") => {
+    (tab: SettingsTab = "appearance") => {
       setSettingsTab(tab);
       setSettingsOpen(true);
     },
@@ -365,6 +385,7 @@ export function useAppSettings() {
 
   return {
     settings,
+    appearance,
     settingsRef,
     ready,
     settingsOpen,
@@ -373,6 +394,7 @@ export function useAppSettings() {
     openSettings,
     closeSettings,
     setTheme,
+    setAppearance,
     setFontSize,
     setFontFamily,
     setTerminalColorMode,

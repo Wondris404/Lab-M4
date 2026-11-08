@@ -1,8 +1,19 @@
 import { useMemo, useState } from 'react';
-import { formatFull, formatShort } from './format';
+import {
+  buildUsageDashboard,
+  metricValue,
+  PERIODS,
+  periodStart,
+  providerInfo,
+  usageDay,
+  type UsageMetric,
+  type UsagePeriod,
+} from './dashboard';
+import { formatFull } from './format';
 import { usageCsv } from './csv';
 import { useUsage } from './useUsage';
 import { selectUsage, usageState, type SortField } from './viewModel';
+import { formatMetric, UsageChart } from './UsageChart';
 import './usage.css';
 
 export interface UsageItem {
@@ -17,38 +28,114 @@ export interface UsageItem {
   costUsd?: number;
   warnings: string[];
 }
-export function UsageTab() {
-  const { records, sources, warnings, loading, error, refresh, addSource } =
-    useUsage();
-  const [sourceAgent, setSourceAgent] = useState('codex');
-  const [folder, setFolder] = useState(true);
-  const [sort, setSort] = useState<SortField>('timestamp');
-  const [descending, setDescending] = useState(true);
+
+const columns: [SortField, string][] = [
+  ['timestamp', 'Deň'],
+  ['agent', 'Agent'],
+  ['model', 'Model'],
+  ['session', 'Relácia'],
+  ['input', 'Vstup'],
+  ['output', 'Výstup'],
+  ['cached', 'Cache'],
+  ['reasoning', 'Reasoning'],
+];
+const PAGE_SIZE = 50;
+const percent = new Intl.NumberFormat('sk-SK', {
+  style: 'percent',
+  maximumFractionDigits: 1,
+});
+
+export function UsageTab({
+  visible = true,
+  theme = 'light',
+}: {
+  visible?: boolean;
+  theme?: 'light' | 'dark';
+}) {
+  const {
+    records,
+    sources,
+    warnings,
+    loading,
+    error,
+    refresh,
+    addSource,
+    changeSource,
+  } = useUsage(visible);
+  const [period, setPeriod] = useState<UsagePeriod>(90);
+  const [metric, setMetric] = useState<UsageMetric>('tokens');
   const [agent, setAgent] = useState('');
   const [model, setModel] = useState('');
   const [day, setDay] = useState('');
   const [session, setSession] = useState('');
+  const [sourceAgent, setSourceAgent] = useState('codex');
+  const [folder, setFolder] = useState(true);
+  const [sort, setSort] = useState<SortField>('timestamp');
+  const [descending, setDescending] = useState(true);
+  const [details, setDetails] = useState(false);
+  const [page, setPage] = useState(0);
+
+  const now = useMemo(() => Date.now(), [records, visible, period]);
+  const start = periodStart(period, now);
+  const inPeriod = useMemo(
+    () =>
+      records.filter((record) => {
+        const timestamp = Date.parse(record.timestamp);
+        return timestamp >= start && timestamp <= now;
+      }),
+    [records, start, now],
+  );
   const shown = useMemo(
     () =>
-      selectUsage(records, { agent, model, day, session }, sort, descending),
-    [records, agent, model, day, session, sort, descending],
+      selectUsage(inPeriod, { agent, model, day, session }, sort, descending),
+    [inPeriod, agent, model, day, session, sort, descending],
   );
-  const status = usageState(loading, error, sources.length, shown.length);
-  const tokens = shown.reduce((sum, r) => sum + r.input + r.output, 0);
-  const known = shown.filter((r) => r.costUsd !== undefined);
-  const cost = known.length
-    ? `${formatFull(Math.round(known.reduce((sum, r) => sum + (r.costUsd ?? 0), 0) * 100) / 100)} USD`
-    : '—';
-  const days = useMemo(() => {
-    const result = new Map<string, number>();
-    shown.forEach((r) => {
-      const date = r.timestamp.slice(0, 10);
-      result.set(date, (result.get(date) ?? 0) + r.input + r.output);
-    });
-    return [...result.entries()].sort(([a], [b]) => a.localeCompare(b));
-  }, [shown]);
-  const max = Math.max(1, ...days.map(([, n]) => n));
+  const dashboard = useMemo(
+    () => buildUsageDashboard(shown, period, now),
+    [shown, period, now],
+  );
+  const total = dashboard.total;
+  const activeValue = metricValue(total, metric);
+  const providers = [...dashboard.agents].sort(
+    (a, b) =>
+      (metricValue(b[1], metric) ?? 0) - (metricValue(a[1], metric) ?? 0),
+  );
+  const modelRows = [...dashboard.models].sort(
+    (a, b) => (metricValue(b, metric) ?? 0) - (metricValue(a, metric) ?? 0),
+  );
+  const notices = [
+    ...new Set([...warnings, ...shown.flatMap((row) => row.warnings)]),
+  ];
+  const status = usageState(
+    loading,
+    error,
+    sources.filter((source) => source.enabled).length,
+    shown.length,
+  );
+  const composition = [
+    {
+      label: 'Vstup bez cache',
+      count: total.input - total.cached,
+      color: 'var(--usage-uncached)',
+    },
+    {
+      label: 'Vstup z cache',
+      count: total.cached,
+      color: 'var(--usage-cached)',
+    },
+    { label: 'Výstup', count: total.output, color: 'var(--usage-output)' },
+  ];
+  const allTokens = total.input + total.output;
+  const pageCount = Math.ceil(shown.length / PAGE_SIZE);
+  const currentPage = Math.max(0, Math.min(page, pageCount - 1));
+  const updateAgent = (value: string) => {
+    setAgent(value);
+    setModel('');
+    setSession('');
+    setPage(0);
+  };
   const toggleSort = (field: SortField) => {
+    setPage(0);
     if (sort === field) setDescending(!descending);
     else {
       setSort(field);
@@ -65,185 +152,566 @@ export function UsageTab() {
     link.click();
     window.setTimeout(() => URL.revokeObjectURL(url), 1000);
   };
+
   return (
-    <main className="usage-tab" aria-label="Usage">
-      <h1>Usage</h1>
-      <div className="usage-filters">
-        <label>
-          Zdroj{' '}
+    <main className="usage-tab" data-usage-theme={theme} aria-label="Usage">
+      <div className="usage-toolbar">
+        <div className="usage-toolbar-inner">
+          <h1>Usage</h1>
           <select
-            value={sourceAgent}
-            onChange={(e) => {
-              setSourceAgent(e.target.value);
-              setFolder(e.target.value === 'codex');
-            }}
+            aria-label="Agent"
+            value={agent}
+            onChange={(event) => updateAgent(event.target.value)}
           >
-            <option value="codex">Codex</option>
-            <option value="grok-build">Grok Build</option>
-            <option value="opencode">OpenCode</option>
+            <option value="">Všetci agenti</option>
+            {[...new Set(records.map((record) => record.agent))].map(
+              (value) => (
+                <option key={value} value={value}>
+                  {providerInfo(value).label}
+                </option>
+              ),
+            )}
           </select>
-        </label>
-        {sourceAgent === 'codex' && (
-          <label>
-            <input
-              type="checkbox"
-              checked={folder}
-              onChange={(e) => setFolder(e.target.checked)}
-            />{' '}
-            Priečinok
-          </label>
+          <div
+            className="usage-segment usage-period"
+            role="group"
+            aria-label="Obdobie"
+          >
+            {PERIODS.map(([value, label]) => (
+              <button
+                key={value}
+                type="button"
+                aria-pressed={period === value}
+                onClick={() => {
+                  setPeriod(value);
+                  setDay('');
+                  setPage(0);
+                }}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
+          <div className="usage-segment" role="group" aria-label="Metrika">
+            <button
+              type="button"
+              aria-pressed={metric === 'tokens'}
+              onClick={() => setMetric('tokens')}
+            >
+              Tokeny
+            </button>
+            <button
+              type="button"
+              aria-pressed={metric === 'cost'}
+              onClick={() => setMetric('cost')}
+            >
+              Cena
+            </button>
+          </div>
+          <div className="usage-actions">
+            <button
+              type="button"
+              className="usage-button"
+              disabled={loading}
+              onClick={() => void refresh()}
+            >
+              Obnoviť
+            </button>
+          </div>
+        </div>
+      </div>
+
+      <div className="usage-content">
+        <div className="usage-notices">
+          {status === 'loading' && (
+            <p role="status">
+              {records.length
+                ? 'Obnovujem históriu na pozadí…'
+                : 'Načítavam údaje Usage…'}
+            </p>
+          )}
+          {error && (
+            <p role="alert" className="usage-error">
+              {error}
+            </p>
+          )}
+          {notices.length > 0 && (
+            <details>
+              <summary>
+                Údaje môžu byť neúplné <span>{notices.length}</span>
+              </summary>
+              <ul>
+                {notices.map((notice) => (
+                  <li key={notice}>{notice}</li>
+                ))}
+              </ul>
+            </details>
+          )}
+        </div>
+
+        {(model || day || session) && (
+          <div className="usage-active-filters">
+            <span>
+              {[model, day, session ? 'Vybraná relácia' : '']
+                .filter(Boolean)
+                .join(' · ')}
+            </span>
+            <button
+              type="button"
+              className="usage-button"
+              onClick={() => {
+                setModel('');
+                setDay('');
+                setSession('');
+                setPage(0);
+              }}
+            >
+              Vymazať filtre
+            </button>
+          </div>
         )}
-        <button
-          disabled={loading}
-          onClick={() => void addSource(sourceAgent, folder)}
+        {shown.length > 0 ? (
+          <>
+            <div className="usage-overview">
+              <section
+                className="usage-summary"
+                aria-label="Súhrn podľa agenta"
+              >
+                <p className="usage-kicker">
+                  {metric === 'tokens'
+                    ? 'Spracované tokeny'
+                    : 'Dostupný odhad ceny'}
+                </p>
+                <strong
+                  className="usage-hero"
+                  title={formatMetric(activeValue, metric)}
+                >
+                  {formatMetric(activeValue, metric, true)}
+                </strong>
+                <p className="usage-muted">
+                  Relácie · {formatFull(total.sessions.size)}
+                </p>
+                <ul className="usage-providers">
+                  {providers.map(([name, group]) => {
+                    const info = providerInfo(name);
+                    const value = metricValue(group, metric);
+                    return (
+                      <li key={name}>
+                        <button
+                          type="button"
+                          aria-pressed={agent === name}
+                          onClick={() =>
+                            updateAgent(agent === name ? '' : name)
+                          }
+                        >
+                          <i
+                            className="usage-dot"
+                            style={{ background: info.color }}
+                          />
+                          <span>{info.label}</span>
+                          <strong title={formatMetric(value, metric)}>
+                            {formatMetric(value, metric, true)}
+                          </strong>
+                        </button>
+                        <small>
+                          {formatFull(group.sessions.size)} relácií
+                          {value !== null &&
+                            activeValue !== null &&
+                            activeValue > 0 &&
+                            ` · ${percent.format(value / activeValue)}`}
+                        </small>
+                      </li>
+                    );
+                  })}
+                </ul>
+              </section>
+              <UsageChart
+                key={`${period}-${metric}`}
+                dashboard={dashboard}
+                metric={metric}
+              />
+            </div>
+
+            <section className="usage-totals" aria-label="Rozdelenie spotreby">
+              <h2>Súčty</h2>
+              <dl>
+                <div>
+                  <dt>Spracované tokeny</dt>
+                  <dd title={formatFull(allTokens)}>
+                    {formatMetric(allTokens, 'tokens', true)}
+                  </dd>
+                </div>
+                {composition.map(({ label, count }) => (
+                  <div key={label}>
+                    <dt>{label}</dt>
+                    <dd title={formatFull(count)}>
+                      {formatMetric(count, 'tokens', true)}
+                    </dd>
+                  </div>
+                ))}
+                <div>
+                  <dt>Odhad ceny</dt>
+                  <dd>{formatMetric(metricValue(total, 'cost'), 'cost')}</dd>
+                  {total.priced < total.count && (
+                    <small>
+                      {total.priced
+                        ? 'Čiastočný odhad'
+                        : 'Cena nie je dostupná'}
+                    </small>
+                  )}
+                </div>
+              </dl>
+              {allTokens > 0 && (
+                <div className="usage-composition">
+                  <h3>Tokeny podľa typu</h3>
+                  <div
+                    className="usage-composition-track"
+                    role="img"
+                    aria-label={composition
+                      .map(
+                        ({ label, count }) => `${label} ${formatFull(count)}`,
+                      )
+                      .join(', ')}
+                  >
+                    {composition.map(
+                      ({ label, count, color }) =>
+                        count > 0 && (
+                          <span
+                            key={label}
+                            style={{
+                              flexGrow: count / allTokens,
+                              background: color,
+                            }}
+                          />
+                        ),
+                    )}
+                  </div>
+                  <ul>
+                    {composition.map(({ label, count, color }) => (
+                      <li key={label}>
+                        <i
+                          className="usage-dot"
+                          style={{ background: color }}
+                        />
+                        {label}{' '}
+                        <strong>{formatMetric(count, 'tokens', true)}</strong>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+            </section>
+
+            <section className="usage-breakdown">
+              <h2>
+                Rozdelenie podľa modelu
+                {modelRows.length > 8 && <small>Prvých 8</small>}
+              </h2>
+              <div className="usage-table-wrap">
+                <table>
+                  <thead>
+                    <tr>
+                      <th>Model</th>
+                      <th>Agent</th>
+                      <th className="usage-number">Podiel</th>
+                      <th className="usage-number">
+                        {metric === 'tokens' ? 'Tokeny' : 'Odhad (USD)'}
+                      </th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {modelRows.slice(0, 8).map((row) => {
+                      const value = metricValue(row, metric);
+                      const share =
+                        value !== null &&
+                        activeValue !== null &&
+                        activeValue > 0
+                          ? value / activeValue
+                          : null;
+                      const info = providerInfo(row.agent);
+                      return (
+                        <tr key={JSON.stringify([row.agent, row.model])}>
+                          <td>{row.model}</td>
+                          <td>
+                            <span className="usage-agent-label">
+                              <i
+                                className="usage-dot"
+                                style={{ background: info.color }}
+                              />
+                              {info.label}
+                            </span>
+                          </td>
+                          <td className="usage-number">
+                            {share === null ? '—' : percent.format(share)}
+                          </td>
+                          <td
+                            className="usage-number"
+                            title={formatMetric(value, metric)}
+                          >
+                            {formatMetric(value, metric, true)}
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            </section>
+          </>
+        ) : (
+          <div className="usage-empty">
+            <h2>
+              {status === 'needs-source'
+                ? 'Zatiaľ bez zdrojov'
+                : status === 'loading'
+                  ? 'Pripravujem prehľad'
+                  : 'Žiadne záznamy'}
+            </h2>
+            <p>
+              {status === 'needs-source'
+                ? 'Zdroj môžeš pridať v správe zdrojov nižšie.'
+                : status === 'loading'
+                  ? 'História sa zobrazí po načítaní.'
+                  : 'Pre toto obdobie alebo výber nie je dostupná história.'}
+            </p>
+          </div>
+        )}
+
+        <details
+          className="usage-panel"
+          onToggle={(event) => setDetails(event.currentTarget.open)}
         >
-          Pridať zdroj
-        </button>
-        <button disabled={loading} onClick={() => void refresh()}>
-          Obnoviť
-        </button>
-        <button disabled={loading || !shown.length} onClick={download}>
-          Exportovať CSV
-        </button>
-      </div>
-      {status === 'loading' && <p role="status">Načítavam údaje Usage…</p>}
-      {status === 'error' && <p role="alert">{error}</p>}
-      {status === 'needs-source' && (
-        <p>Vyberte zdroj, ktorý chcete zahrnúť do Usage.</p>
-      )}
-      <div className="usage-filters">
-        <label>
-          Agent{' '}
-          <select value={agent} onChange={(e) => setAgent(e.target.value)}>
-            <option value="">Všetci</option>
-            {[...new Set(records.map((r) => r.agent))].map((v) => (
-              <option key={v}>{v}</option>
-            ))}
-          </select>
-        </label>
-        <label>
-          Model{' '}
-          <select value={model} onChange={(e) => setModel(e.target.value)}>
-            <option value="">Všetky</option>
-            {[...new Set(records.map((r) => r.model))].map((v) => (
-              <option key={v}>{v}</option>
-            ))}
-          </select>
-        </label>
-        <label>
-          Deň{' '}
-          <input
-            type="date"
-            value={day}
-            onChange={(e) => setDay(e.target.value)}
-          />
-        </label>
-        <label>
-          Relácia{' '}
-          <select value={session} onChange={(e) => setSession(e.target.value)}>
-            <option value="">Všetky</option>
-            {[...new Set(records.map((r) => r.session))].map((v) => (
-              <option key={v}>{v}</option>
-            ))}
-          </select>
-        </label>
-      </div>
-      {status === 'empty' && <p>Žiadne záznamy pre vybrané filtre.</p>}
-      {status === 'ready' && (
-        <>
-          <div className="usage-cards">
-            <div>
-              Tokeny{' '}
-              <strong title={formatFull(tokens)}>{formatShort(tokens)}</strong>
-            </div>
-            <div>
-              Relácie{' '}
-              <strong>
-                {formatFull(
-                  new Set(shown.map((r) => `${r.agent}:${r.session}`)).size,
-                )}
-              </strong>
-            </div>
-            <div>
-              Cena (USD) <strong>{cost}</strong>
-              {known.length > 0 && known.length < shown.length && ' (neúplné údaje)'}
-              {known.length < shown.length && (
-                <span> Čiastočné / NEOVERENÉ</span>
+          <summary>
+            Záznamy a filtre <span>{formatFull(shown.length)}</span>
+          </summary>
+          {details && (
+            <div className="usage-panel-content">
+              <div className="usage-filters">
+                <label>
+                  Model
+                  <select
+                    value={model}
+                    onChange={(event) => {
+                      setModel(event.target.value);
+                      setPage(0);
+                    }}
+                  >
+                    <option value="">Všetky</option>
+                    {[
+                      ...new Set(
+                        records
+                          .filter((row) => !agent || row.agent === agent)
+                          .map((row) => row.model),
+                      ),
+                    ].map((value) => (
+                      <option key={value}>{value}</option>
+                    ))}
+                  </select>
+                </label>
+                <label>
+                  Deň
+                  <input
+                    type="date"
+                    value={day}
+                    onChange={(event) => {
+                      setDay(event.target.value);
+                      setPage(0);
+                    }}
+                  />
+                </label>
+                <label>
+                  Relácia
+                  <select
+                    className="usage-session-filter"
+                    value={session}
+                    onChange={(event) => {
+                      setSession(event.target.value);
+                      setPage(0);
+                    }}
+                  >
+                    <option value="">Všetky</option>
+                    {[
+                      ...new Set(
+                        records
+                          .filter((row) => !agent || row.agent === agent)
+                          .map((row) => row.session),
+                      ),
+                    ].map((value) => (
+                      <option key={value} value={value}>
+                        {value.length > 18 ? `${value.slice(0, 14)}…` : value}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <button
+                  type="button"
+                  className="usage-button"
+                  disabled={loading || !shown.length}
+                  onClick={download}
+                >
+                  Exportovať CSV
+                </button>
+              </div>
+              {shown.length > 0 && (
+                <>
+                  <div className="usage-table-wrap usage-ledger">
+                    <table>
+                      <thead>
+                        <tr>
+                          {columns.map(([field, label]) => (
+                            <th
+                              key={field}
+                              aria-sort={
+                                sort === field
+                                  ? descending
+                                    ? 'descending'
+                                    : 'ascending'
+                                  : 'none'
+                              }
+                            >
+                              <button
+                                type="button"
+                                onClick={() => toggleSort(field)}
+                              >
+                                {label}
+                                {sort === field && (descending ? ' ↓' : ' ↑')}
+                              </button>
+                            </th>
+                          ))}
+                          <th>USD</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {shown
+                          .slice(
+                            currentPage * PAGE_SIZE,
+                            (currentPage + 1) * PAGE_SIZE,
+                          )
+                          .map((row, index) => (
+                            <tr
+                              key={`${row.agent}-${row.session}-${row.timestamp}-${index}`}
+                            >
+                              <td>{usageDay(row.timestamp)}</td>
+                              <td>{providerInfo(row.agent).label}</td>
+                              <td>{row.model}</td>
+                              <td
+                                className="usage-session-cell"
+                                title={row.session}
+                              >
+                                {row.session}
+                              </td>
+                              <td>{formatFull(row.input)}</td>
+                              <td>{formatFull(row.output)}</td>
+                              <td>{formatFull(row.cached)}</td>
+                              <td>{formatFull(row.reasoning)}</td>
+                              <td>
+                                {row.costUsd === undefined
+                                  ? '—'
+                                  : formatFull(row.costUsd)}
+                              </td>
+                            </tr>
+                          ))}
+                      </tbody>
+                    </table>
+                  </div>
+                  {pageCount > 1 && (
+                    <div className="usage-pager">
+                      <button
+                        type="button"
+                        className="usage-button"
+                        disabled={currentPage === 0}
+                        onClick={() => setPage(currentPage - 1)}
+                      >
+                        Predošlá
+                      </button>
+                      <span>
+                        Strana {currentPage + 1} z {pageCount}
+                      </span>
+                      <button
+                        type="button"
+                        className="usage-button"
+                        disabled={currentPage + 1 === pageCount}
+                        onClick={() => setPage(currentPage + 1)}
+                      >
+                        Ďalšia
+                      </button>
+                    </div>
+                  )}
+                </>
               )}
             </div>
-          </div>
-          <h2>Denný prehľad</h2>
-          <div className="usage-chart" role="list">
-            {days.map(([d, n]) => (
-              <div key={d} role="listitem">
-                <span>{d}</span>
-                <meter min={0} max={max} value={n} />
-                <span>{formatFull(n)}</span>
-              </div>
-            ))}
-          </div>
-          <h2>Záznamy</h2>
-          <table>
-            <thead>
-              <tr>
-                {(
-                  [
-                    ['timestamp', 'Deň'],
-                    ['agent', 'Agent'],
-                    ['model', 'Model'],
-                    ['session', 'Relácia'],
-                    ['input', 'Vstup'],
-                    ['output', 'Výstup'],
-                    ['cached', 'Cache'],
-                    ['reasoning', 'Reasoning'],
-                  ] as [SortField, string][]
-                ).map(([field, label]) => (
-                  <th
-                    key={field}
-                    aria-sort={
-                      sort === field
-                        ? descending
-                          ? 'descending'
-                          : 'ascending'
-                        : 'none'
-                    }
+          )}
+        </details>
+
+        <details className="usage-panel">
+          <summary>
+            Zdroje histórie <span>{sources.length}</span>
+          </summary>
+          <div className="usage-panel-content">
+            <ul className="usage-sources">
+              {sources.map((source) => (
+                <li key={source.id}>
+                  <span>
+                    <strong>{providerInfo(source.agent).label}</strong>{' '}
+                    <small>
+                      · {source.name} ·{' '}
+                      {source.automatic ? 'Automatický' : 'Ručný'}
+                      {!source.enabled && ' · Vypnutý'}
+                      {source.coveredBy && ' · Prekrýva sa s iným zdrojom'}
+                    </small>
+                  </span>
+                  <button
+                    type="button"
+                    className="usage-button"
+                    disabled={loading}
+                    onClick={() => void changeSource(source)}
                   >
-                    <button onClick={() => toggleSort(field)}>{label}</button>
-                  </th>
-                ))}
-                <th>EUR</th>
-              </tr>
-            </thead>
-            <tbody>
-              {shown.map((r, i) => (
-                <tr key={`${r.agent}-${r.session}-${r.timestamp}-${i}`}>
-                  <td>{r.timestamp.slice(0, 10)}</td>
-                  <td>{r.agent}</td>
-                  <td>{r.model}</td>
-                  <td>{r.session}</td>
-                  <td>{formatFull(r.input)}</td>
-                  <td>{formatFull(r.output)}</td>
-                  <td>{formatFull(r.cached)}</td>
-                  <td>{formatFull(r.reasoning)}</td>
-                  <td>
-                    {r.costUsd === undefined ? '—' : formatFull(r.costUsd)}
-                  </td>
-                </tr>
+                    {source.automatic
+                      ? source.enabled
+                        ? 'Vypnúť'
+                        : 'Zapnúť'
+                      : 'Odobrať'}
+                  </button>
+                </li>
               ))}
-            </tbody>
-          </table>
-        </>
-      )}
-      <h2>Upozornenia</h2>
-      {warnings.length || shown.some((r) => r.warnings.length) ? (
-        <ul>
-          {[...warnings, ...shown.flatMap((r) => r.warnings)].map((w, i) => (
-            <li key={i}>{w}</li>
-          ))}
-        </ul>
-      ) : (
-        <p>Žiadne upozornenia.</p>
-      )}
+            </ul>
+            <div className="usage-filters">
+              <label>
+                Typ zdroja
+                <select
+                  value={sourceAgent}
+                  onChange={(event) => {
+                    setSourceAgent(event.target.value);
+                    setFolder(event.target.value === 'codex');
+                  }}
+                >
+                  <option value="codex">Codex</option>
+                  <option value="grok-build">Grok Build</option>
+                  <option value="opencode">OpenCode</option>
+                </select>
+              </label>
+              {sourceAgent === 'codex' && (
+                <label className="usage-check">
+                  <input
+                    type="checkbox"
+                    checked={folder}
+                    onChange={(event) => setFolder(event.target.checked)}
+                  />{' '}
+                  Priečinok
+                </label>
+              )}
+              <button
+                type="button"
+                className="usage-button"
+                disabled={loading}
+                onClick={() => void addSource(sourceAgent, folder)}
+              >
+                Pridať zdroj
+              </button>
+            </div>
+          </div>
+        </details>
+      </div>
     </main>
   );
 }

@@ -31,6 +31,7 @@ export type MessageStatus =
   | "running"
   | "rejected"
   | "done"
+  | "cancelled"
   | "error";
 
 export interface AgentToolCall {
@@ -233,7 +234,8 @@ export function useAgent(
   folder: string | null,
   sessionName: string,
   orchestrator: OrchestratorApi,
-  externalSettings?: AgentSettings | null
+  externalSettings?: AgentSettings | null,
+  available = true,
 ): UseAgentApi {
   const [thread, setThread] = useState<AgentThread>({
     messages: [],
@@ -265,12 +267,13 @@ export function useAgent(
   sessionNameRef.current = sessionName;
 
   useEffect(() => {
+    if (!available) return;
     const sub = bufferRef.current.attach();
     return () => {
       void sub.then((s) => s.unlisten());
       bufferRef.current.detach();
     };
-  }, []);
+  }, [available]);
 
   // Prefer parent-owned AI settings (App Settings) when provided; otherwise load from disk.
   useEffect(() => {
@@ -680,7 +683,7 @@ export function useAgent(
   const send = useCallback(
     (text: string) => {
       const trimmed = text.trim();
-      if (!trimmed) return;
+      if (!available || !trimmed) return;
       appendMessage({
         id: newMessageId(),
         role: "user",
@@ -689,7 +692,7 @@ export function useAgent(
       });
       void streamAssistant();
     },
-    [appendMessage, streamAssistant]
+    [appendMessage, available, streamAssistant]
   );
 
   const approveToolCall = useCallback((messageId: string) => {
@@ -701,8 +704,18 @@ export function useAgent(
   }, []);
 
   const cancel = useCallback(() => {
+    threadEpochRef.current += 1;
     abortRef.current?.abort();
-    setThread((prev) => ({ ...prev, busy: false }));
+    abortRef.current = null;
+    setThread((prev) => ({
+      ...prev,
+      busy: false,
+      messages: prev.messages.map((message) =>
+        message.status === "streaming" || message.status === "running"
+          ? { ...message, status: "cancelled" }
+          : message
+      ),
+    }));
   }, []);
 
   const clearThread = useCallback(() => {

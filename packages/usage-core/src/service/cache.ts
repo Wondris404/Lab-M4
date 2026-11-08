@@ -10,7 +10,8 @@ import { codexParser } from '../parsers/codex.js';
 import { codexAccumulator, type CodexCursorState } from '../parsers/codex-cursor.js';
 import { scanJsonlAppend } from './grok-cursor.js';
 import { scanCodexDirectory } from './codex-directory.js';
-import { opencodeReadUnavailable } from '../parsers/opencode.js';
+import { openCodeSnapshot } from '../parsers/opencode.js';
+import { grokHistoryFiles, isGrokHistory } from '../parsers/grok-history.js';
 
 async function lstatIfExists(path: string) {
   try { return await lstat(path); } catch (error) {
@@ -20,32 +21,14 @@ async function lstatIfExists(path: string) {
 }
 
 /** Cache normalized data only. Caller must select an application-owned cache path. */
-export async function scanCached(parser: Parser, source: string, cachePath: string, force = false): Promise<ParseResult> {
+export async function scanCached(parser: Parser, source: string, cachePath: string, force = false, codexHome = false): Promise<ParseResult> {
   const original = await lstat(source);
   if (original.isSymbolicLink()) throw new Error('Nepovolený odkaz.');
   const canonical = await realpath(source);
-  // Never serve a prior complete SQLite cache while source reads are disabled.
-  if (parser.provider === 'opencode') {
-    await assertSafeFile(source);
-    return opencodeReadUnavailable();
-  }
   const key = createHash('sha256').update(`${parser.provider}\0${canonical}`).digest('hex');
-  let signature: string;
-  if (original.isDirectory() && parser.provider === 'codex') {
-    const files: string[] = [];
-    for await (const file of findCodexFiles(canonical)) {
-      await assertSafeFile(file);
-      const info = await lstat(file);
-      const fileId = createHash('sha256').update(file).digest('hex');
-      files.push(JSON.stringify([fileId, info.dev, info.ino, info.size, info.mtimeMs, info.ctimeMs]));
-    }
-    signature = JSON.stringify([8, files.sort()]);
-  } else {
-    await assertSafeFile(source);
-    const info = await lstat(canonical);
-    const wal = await lstatIfExists(`${canonical}-wal`);
-    signature = JSON.stringify([8, info.dev, info.ino, info.size, info.mtimeMs, info.ctimeMs, wal?.size ?? null, wal?.mtimeMs ?? null]);
-  }
+  const grokHistory = parser === grokBuildParser && isGrokHistory(canonical, original.isDirectory());
+  const directory = (parser.provider === 'codex' || grokHistory) && original.isDirectory();
+  if (!directory) await assertSafeFile(source);
   if (/auth|credential|token|secret|key|login|\.env/i.test(basename(cachePath))) {
     throw new Error('Nepovolená cache.');
   }
@@ -62,18 +45,31 @@ export async function scanCached(parser: Parser, source: string, cachePath: stri
     await exec('INSERT OR IGNORE INTO cache_meta (name, value) VALUES (?, ?)', ['session_salt', randomBytes(32).toString('hex')]);
     const metadata = await new Promise<{ value: string }>((resolve, reject) => db.get('SELECT value FROM cache_meta WHERE name = ?', ['session_salt'], (e, value) => e ? reject(e) : resolve(value as { value: string })));
     const pseudonym = (sessionId: string) => createHmac('sha256', metadata.value).update(`${parser.provider}\0${sessionId}`).digest('hex');
-    if (parser === codexParser && original.isDirectory())
-      return await scanCodexDirectory(db, key, canonical, pseudonym, force);
-    if (parser === grokBuildParser && original.isFile() && !/\.zst$/i.test(canonical))
+    if (directory && parser === codexParser)
+      return await scanCodexDirectory(db, key, canonical, pseudonym, force, codexHome);
+    if (parser === grokBuildParser && !grokHistory && original.isFile() && !/\.zst$/i.test(canonical))
       return await scanJsonlAppend(db, `${key}:v2`, canonical, (previous) => grokAccumulator(previous as GrokCursorState | undefined, pseudonym), force);
     if (parser === codexParser && original.isFile() && /\.jsonl$/i.test(canonical))
-      return await scanJsonlAppend(db, `${key}:v4`, canonical, (previous) => codexAccumulator(previous as CodexCursorState | undefined, pseudonym), force);
+      return await scanJsonlAppend(db, `${key}:v6`, canonical, (previous) => codexAccumulator(previous as CodexCursorState | undefined, pseudonym), force, true);
+    const info = await lstat(canonical);
+    const sqlite = parser.provider === 'opencode' ? await openCodeSnapshot(canonical) : undefined;
+    const files: string[] = [];
+    if (directory) {
+      for await (const file of grokHistory ? grokHistoryFiles(canonical) : findCodexFiles(canonical)) {
+        await assertSafeFile(file);
+        const stat = await lstat(file);
+        const fileId = createHash('sha256').update(file).digest('hex');
+        files.push(JSON.stringify([fileId, stat.dev, stat.ino, stat.size, stat.mtimeMs, stat.ctimeMs]));
+      }
+    }
+    const signature = JSON.stringify([10, info.dev, info.ino, info.size, info.mtimeMs, info.ctimeMs, sqlite?.signature, files.sort()]);
     const row = await new Promise<{ signature: string; result: string } | undefined>((resolve, reject) => db.get('SELECT signature, result FROM scan_cache WHERE id = ?', [key], (e, value) => e ? reject(e) : resolve(value as { signature: string; result: string } | undefined)));
-    if (!force && row?.signature === signature) return JSON.parse(row.result) as ParseResult;
+    if (!force && !sqlite?.wal && !sqlite?.journal && row?.signature === signature)
+      return JSON.parse(row.result) as ParseResult;
     const parsed = await parser.parse(canonical);
-    const result = { ...parsed, records: parsed.records.map((record) => ({ ...normalizeRecord(record), sessionId: pseudonym(record.sessionId) })), limits: parsed.limits.map((limit) => ({ ...limit, sessionId: pseudonym(limit.sessionId) })) };
+    const result = { ...parsed, records: parsed.records.map((record) => ({ ...(grokHistory ? record : normalizeRecord(record)), sessionId: pseudonym(record.sessionId) })), limits: parsed.limits.map((limit) => ({ ...limit, sessionId: pseudonym(limit.sessionId) })) };
     // Cache replacement is atomic; no original file is written.
-    if (!result.partial)
+    if (!result.partial && (!sqlite || sqlite.signature === (await openCodeSnapshot(canonical)).signature))
       await exec('INSERT OR REPLACE INTO scan_cache (id, signature, result) VALUES (?, ?, ?)', [key, signature, JSON.stringify(result)]);
     return result;
   } finally {

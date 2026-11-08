@@ -256,7 +256,7 @@ fn default_app_settings() -> Value {
     json!({
         "version": 1,
         "appearance": {
-            "theme": "wraith"
+            "theme": "inherit"
         },
         "terminal": {
             "fontFamily": "Cascadia Code, Consolas, Courier New, monospace",
@@ -844,6 +844,7 @@ pub fn run() {
             save_app_settings,
             usage::usage_suggest_sources,
             usage::usage_list_sources,
+            usage::usage_set_auto_source,
             usage::usage_remove_source,
             usage::usage_select_source,
             usage::usage_scan,

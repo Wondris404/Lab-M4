@@ -50,6 +50,7 @@ export async function scanJsonlAppend(
   path: string,
   createAccumulator: (previous?: unknown) => JsonlAccumulator,
   force: boolean,
+  skipLongLines = false,
 ): Promise<CursorResult> {
   const run = (sql: string, values: unknown[] = []) =>
     new Promise<void>((resolve, reject) =>
@@ -104,6 +105,7 @@ export async function scanJsonlAppend(
     let offset = append ? row.offset : 0;
     let position = offset;
     let carry = Buffer.alloc(0);
+    let discarding = false;
     const chunk = Buffer.alloc(64 * 1024);
     try {
       while (position < info.size) {
@@ -123,15 +125,29 @@ export async function scanJsonlAppend(
           end !== -1;
           end = data.indexOf(10, start)
         ) {
-          if (end - start > 1024 * 1024) throw new LineLimitError();
-          let line = data.subarray(start, end).toString('utf8');
-          if (line.endsWith('\r')) line = line.slice(0, -1);
-          accumulator.consume(line);
+          if (!discarding && end - start > 1024 * 1024) {
+            if (!skipLongLines) throw new LineLimitError();
+            accumulator.result.warnings++;
+            accumulator.result.partial = true;
+            discarding = true;
+          }
+          if (!discarding) {
+            let line = data.subarray(start, end).toString('utf8');
+            if (line.endsWith('\r')) line = line.slice(0, -1);
+            accumulator.consume(line);
+          }
+          discarding = false;
           start = end + 1;
           offset = base + start;
         }
-        carry = data.subarray(start);
-        if (carry.length > 1024 * 1024) throw new LineLimitError();
+        carry = discarding ? Buffer.alloc(0) : data.subarray(start);
+        if (carry.length > 1024 * 1024) {
+          if (!skipLongLines) throw new LineLimitError();
+          accumulator.result.warnings++;
+          accumulator.result.partial = true;
+          carry = Buffer.alloc(0);
+          discarding = true;
+        }
       }
     } catch (error) {
       if (error instanceof LineLimitError)
@@ -156,6 +172,7 @@ export async function scanJsonlAppend(
       records: [...oldResult.records, ...fresh.records.map(normalizeRecord)],
       limits: [...oldResult.limits, ...fresh.limits],
       warnings: oldResult.warnings + fresh.warnings,
+      ...(fresh.partial && { partial: true }),
       ...(accumulator.fingerprints && {
         _fingerprints: [
           ...((oldResult as CursorResult)._fingerprints ?? []),

@@ -1,4 +1,6 @@
 import { createHash } from 'node:crypto';
+import { lstat } from 'node:fs/promises';
+import { isGrokHistory, parseGrokHistory } from './grok-history.js';
 import { emptyResult, type Parser } from './contracts.js';
 import {
   count,
@@ -109,6 +111,7 @@ export function grokAccumulator(
 export const grokBuildParser: Parser = {
   provider: 'grok-build',
   async parse(path) {
+    if (isGrokHistory(path, (await lstat(path)).isDirectory())) return parseGrokHistory(path);
     const accumulator = grokAccumulator();
     const result = accumulator.result;
     try {

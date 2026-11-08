@@ -78,7 +78,12 @@ export const COLLAPSED_SIDEBAR_WIDTH = 48;
 export const SIDEBAR_COLLAPSE_THRESHOLD = 120;
 
 export interface AppearanceSettings {
-  theme: ThemeId;
+  theme: ThemeId | "inherit";
+  globalTheme: "light" | "dark" | "system";
+  usageTheme: "light" | "dark" | "inherit";
+  accent: string;
+  appMode: "chat" | "terminal";
+  chatAnimation: "off" | "subtle" | "pixel";
 }
 
 export interface AppSettings {
@@ -89,7 +94,7 @@ export interface AppSettings {
   general: GeneralSettings;
 }
 
-export type SettingsTab = "appearance" | "terminal" | "ai" | "general" | "about";
+export type SettingsTab = "appearance" | "mode" | "terminal" | "ai" | "general" | "about";
 
 export const DEFAULT_FONT_SIZE = 13;
 export const MIN_FONT_SIZE = 8;
@@ -122,7 +127,12 @@ export const AI_PROVIDER_PRESETS: Record<
 export const DEFAULT_APP_SETTINGS: AppSettings = {
   version: 1,
   appearance: {
-    theme: "wraith",
+    theme: "inherit",
+    globalTheme: "system",
+    usageTheme: "inherit",
+    accent: "#8b5cf6",
+    appMode: "terminal",
+    chatAnimation: "subtle",
   },
   terminal: {
     fontFamily: DEFAULT_FONT_FAMILY,
@@ -284,6 +294,19 @@ export function normalizeAppSettings(raw: unknown): AppSettings {
     version: 1,
     appearance: {
       theme: isThemeId(appearance.theme) ? appearance.theme : d.appearance.theme,
+      globalTheme: appearance.globalTheme === "light" || appearance.globalTheme === "dark"
+        ? appearance.globalTheme
+        : d.appearance.globalTheme,
+      usageTheme: appearance.usageTheme === "dark" || appearance.usageTheme === "light"
+        ? appearance.usageTheme
+        : !("globalTheme" in appearance) && isThemeId(appearance.theme) && !("usageTheme" in appearance)
+          ? "light"
+          : d.appearance.usageTheme,
+      accent: asHexColor(appearance.accent, d.appearance.accent),
+      appMode: appearance.appMode === "chat" ? "chat" : d.appearance.appMode,
+      chatAnimation: appearance.chatAnimation === "off" || appearance.chatAnimation === "pixel"
+        ? appearance.chatAnimation
+        : d.appearance.chatAnimation,
     },
     terminal: {
       fontFamily: asString(terminal.fontFamily, d.terminal.fontFamily),

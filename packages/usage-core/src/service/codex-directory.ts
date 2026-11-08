@@ -20,39 +20,57 @@ export async function scanCodexDirectory(
   path: string,
   pseudonym: (id: string) => string,
   force: boolean,
+  historyOnly = false,
 ): Promise<ParseResult> {
   const result = emptyResult();
   const seen = new Set<string>();
   const budget = newExpansionBudget();
-  for await (const file of findCodexFiles(path)) {
+  for await (const file of findCodexFiles(path, historyOnly, () => {
+    result.warnings++;
+    result.partial = true;
+  })) {
     let parsed: CursorResult;
-    if (/\.zst$/i.test(file)) {
-      const accumulator = codexAccumulator(undefined, pseudonym);
-      try {
-        for await (const line of lines(file, budget)) accumulator.consume(line);
-        parsed = {
-          ...accumulator.result,
-          records: accumulator.result.records.map(normalizeRecord),
-          _fingerprints: accumulator.fingerprints,
-        };
-      } catch {
-        parsed = { ...emptyResult(), warnings: 1, partial: true };
+    try {
+      if (/\.zst$/i.test(file)) {
+        const accumulator = codexAccumulator(undefined, pseudonym);
+        try {
+          for await (const line of lines(file, budget, () => {
+            accumulator.result.warnings++;
+            accumulator.result.partial = true;
+          }))
+            accumulator.consume(line);
+          parsed = {
+            ...accumulator.result,
+            records: accumulator.result.records.map(normalizeRecord),
+            _fingerprints: accumulator.fingerprints,
+          };
+        } catch {
+          parsed = { ...emptyResult(), warnings: 1, partial: true };
+        }
+      } else {
+        const key = createHash('sha256')
+          .update(`${sourceKey}\0${file}`)
+          .digest('hex');
+        parsed = await scanJsonlAppend(
+          db,
+          `${key}:v6`,
+          file,
+          (previous) =>
+            codexAccumulator(
+              previous as CodexCursorState | undefined,
+              pseudonym,
+            ),
+          force,
+          true,
+        );
       }
-    } else {
-      const key = createHash('sha256')
-        .update(`${sourceKey}\0${file}`)
-        .digest('hex');
-      parsed = await scanJsonlAppend(
-        db,
-        `${key}:v4`,
-        file,
-        (previous) =>
-          codexAccumulator(previous as CodexCursorState | undefined, pseudonym),
-        force,
-      );
+      if (parsed.records.length !== (parsed._fingerprints?.length ?? 0))
+        throw new Error('Invalid Codex cursor');
+    } catch {
+      result.warnings++;
+      result.partial = true;
+      continue;
     }
-    if (parsed.records.length !== (parsed._fingerprints?.length ?? 0))
-      throw new Error('Invalid Codex cursor');
     for (let i = 0; i < parsed.records.length; i++) {
       const fingerprint = parsed._fingerprints![i]!;
       if (seen.has(fingerprint)) continue;

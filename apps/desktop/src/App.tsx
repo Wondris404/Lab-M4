@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 import { createPortal } from "react-dom";
 import { Terminal } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
@@ -15,6 +15,9 @@ import claudeIcon from "./assets/ai-claude.svg";
 import opencodeIcon from "./assets/ai-opencode.svg";
 import appLogo from "./assets/wraith-logo.png";
 import { AgentPaneView } from "./agent/AgentPaneView";
+import { UsageTab } from "./usage/UsageTab";
+import { isLightTheme, resolveAppearance, SYSTEM_THEME_QUERY } from "./settings/applyAppearance";
+import { getTheme } from "./settings/themes";
 import {
   psSingleQuote,
   buildAgentCommand as buildAgentCommandShared,
@@ -25,7 +28,7 @@ import type { OrchestratorApi, PaneAgentName } from "./agent/orchestratorTypes";
 import { waitForAgentToken, waitForPaneOutput } from "./agent/orchestratorWait";
 import type { PaneInfo } from "./agent/tools";
 import {
-  AppSettingsModal,
+  type AppSettingsApi,
   applyTerminalAppearance,
   clampFontSize,
   COLLAPSED_SIDEBAR_WIDTH,
@@ -35,7 +38,6 @@ import {
   ensureFontStackReady,
   resolveTerminalTheme,
   SIDEBAR_COLLAPSE_THRESHOLD,
-  useAppSettings,
   type AiSettings,
 } from "./settings";
 import {
@@ -1369,13 +1371,11 @@ function TiledNode({
   );
 }
 
-function App() {
-  const appSettings = useAppSettings();
+function App({ appSettings }: { appSettings: AppSettingsApi }) {
   const {
     settings,
     settingsRef,
     ready: settingsReady,
-    settingsOpen,
     openSettings,
     setFontSize: setSettingsFontSize,
     setSidebarCollapsed,
@@ -1384,12 +1384,32 @@ function App() {
     flushPersist: flushSettingsPersist,
   } = appSettings;
 
+  const [usageVisible, setUsageVisible] = useState(false);
+  const [usageOpened, setUsageOpened] = useState(false);
+  const [openChats, setOpenChats] = useState<Set<string>>(() => new Set());
+  const chatMode = settings.appearance.appMode === "chat";
+  const terminalVisible = !usageVisible && !chatMode;
+  const terminalTheme = appSettings.appearance.terminalTheme;
+  const terminalStyle = useMemo(() => ({
+    ...Object.fromEntries(Object.entries(getTheme(terminalTheme).css)
+      .filter(([name]) => !name.startsWith("--accent"))),
+    colorScheme: isLightTheme(terminalTheme) ? "light" : "dark",
+    "--accent": isLightTheme(terminalTheme) ? "var(--accent-light)" : "var(--accent-dark)",
+    "--accent-hover": "var(--accent)",
+    "--on-accent": isLightTheme(terminalTheme) ? "#fff" : "#000",
+  }) as CSSProperties, [terminalTheme]);
+
   const [sessions, setSessions] = useState<Session[]>([]);
   const [sidebar, setSidebar] = useState<SidebarState>({
     folders: [],
     items: [],
   });
   const [activeSessionId, setActiveSessionId] = useState<string | null>(null);
+  useEffect(() => {
+    if (!chatMode || usageVisible || !activeSessionId) return;
+    setOpenChats((previous) =>
+      previous.has(activeSessionId) ? previous : new Set([...previous, activeSessionId]));
+  }, [activeSessionId, chatMode, usageVisible]);
   const [paneDrag, setPaneDrag] = useState<PaneDragState | null>(null);
   const [sidebarDrag, setSidebarDrag] = useState<SidebarDragState | null>(null);
   const [ptyListenersReady, setPtyListenersReady] = useState(false);
@@ -1609,7 +1629,7 @@ function App() {
   const applyAppearanceToAll = useCallback(() => {
     const s = settingsRef.current;
     const opts = {
-      themeId: s.appearance.theme,
+      themeId: terminalTheme,
       fontFamily: s.terminal.fontFamily,
       fontSize: s.terminal.fontSize,
       colorMode: s.terminal.colorMode,
@@ -1626,7 +1646,7 @@ function App() {
         );
       }
     }
-  }, [collectAliveWindows, settingsRef]);
+  }, [collectAliveWindows, settingsRef, terminalTheme]);
 
   // Live-update terminals when theme / font / colors change.
   useEffect(() => {
@@ -1634,7 +1654,6 @@ function App() {
     applyAppearanceToAll();
   }, [
     settingsReady,
-    settings.appearance.theme,
     settings.terminal.fontFamily,
     settings.terminal.fontSize,
     settings.terminal.colorMode,
@@ -2178,7 +2197,7 @@ function App() {
         scrollback: 10000,
         windowsPty: { backend: "conpty" },
         theme: resolveTerminalTheme(
-          s.appearance.theme,
+          resolveAppearance(s.appearance, window.matchMedia(SYSTEM_THEME_QUERY).matches).terminalTheme,
           s.terminal.colorMode,
           s.terminal.colors
         ),
@@ -3527,6 +3546,7 @@ function App() {
 
   useEffect(() => {
     const onKeyDown = (e: KeyboardEvent) => {
+      if (!terminalVisible || appSettings.settingsOpen) return;
       if (!e.ctrlKey || !e.shiftKey || e.key !== " ") return;
       const activeElement = document.activeElement as HTMLElement | null;
       if (activeElement?.closest(".agent-pane")) return;
@@ -3546,10 +3566,10 @@ function App() {
 
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [togglePaneDictation]);
+  }, [appSettings.settingsOpen, terminalVisible, togglePaneDictation]);
 
   useEffect(() => {
-
+    if (!terminalVisible || appSettings.settingsOpen) return;
     const frame = window.requestAnimationFrame(() => {
       const session = sessionsRef.current.find((s) => s.id === activeSessionId);
       if (!session) return;
@@ -3569,7 +3589,7 @@ function App() {
     });
 
     return () => window.cancelAnimationFrame(frame);
-  }, [activeSessionId, activeWindowIds, activeLayoutSignature]);
+  }, [activeSessionId, activeWindowIds, activeLayoutSignature, appSettings.settingsOpen, terminalVisible]);
 
   const sessionsById = useMemo(
     () => new Map(sessions.map((session) => [session.id, session])),
@@ -3720,21 +3740,6 @@ function App() {
                     role="menuitem"
                     onClick={() => {
                       setHeaderMenuOpen(false);
-                      openSettings("appearance");
-                    }}
-                  >
-                    <span className="sidebar-menu-icon" aria-hidden="true">
-                      ⚙
-                    </span>
-                    <span>Settings</span>
-                  </button>
-                  <div className="sidebar-menu-sep" role="separator" />
-                  <button
-                    type="button"
-                    className="sidebar-menu-item"
-                    role="menuitem"
-                    onClick={() => {
-                      setHeaderMenuOpen(false);
                       void createSession();
                     }}
                   >
@@ -3792,15 +3797,6 @@ function App() {
               onClick={() => setSidebarCollapsed(false)}
             >
               ›
-            </button>
-            <button
-              type="button"
-              className="sidebar-rail-btn"
-              title="Settings"
-              aria-label="Settings"
-              onClick={() => openSettings("appearance")}
-            >
-              ⚙
             </button>
             <button
               type="button"
@@ -3951,6 +3947,28 @@ function App() {
           })}
         </ul>
         )}
+        <nav className="workspace-nav" aria-label="Pracovný priestor">
+          <button type="button" title={chatMode ? "Chat" : "Terminál"} aria-label={chatMode ? "Chat" : "Terminál"}
+            aria-current={usageVisible ? undefined : "page"}
+            onClick={() => setUsageVisible(false)}>
+            <span className="workspace-nav-icon" aria-hidden="true">{chatMode ? "◫" : "›_"}</span>
+            {!sidebarCollapsed && <span>{chatMode ? "Chat" : "Terminál"}</span>}
+          </button>
+          <button type="button" title="Usage" aria-label="Usage"
+            aria-current={usageVisible ? "page" : undefined}
+            onClick={() => {
+              setUsageOpened(true);
+              setUsageVisible(true);
+            }}>
+            <span className="workspace-nav-icon" aria-hidden="true">€</span>
+            {!sidebarCollapsed && <span>Usage</span>}
+          </button>
+          <button type="button" title="Nastavenia" aria-label="Nastavenia"
+            onClick={() => openSettings("appearance")}>
+            <span className="workspace-nav-icon" aria-hidden="true">⚙</span>
+            {!sidebarCollapsed && <span>Nastavenia</span>}
+          </button>
+        </nav>
         <div
           className="sidebar-resize-handle"
           title="Drag to resize sidebar"
@@ -3961,7 +3979,7 @@ function App() {
         />
       </aside>
 
-      <main className="terminal-pane">
+      <main className="terminal-pane" hidden={!terminalVisible} style={terminalStyle}>
         {hasSessions && (
           <>
             <div className="toolbar">
@@ -4081,7 +4099,39 @@ function App() {
         )}
       </main>
 
-      {settingsOpen && <AppSettingsModal api={appSettings} />}
+      <main className="chat-workspace" hidden={!chatMode || usageVisible} aria-label="Chat">
+        {sessions.filter((session) => openChats.has(session.id)).map((session) => (
+          <section className="chat-conversation" key={session.id} hidden={session.id !== activeSessionId}>
+            <header className="chat-conversation-header">
+              <span>Konverzácia</span>
+              <h1>{session.name}</h1>
+            </header>
+            <AgentPaneView
+              sessionName={session.name}
+              folder={session.folder}
+              panes={() => session.windows.filter((win) => win.alive).map((win) => ({
+                paneId: win.paneId,
+                ptyId: win.id,
+                sessionName: session.name,
+                folder: session.folder,
+                alive: win.alive,
+              }))}
+              orchestrator={orchestrator}
+              aiSettings={settings.ai}
+              onOpenAiSettings={() => openSettings("ai")}
+              animation={settings.appearance.chatAnimation}
+              unavailableReason="Odosielanie správ je v tejto verzii nedostupné. Správu si môžeš rozpísať."
+            />
+          </section>
+        ))}
+        {!activeSession && <p className="chat-no-session">Vyber alebo vytvor reláciu v bočnom paneli.</p>}
+      </main>
+
+      {usageOpened && (
+        <div className="usage-pane" hidden={!usageVisible}>
+          <UsageTab visible={usageVisible} theme={appSettings.appearance.usageTheme} />
+        </div>
+      )}
 
       {confirmDialog &&
         createPortal(

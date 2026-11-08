@@ -1,7 +1,9 @@
 import { describe, expect, it, vi } from 'vitest';
 import {
   fetchUsage,
+  loadUsage,
   type Request,
+  type Source,
 } from '../../../apps/desktop/src/usage/useUsage.js';
 import {
   selectUsage,
@@ -23,6 +25,9 @@ const item = (
   cached: 1,
   reasoning: 1,
   warnings: [],
+});
+const source = (id: string, overrides: Partial<Source> = {}): Source => ({
+  id, agent: 'codex', name: 'logs', automatic: false, enabled: true, ...overrides,
 });
 
 describe('usage view data', () => {
@@ -71,7 +76,7 @@ describe('usage view data', () => {
       }),
     ) as unknown as Request;
     const result = await fetchUsage(
-      [{ id: 'source', agent: 'codex', name: 'logs' }],
+      [source('source')],
       request,
       () => true,
     );
@@ -89,8 +94,9 @@ describe('usage view data', () => {
         warnings: [],
       },
     })) as unknown as Request;
-    await expect(fetchUsage([{ id: 'source', agent: 'codex', name: 'logs' }], request, () => true))
-      .rejects.toThrow('počas stránkovania zmenil');
+    const result = await fetchUsage([source('source')], request, () => true);
+    expect(result.records).toEqual([]);
+    expect(result.warnings[0]).toContain('počas stránkovania zmenil');
   });
 
   it('handles empty sources, cancellation and malformed pages', async () => {
@@ -101,7 +107,7 @@ describe('usage view data', () => {
     });
     expect(
       await fetchUsage(
-        [{ id: 'x', agent: 'codex', name: 'logs' }],
+        [source('x')],
         request,
         () => false,
       ),
@@ -109,12 +115,68 @@ describe('usage view data', () => {
     const invalid = vi.fn(async () => ({
       result: { totalRecords: 2, records: [], warnings: [] },
     })) as unknown as Request;
-    await expect(
-      fetchUsage(
-        [{ id: 'x', agent: 'codex', name: 'logs' }],
-        invalid,
-        () => true,
-      ),
-    ).rejects.toThrow();
+    expect((await fetchUsage([source('x')], invalid, () => true)).warnings[0])
+      .toContain('Neplatná odpoveď');
+  });
+
+  it('scans discovered sources on opening and skips disabled and covered sources', async () => {
+    const sources = [
+      source('auto-codex', { automatic: true }),
+      source('manual-file', { coveredBy: 'auto-codex' }),
+      source('auto-grok-build', { agent: 'grok-build', automatic: true, enabled: false }),
+      source('auto-opencode', { agent: 'opencode', automatic: true }),
+    ];
+    const request = vi.fn(async (command: string, args?: Record<string, unknown>) => {
+      if (command === 'usage_list_sources') return sources;
+      if (args?.saved) return null;
+      if (args?.id === 'auto-opencode') throw new Error('Databáza nedostupná');
+      return { result: {
+        status: 'ok', totalRecords: 1, offset: 0, snapshotId: 'a'.repeat(64),
+        records: [item('codex', 10)], warnings: [],
+      } };
+    });
+    const result = await loadUsage(request as unknown as Request, () => true);
+    expect(request.mock.calls.filter(([, args]) => !args?.saved).map(([command, args]) => [command, args?.id])).toEqual([
+      ['usage_list_sources', undefined], ['usage_scan', 'auto-codex'], ['usage_scan', 'auto-opencode'],
+    ]);
+    expect(result.sources).toEqual(sources);
+    expect(result.records).toEqual([item('codex', 10)]);
+    expect(result.warnings[0]).toContain('Databáza nedostupná');
+  });
+
+  it('shows saved results before background refresh and retains a failed source', async () => {
+    const sources = [source('first'), source('second', { agent: 'opencode' })];
+    const steps: string[] = [];
+    const request = vi.fn(async (command: string, args?: Record<string, unknown>) => {
+      if (command === 'usage_list_sources') return sources;
+      if (!args?.saved) steps.push(`refresh:${args?.id}`);
+      if (!args?.saved && args?.id === 'second') throw new Error('Source offline');
+      const row = args?.id === 'second' ? item('opencode', 20) : item('codex', args?.saved ? 10 : 15);
+      return { result: {
+        status: 'ok', totalRecords: 1, offset: 0, snapshotId: 'a'.repeat(64),
+        records: [row], warnings: [],
+      } };
+    });
+    const result = await loadUsage(request as unknown as Request, () => true, undefined, (records) => {
+      steps.push(records.map((record) => record.input).join(','));
+    });
+    expect(steps).toEqual(['10,20', 'refresh:first', '15,20', 'refresh:second', '15,20']);
+    expect(result.records.map((record) => record.input)).toEqual([15, 20]);
+    expect(result.warnings[0]).toContain('posledné uložené údaje');
+  });
+
+  it('scans a covered manual source when its covering source fails', async () => {
+    const request = vi.fn(async (_command: string, args?: Record<string, unknown>) => {
+      if (args?.id === 'auto-codex') throw new Error('Source unavailable');
+      return { result: {
+        status: 'ok', totalRecords: 1, offset: 0, snapshotId: 'a'.repeat(64),
+        records: [item('codex', 10)], warnings: [],
+      } };
+    });
+    const result = await fetchUsage([
+      source('auto-codex', { automatic: true }), source('file', { coveredBy: 'auto-codex' }),
+    ], request as unknown as Request, () => true);
+    expect(result.records).toEqual([item('codex', 10)]);
+    expect(result.warnings).toHaveLength(1);
   });
 });

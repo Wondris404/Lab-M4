@@ -43,9 +43,10 @@ export function codexAccumulator(
       return;
     }
     const payload = obj(event.payload);
-    if (event.type === 'session_meta') {
-      const id = str(payload.session_id) ?? str(payload.id);
-      sessionId = id ? pseudonym(id) : undefined;
+    if (event.type === 'session_meta' && !sessionId) {
+      // id identifies this rollout; session_id may be shared across its forks.
+      const id = str(payload.id) ?? str(payload.session_id);
+      if (id) sessionId = pseudonym(id);
     }
     if (event.type === 'turn_context') {
       model = str(payload.model) ?? 'unknown';

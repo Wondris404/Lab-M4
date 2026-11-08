@@ -3,6 +3,8 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{self, SyncSender, TrySendError};
 use std::sync::Arc;
 use std::thread::{self, JoinHandle};
+#[cfg(windows)]
+use std::time::{Duration, Instant};
 use tokio::sync::oneshot;
 
 const MAX_INPUT_BYTES: usize = 256 * 1024;
@@ -17,6 +19,8 @@ pub(crate) struct PtyInput {
     queue: Option<SyncSender<Request>>,
     worker: Option<JoinHandle<()>>,
     closing: Arc<AtomicBool>,
+    #[cfg(all(test, windows))]
+    blocking_test_pipe: bool,
 }
 
 impl PtyInput {
@@ -31,8 +35,11 @@ impl PtyInput {
                     if stop.load(Ordering::Acquire) {
                         break;
                     }
-                    let result = writer
-                        .write_all(request.input.as_bytes())
+                    #[cfg(windows)]
+                    let written = write_until_closed(&mut writer, request.input.as_bytes(), &stop);
+                    #[cfg(not(windows))]
+                    let written = writer.write_all(request.input.as_bytes());
+                    let result = written
                         .and_then(|()| writer.flush())
                         .map_err(|error| format!("PTY input write failed: {error}"));
                     let failed = result.is_err();
@@ -48,6 +55,8 @@ impl PtyInput {
             queue: Some(queue),
             worker: Some(worker),
             closing,
+            #[cfg(all(test, windows))]
+            blocking_test_pipe: false,
         })
     }
 
@@ -69,21 +78,94 @@ impl PtyInput {
             })?;
         Ok(completed)
     }
+
+    pub(crate) fn begin_close(&mut self) {
+        self.closing.store(true, Ordering::Release);
+        self.queue.take();
+        #[cfg(windows)]
+        if let Some(worker) = &self.worker {
+            worker.thread().unpark();
+        }
+    }
+
+    #[cfg(windows)]
+    pub(crate) fn finish_by(mut self, deadline: Instant) -> Result<(), String> {
+        self.begin_close();
+        if let Some(worker) = self.worker.take() {
+            #[cfg(test)]
+            if self.blocking_test_pipe {
+                cancel_blocking_write(&worker);
+            }
+            join_worker_by(worker, deadline, "PTY input worker")?;
+        }
+        Ok(())
+    }
 }
 
 impl Drop for PtyInput {
     fn drop(&mut self) {
-        self.closing.store(true, Ordering::Release);
-        self.queue.take();
+        self.begin_close();
         if let Some(worker) = self.worker.take() {
-            #[cfg(windows)]
-            cancel_blocking_write(&worker);
+            #[cfg(all(test, windows))]
+            if self.blocking_test_pipe {
+                cancel_blocking_write(&worker);
+            }
             let _ = worker.join();
         }
     }
 }
 
 #[cfg(windows)]
+fn write_until_closed(
+    writer: &mut impl Write,
+    mut bytes: &[u8],
+    closing: &AtomicBool,
+) -> io::Result<()> {
+    while !bytes.is_empty() {
+        if closing.load(Ordering::Acquire) {
+            return Err(io::Error::new(
+                io::ErrorKind::BrokenPipe,
+                "Terminal input is closed",
+            ));
+        }
+        match writer.write(bytes) {
+            Ok(0) => return Err(io::ErrorKind::WriteZero.into()),
+            Ok(count) => bytes = &bytes[count..],
+            Err(error) if error.kind() == io::ErrorKind::WouldBlock => {
+                thread::park_timeout(Duration::from_millis(5));
+            }
+            Err(error) if error.kind() == io::ErrorKind::Interrupted => {}
+            Err(error) => return Err(error),
+        }
+    }
+    Ok(())
+}
+
+#[cfg(windows)]
+pub(crate) fn join_worker_by(
+    worker: JoinHandle<()>,
+    deadline: Instant,
+    label: &str,
+) -> Result<(), String> {
+    // Both Windows workers service only NOWAIT pipe ends. Once told to stop,
+    // they can no longer wait on ConHost. Keep ownership even on a deadline
+    // miss so that a timeout cannot silently detach a worker.
+    while !worker.is_finished() {
+        let remaining = deadline.saturating_duration_since(Instant::now());
+        if remaining.is_zero() {
+            break;
+        }
+        thread::sleep(remaining.min(Duration::from_millis(1)));
+    }
+    let missed = !worker.is_finished();
+    worker.join().map_err(|_| format!("{label} panicked"))?;
+    if missed || Instant::now() > deadline {
+        return Err(format!("{label} exceeded the terminal cleanup deadline"));
+    }
+    Ok(())
+}
+
+#[cfg(all(test, windows))]
 fn cancel_blocking_write(worker: &JoinHandle<()>) {
     use std::ffi::c_void;
     use std::os::windows::io::AsRawHandle;
@@ -143,7 +225,8 @@ pub(super) mod tests {
         let read = unsafe { File::from_raw_handle(read) };
         let write = unsafe { File::from_raw_handle(write) };
         let (started, writing) = mpsc::channel();
-        let input = PtyInput::start(SignalledPipe(write, started)).unwrap();
+        let mut input = PtyInput::start(SignalledPipe(write, started)).unwrap();
+        input.blocking_test_pipe = true;
         let mut blocked = input.enqueue("x".repeat(MAX_INPUT_BYTES)).unwrap();
         writing.recv_timeout(Duration::from_secs(2)).unwrap();
         assert!(matches!(

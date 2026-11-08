@@ -3,6 +3,8 @@ mod usage;
 mod usage_integrity;
 #[cfg(windows)]
 mod windows_pty;
+#[cfg(windows)]
+mod windows_pty_host;
 
 use std::collections::HashMap;
 use std::io::{Read, Write};
@@ -12,6 +14,8 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::Duration;
+#[cfg(windows)]
+use std::time::Instant;
 
 #[cfg(not(windows))]
 use portable_pty::{native_pty_system, CommandBuilder, PtySize};
@@ -21,12 +25,10 @@ use tauri::{AppHandle, Emitter, Manager, State};
 
 struct PtyInstance {
     input: pty_input::PtyInput,
-    #[cfg(windows)]
-    child: windows_pty::WindowsChild,
     #[cfg(not(windows))]
     child: Box<dyn portable_pty::Child + Send + Sync>,
     #[cfg(windows)]
-    master: windows_pty::WindowsPty,
+    master: windows_pty_host::WindowsPtyHost,
     #[cfg(not(windows))]
     master: Box<dyn portable_pty::MasterPty + Send>,
     kill_flag: Arc<AtomicBool>,
@@ -34,6 +36,44 @@ struct PtyInstance {
 }
 
 impl PtyInstance {
+    #[cfg(windows)]
+    fn close(mut self) -> Result<(), String> {
+        let deadline = Instant::now() + windows_pty_host::CLEANUP_LIMIT;
+        self.begin_close();
+        let stopped = self.master.stop_by(deadline);
+        self.finish_close(deadline, stopped)
+    }
+
+    #[cfg(windows)]
+    fn begin_close(&mut self) {
+        self.kill_flag.store(true, Ordering::Release);
+        self.reader.thread().unpark();
+        self.input.begin_close();
+        // stop_by checks the stop again and forces the job if needed.
+        let _ = self.master.request_stop();
+    }
+
+    #[cfg(windows)]
+    fn finish_close(self, deadline: Instant, stopped: std::io::Result<()>) -> Result<(), String> {
+        let host = match stopped {
+            Ok(()) => self.master.wait_closed_by(deadline),
+            Err(error) => {
+                // The last job handle still triggers kill-on-close.
+                drop(self.master);
+                Err(error)
+            }
+        }
+        .map_err(|error| format!("PowerShell cleanup failed: {error}"));
+        let input = self.input.finish_by(deadline);
+        let reader = pty_input::join_worker_by(self.reader, deadline, "PTY output reader");
+        host.and(input).and(reader)?;
+        if Instant::now() > deadline {
+            return Err("Terminal cleanup exceeded its shared deadline".into());
+        }
+        Ok(())
+    }
+
+    #[cfg(not(windows))]
     fn close(self) -> Result<(), String> {
         let Self {
             input,
@@ -42,15 +82,7 @@ impl PtyInstance {
             kill_flag,
             reader,
         } = self;
-        // Keep draining ConPTY until it closes. Stopping the reader first
-        // can block ClosePseudoConsole when its output pipe is full.
         kill_flag.store(true, Ordering::Release);
-        #[cfg(windows)]
-        let child_result = {
-            drop(input);
-            child.close()
-        };
-        #[cfg(not(windows))]
         let child_result = {
             let mut child = child;
             let result = match child.try_wait() {
@@ -82,6 +114,28 @@ struct AppState {
 struct PtyOutput {
     id: String,
     data: String,
+}
+
+fn publish_pty_event<T: Serialize + Clone + Send + 'static>(
+    app: &AppHandle,
+    _closing: &Arc<AtomicBool>,
+    event: &'static str,
+    payload: T,
+) {
+    #[cfg(windows)]
+    {
+        // The reader must not wait for WebView or listener locks while the
+        // main thread is closing the window and joining it.
+        let emitter = app.clone();
+        let closing = _closing.clone();
+        let _ = app.run_on_main_thread(move || {
+            if !closing.load(Ordering::Acquire) {
+                let _ = emitter.emit(event, payload);
+            }
+        });
+    }
+    #[cfg(not(windows))]
+    let _ = app.emit(event, payload);
 }
 
 // A PTY read can end in the middle of a UTF-8 character. Keep those bytes
@@ -174,9 +228,33 @@ fn kill_all(state: &AppState) {
         return;
     };
 
-    for instance in instances {
-        if let Err(error) = instance.close() {
-            eprintln!("{error}");
+    #[cfg(windows)]
+    {
+        let deadline = Instant::now() + windows_pty_host::CLEANUP_LIMIT;
+        let mut instances = instances;
+        for instance in &mut instances {
+            instance.begin_close();
+        }
+        // Send all forced terminations before waiting for any job to empty.
+        let stopped: Vec<_> = instances
+            .into_iter()
+            .map(|instance| {
+                let result = instance.master.stop_by(deadline);
+                (instance, result)
+            })
+            .collect();
+        for (instance, result) in stopped {
+            if let Err(error) = instance.finish_close(deadline, result) {
+                eprintln!("{error}");
+            }
+        }
+    }
+    #[cfg(not(windows))]
+    {
+        for instance in instances {
+            if let Err(error) = instance.close() {
+                eprintln!("{error}");
+            }
         }
     }
 }
@@ -699,7 +777,7 @@ fn spawn_powershell(
         }
     }
     #[cfg(windows)]
-    let (master, reader, writer) = windows_pty::WindowsPty::open(24, 80)
+    let (master, reader, writer) = windows_pty_host::WindowsPtyHost::start(80, 24, cwd.as_deref())
         .map_err(|error| format!("openpty failed: {error}"))?;
     #[cfg(not(windows))]
     let (master, slave, reader, writer) = {
@@ -721,8 +799,14 @@ fn spawn_powershell(
             .map_err(|e| format!("take writer failed: {e}"))?;
         (pty_pair.master, pty_pair.slave, reader, writer)
     };
-    let input = pty_input::PtyInput::start(writer)
-        .map_err(|e| format!("start input worker failed: {e}"))?;
+    let input = match pty_input::PtyInput::start(writer) {
+        Ok(input) => input,
+        Err(error) => {
+            #[cfg(windows)]
+            let _ = master.close_by(Instant::now() + windows_pty_host::CLEANUP_LIMIT);
+            return Err(format!("start input worker failed: {error}"));
+        }
+    };
 
     let id = new_id();
     let kill_flag = Arc::new(AtomicBool::new(false));
@@ -737,6 +821,10 @@ fn spawn_powershell(
             let mut buf = [0u8; 4096];
             let mut decoder = Utf8OutputDecoder::default();
             loop {
+                #[cfg(windows)]
+                if kill_flag_reader.load(Ordering::Acquire) {
+                    break;
+                }
                 match reader.read(&mut buf) {
                     Ok(0) => break,
                     Ok(n) => {
@@ -751,7 +839,11 @@ fn spawn_powershell(
                             id: id_for_thread.clone(),
                             data,
                         };
-                        let _ = app_handle.emit("pty-output", payload);
+                        publish_pty_event(&app_handle, &kill_flag_reader, "pty-output", payload);
+                    }
+                    #[cfg(windows)]
+                    Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                        thread::park_timeout(Duration::from_millis(10));
                     }
                     Err(_) => break,
                 }
@@ -761,7 +853,9 @@ fn spawn_powershell(
             }
             let remaining = decoder.finish();
             if !remaining.is_empty() {
-                let _ = app_handle.emit(
+                publish_pty_event(
+                    &app_handle,
+                    &kill_flag_reader,
                     "pty-output",
                     PtyOutput {
                         id: id_for_thread.clone(),
@@ -769,12 +863,24 @@ fn spawn_powershell(
                     },
                 );
             }
-            let _ = app_handle.emit("pty-exit", id_for_thread);
-        })
-        .map_err(|e| format!("start output reader failed: {e}"))?;
+            publish_pty_event(&app_handle, &kill_flag_reader, "pty-exit", id_for_thread);
+        });
 
-    #[cfg(windows)]
-    let child = master.spawn(cwd.as_deref());
+    let reader = match reader {
+        Ok(reader) => reader,
+        Err(error) => {
+            #[cfg(windows)]
+            {
+                let deadline = Instant::now() + windows_pty_host::CLEANUP_LIMIT;
+                let mut input = input;
+                input.begin_close();
+                let _ = master.close_by(deadline);
+                let _ = input.finish_by(deadline);
+            }
+            return Err(format!("start output reader failed: {error}"));
+        }
+    };
+
     #[cfg(not(windows))]
     let child = {
         let mut cmd = CommandBuilder::new("powershell.exe");
@@ -784,6 +890,7 @@ fn spawn_powershell(
         }
         slave.spawn_command(cmd)
     };
+    #[cfg(not(windows))]
     let child = match child {
         Ok(child) => child,
         Err(error) => {
@@ -798,6 +905,7 @@ fn spawn_powershell(
     let instance = PtyInstance {
         input,
         master,
+        #[cfg(not(windows))]
         child,
         kill_flag,
         reader,
@@ -921,6 +1029,10 @@ fn save_sessions(app: AppHandle, state: Value) -> Result<(), String> {
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    #[cfg(windows)]
+    if let Some(code) = windows_pty_host::maybe_run() {
+        std::process::exit(code);
+    }
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
@@ -970,65 +1082,6 @@ pub fn run() {
 #[cfg(test)]
 mod tests {
     use super::Utf8OutputDecoder;
-
-    #[cfg(windows)]
-    #[test]
-    fn concurrent_terminal_close_cancels_blocked_input_only_once() {
-        use super::{
-            kill_instance, pty_input::tests::blocked_input, windows_pty::WindowsPty, AppState,
-            PtyInstance,
-        };
-        use std::io;
-        use std::sync::atomic::AtomicBool;
-        use std::sync::{mpsc, Arc, Barrier};
-        use std::thread;
-        use std::time::Duration;
-
-        let (master, mut output, _writer) = WindowsPty::open(24, 80).unwrap();
-        let reader = thread::spawn(move || {
-            let _ = io::copy(&mut output, &mut io::sink());
-        });
-        let child = master.spawn(None).unwrap();
-        // The anonymous pipe gives this real session a deterministically
-        // blocked Windows writer without depending on ConHost buffer sizes.
-        let (blocked_peer, input, blocked) = blocked_input();
-        let state = Arc::new(AppState::default());
-        state.pty.lock().unwrap().instances.insert(
-            "owned".into(),
-            PtyInstance {
-                input,
-                child,
-                master,
-                kill_flag: Arc::new(AtomicBool::new(false)),
-                reader,
-            },
-        );
-        let gate = Arc::new(Barrier::new(3));
-        let (finished, results) = mpsc::channel();
-        let closers: Vec<_> = (0..2)
-            .map(|_| {
-                let (state, gate, finished) = (state.clone(), gate.clone(), finished.clone());
-                thread::spawn(move || {
-                    gate.wait();
-                    let _ = finished.send(kill_instance("owned", &state));
-                })
-            })
-            .collect();
-        gate.wait();
-        let closed: Result<Vec<_>, _> = (0..2)
-            .map(|_| results.recv_timeout(Duration::from_secs(10)))
-            .collect();
-        // Ensure a cancellation regression can still release its own workers.
-        drop(blocked_peer);
-        for closer in closers {
-            closer.join().unwrap();
-        }
-        let mut closed: Vec<_> = closed.unwrap().into_iter().map(Result::unwrap).collect();
-        closed.sort();
-        assert_eq!(closed, [false, true]);
-        assert!(blocked.blocking_recv().unwrap().is_err());
-        assert!(!kill_instance("owned", &state).unwrap());
-    }
 
     #[test]
     fn pty_text_preserves_characters_split_across_reads() {

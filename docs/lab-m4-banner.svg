@@ -1,0 +1,29 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="800" height="206" viewBox="0 0 800 206" role="img" aria-labelledby="title">
+  <title id="title">Lab-M4</title>
+  <defs>
+    <linearGradient id="green" x2="0" y2="1" gradientUnits="objectBoundingBox">
+      <stop offset="0" stop-color="#167645"/>
+      <stop offset="0.50" stop-color="#46c77a"/>
+      <stop offset="1" stop-color="#b7ffc4"/>
+    </linearGradient>
+    <pattern id="grid" width="16" height="16" patternUnits="userSpaceOnUse">
+      <path d="M16 0H0V16" fill="none" stroke="#183025" stroke-width="1"/>
+    </pattern>
+    <path id="wordmark" fill-rule="evenodd" d="
+      M0 0H1.5V5.5H5V7H0Z
+      M8 0H11V1H12V7H10.5V4.75H8.5V7H7V1H8Z M8.5 1.5V3.25H10.5V1.5Z
+      M14 0H18V1H19V3H18V4H19V6H18V7H14Z M15.5 1.5V2.75H17.5V1.5Z M15.5 4.25V5.5H17.5V4.25Z
+      M21 3H25V4.5H21Z
+      M27 0H28.5V1H29.5V2H30.5V1H31.5V0H33V7H31.5V3H30.5V4H29.5V3H28.5V7H27Z
+      M35 0H36.5V3.5H38.5V0H40V7H38.5V5H35Z"/>
+  </defs>
+  <rect x="0.5" y="0.5" width="799" height="205" rx="12" fill="#0c1611" stroke="#284334"/>
+  <rect x="18" y="18" width="764" height="170" fill="url(#grid)" opacity="0.42"/>
+  <path d="M46 30H30V46M754 30H770V46M30 160V176H46M770 160V176H754" fill="none" stroke="#417554" stroke-width="2"/>
+  <g transform="translate(100 42) scale(15)">
+    <use href="#wordmark" x="0.42" y="0.55" fill="#091e12" stroke="#397451" stroke-width="0.08"/>
+    <use href="#wordmark" x="0.22" y="0.30" fill="#164b2e" stroke="#569269" stroke-width="0.06"/>
+    <use href="#wordmark" fill="url(#green)" stroke="#6bd699" stroke-width="0.045"/>
+  </g>
+  <text x="400" y="179" fill="#a0c7ad" font-family="monospace" font-size="13" letter-spacing="3" text-anchor="middle">WINDOWS TERMINAL / AI CHAT / USAGE</text>
+</svg>

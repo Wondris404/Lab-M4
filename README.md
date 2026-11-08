@@ -1,8 +1,55 @@
-# Lab-M4
+<p align="center">
+  <img src="docs/lab-m4-banner.svg" alt="Lab-M4" width="800">
+</p>
 
-Based on Wraith (Wondris404/Wraith, commit 700f170). See [Wraith license](licenses/Wraith-LICENSE.txt).
+<h1 align="center">Lab-M4</h1>
 
-Work in progress. Usage parsers are preserved in `packages/usage-core`.
+<p align="center">Windows terminál a lokálny prehľad spotreby agentov v jednej aplikácii.</p>
+
+<p align="center">
+  <a href="#stiahnutie-pre-windows">Stiahnutie pre Windows</a> ·
+  <a href="#spustenie-zo-zdrojového-kódu">Spustenie zo zdrojového kódu</a> ·
+  <a href="LICENSE">MIT licencia</a>
+</p>
+
+## Čo je Lab-M4
+
+Lab-M4 je vyvíjaná desktopová aplikácia pre prácu s AI nástrojmi vo Windows. V jednom okne vieš mať otvorených viac relácií PowerShellu a pozrieť si spotrebu tokenov zo zdrojov, ktoré sám vyberieš.
+
+- **Terminál:** interaktívny PowerShell s kartami a rozdelením okna na viac panelov.
+- **AI nástroje:** existujúce CLI môžeš používať v termináli. Zabudovaná AI konfigurácia je v aktuálnom `main` vypnutá; plnohodnotný AI chat ani živá orchestrácia sa tu neprezentujú ako dokončené funkcie.
+- **Usage:** lokálny prehľad tokenov z ručne vybranej histórie Codexu a Grok Build, s filtrami a lokálnym CSV exportom. Známe ceny/odhady sa zobrazujú v USD, nie ako presná fakturácia. OpenCode čítanie zostáva dočasne vypnuté, kým nebude overený bezpečný SQLite snapshot.
+
+Desktopová aplikácia používa Tauri, Rust, React, TypeScript a xterm.js. Automatizovaná orchestrácia viacerých agentov je vo vývoji.
+
+## Stiahnutie pre Windows
+
+Lab-M4 je vo vývoji. Ak už je v [GitHub Releases](https://github.com/Wondris404/Lab-M4/releases) dostupný inštalátor, stiahni ho zo sekcie **Assets** daného vydania. Kým tam inštalátor nie je, môžeš použiť zostavenie z GitHub Actions:
+
+1. Prihlás sa na GitHub a v [GitHub Actions](https://github.com/Wondris404/Lab-M4/actions/workflows/ci.yml) vyber úspešný beh pre požadovaný commit.
+2. Ak je v sekcii **Artifacts** dostupný `lab-m4-windows-x64`, stiahni ho. Nezamieňaj ho s balíkom `lab-m4-automation-only`, ktorý je určený iba na testovanie.
+3. Rozbaľ ZIP a spusti inštalátor `.exe` alebo `.msi` z rozbaleného balíka.
+
+Artefakty z Actions majú obmedzenú platnosť. Po vypršaní vyber novší úspešný beh s požadovaným artefaktom alebo si aplikáciu zostav lokálne. Existencia artefaktu sama osebe nie je dôkaz úspešného GUI alebo inštalačného testu; skontroluj výsledky príslušných jobov.
+
+## Spustenie zo zdrojového kódu
+
+Potrebuješ Git, Node.js 24 (CI používa 24.22.2), pnpm 10.29.3, stabilný Rust a [závislosti Tauri pre Windows](https://v2.tauri.app/start/prerequisites/#windows), najmä Microsoft C++ Build Tools a WebView2.
+
+```powershell
+git clone https://github.com/Wondris404/Lab-M4.git
+cd Lab-M4
+pnpm.cmd install --frozen-lockfile
+pnpm.cmd tauri dev
+```
+
+Na vytvorenie lokálneho inštalátora spusti `pnpm.cmd tauri build`. Pri predvolenom nastavení Cargo nájdeš balíky v `apps/desktop/src-tauri/target/release/bundle/`.
+
+## Autori a licencia
+
+Lab-M4 vyvíja **Wondris** ([Wondris404](https://github.com/Wondris404)). Terminálová časť vychádza z projektu [Wraith](https://github.com/Wondris404/Wraith/tree/700f170). Projekt je pod [licenciou MIT](LICENSE) a pôvodná [licencia Wraith](licenses/Wraith-LICENSE.txt) je súčasťou repozitára.
+
+## Sieťové požiadavky fontov
 
 The terminal font picker includes Google Fonts. On startup the app attempts to
 load their stylesheet from `fonts.googleapis.com` and font files from
@@ -48,3 +95,14 @@ CI runs the terminal smoke separately from the installed Usage smoke. The
 installed test takes the NSIS artifact from the same workflow, runs on a clean
 Windows runner without a developer sidecar, and restricts the app's `PATH`
 to Windows System32. It scans valid and damaged synthetic Usage archives.
+
+## Súkromie Usage
+
+Zdroje Usage vyberáš ručne a metriky sa spracúvajú lokálne cez Tauri IPC a
+stdio sidecar. CSV je vedomý lokálny export so skutočnými údajmi; jeho ručným
+zdieľaním ich poskytneš ďalej. Zdrojové logy, cache, exporty ani prihlasovacie
+údaje nepatria do repozitára. Testovacie fixtures sú syntetické.
+
+Banner v úvode je statické SVG; jeho označenie AI chat nie je potvrdením
+dokončenej funkcie. Celá aplikácia sa neoznačuje za offline — požiadavky fontov
+sú opísané vyššie a externé AI CLI majú vlastné sieťové a prihlasovacie správanie.

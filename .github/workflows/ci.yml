@@ -11,8 +11,15 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 24.22.2
+      # sqlite3's bundled node-gyp 8 needs distutils when it builds from source.
+      - uses: actions/setup-python@v5
+        id: python
+        with:
+          python-version: '3.11'
       - run: corepack enable
       - run: pnpm install --frozen-lockfile
+        env:
+          PYTHON: ${{ steps.python.outputs.python-path }}
       - run: pnpm package:usage-sidecar
       - run: pnpm lint
       - run: pnpm typecheck
@@ -28,8 +35,14 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 24.22.2
+      - uses: actions/setup-python@v5
+        id: python
+        with:
+          python-version: '3.11'
       - run: corepack enable
       - run: pnpm install --frozen-lockfile
+        env:
+          PYTHON: ${{ steps.python.outputs.python-path }}
       - run: pnpm --dir ../.. package:usage-sidecar
       - uses: dtolnay/rust-toolchain@stable
         with:
@@ -60,8 +73,14 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 24.22.2
+      - uses: actions/setup-python@v5
+        id: python
+        with:
+          python-version: '3.11'
       - run: corepack enable
       - run: pnpm install --frozen-lockfile
+        env:
+          PYTHON: ${{ steps.python.outputs.python-path }}
       - uses: dtolnay/rust-toolchain@stable
       - name: Install Tauri WebDriver
         run: cargo install tauri-driver --version 2.1.0 --locked

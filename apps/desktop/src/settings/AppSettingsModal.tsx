@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import type { AppSettingsApi } from "./useAppSettings";
 import {
   AI_PROVIDER_PRESETS,
@@ -27,6 +27,14 @@ interface AppSettingsModalProps {
 
 export function AppSettingsModal({ api }: AppSettingsModalProps) {
   const { settings, settingsTab, setSettingsTab, closeSettings } = api;
+  const dialogRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    const previous = document.activeElement;
+    dialogRef.current?.querySelector("button")?.focus();
+    return () => {
+      if (previous instanceof HTMLElement && previous.isConnected) previous.focus();
+    };
+  }, []);
   const [fontOptions, setFontOptions] = useState<FontPreset[]>(() =>
     getSelectableFonts()
   );
@@ -132,14 +140,34 @@ export function AppSettingsModal({ api }: AppSettingsModalProps) {
     <div className="agent-modal-backdrop settings-modal-backdrop" onClick={closeSettings}>
       <div
         className="agent-modal settings-modal"
+        ref={dialogRef}
         onClick={(e) => e.stopPropagation()}
+        onKeyDown={(event) => {
+          if (event.key === "Escape") {
+            event.stopPropagation();
+            closeSettings();
+          }
+          if (event.key !== "Tab") return;
+          const controls = Array.from(event.currentTarget.querySelectorAll<HTMLElement>(
+            "button:not(:disabled), select:not(:disabled), input:not(:disabled), textarea:not(:disabled), a[href]"
+          )).filter((control) => control.getClientRects().length > 0);
+          const first = controls[0];
+          const last = controls[controls.length - 1];
+          if (event.shiftKey && document.activeElement === first && last) {
+            event.preventDefault();
+            last.focus();
+          } else if (!event.shiftKey && document.activeElement === last && first) {
+            event.preventDefault();
+            first.focus();
+          }
+        }}
         role="dialog"
         aria-modal="true"
         aria-label="Settings"
       >
         <header className="agent-modal-header">
           <span className="agent-modal-title">Settings</span>
-          <button type="button" className="agent-modal-close" onClick={closeSettings}>
+          <button type="button" className="agent-modal-close" aria-label="Close settings" onClick={closeSettings}>
             ×
           </button>
         </header>

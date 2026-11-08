@@ -101,10 +101,10 @@ k tajomstvám a s ďalšími redigovanými príkladmi. Parsery v tejto vetve zos
 ## Dodatočné overenie tokenov
 
 - Codex: vo vzorkách total_tokens = input_tokens + output_tokens; OpenAI opisuje cached input a reasoning ako detaily zodpovedajúcich celkov: https://developers.openai.com/api/reference/resources/responses/methods/create. Celkové počty sú kumulatívne.
-- Grok Build: oficiálna dokumentácia https://docs.x.ai/developers/advanced-api-usage/prompt-caching/usage-and-pricing uvádza cache v detaile prompt a reasoning v detaile completion. Zo 853 lokálnych udalostí s oboma počtami cache nikdy nepresahovala prompt a reasoning nikdy nepresahoval completion. Deduplikácia ani prepojenie modelu sa ešte neoverili.
-- OpenCode: z 1 017 objektov message.data.tokens malo 1 002 pole total; pri 996 platilo total = input + output + reasoning + cache.read + cache.write. V 899 prípadoch cache.read presahovalo input a v 87 reasoning presahovalo output. Pre tieto záznamy teda nejde vždy o podmnožiny. Pri šiestich záznamoch s total sa rovnica nepotvrdila a treba preskúmať aj chýbajúce hodnoty; význam sa môže líšiť podľa verzie a poskytovateľa.
+- Grok Build: oficiálna dokumentácia https://docs.x.ai/developers/advanced-api-usage/prompt-caching/usage-and-pricing uvádza cache v detaile prompt a reasoning v detaile completion. V pôvodnom lokálnom pozorovaní cache nepresahovala prompt a reasoning nepresahoval completion; osobné diagnostické počty boli odstránené. Deduplikácia ani prepojenie modelu sa ešte neoverili.
+- OpenCode: lokálne pozorovanie naznačilo, že cache a reasoning nie sú vždy podmnožiny input/output. Pri časti záznamov sa rovnica total nepotvrdila; význam závisí od verzie a poskytovateľa. Osobné diagnostické počty boli odstránené.
 
-Vyššie uvedené počty sú diagnostika sémantiky, nie výsledok parsera.
+Tieto kvalitatívne pozorovania nie sú dôkaz fakturačnej presnosti.
 
 ## Implementované čítanie a obmedzenia
 
@@ -112,7 +112,7 @@ Parsery vracajú records spolu s počtom warnings, samostatnými limits a agreg�
 
 Čítanie databáz OpenCode je dočasne vypnuté: všetky skeny vrátia čiastočný stav s vysvetlením, kým nebude overený konzistentný snapshot bez zápisov do zdroja. Zachovaná normalizačná logika počíta input = input + cache.read + cache.write, cached input = cache.read a output = output + reasoning. Nesúhlasné total označí upozornením; neplatné povinné počty vynechá. Mena zdrojovej ceny a skutočná fakturácia zostávajú neoverené a cena sa neprezentuje ako známa.
 
-Grok číta JSONL po riadkoch. Lokálne overený typ s počtami je shell.turn.inference_done. Páruje kontext podľa sid. Bez potvrdeného ID udalosti zachová aj riadky so zhodnou reláciou, trace, indexom, časom a počtami. Taký súčet je čiastočný: opakovanie sa môže započítať dvakrát, tieto riadky sa nevynechávajú, takže ich súčet nepodhodnotí, a neistý súčet je len orientačný odhad. Nezmenený prefix toho istého súboru sa pri obnovení nepripočítava znova. Ak session ID nie je výslovne prepojené v kontexte, použije sessionId aj model unknown. Overenie voči indexu našlo zhodu troch z 25 korelačných identifikátorov. Pri chýbajúcich povinných poliach sa položka preskočí a sken označí ako čiastočný.
+Grok číta JSONL po riadkoch. Lokálne overený typ s počtami je shell.turn.inference_done. Páruje kontext podľa sid. Bez potvrdeného ID udalosti zachová aj riadky so zhodnou reláciou, trace, indexom, časom a počtami. Taký súčet je čiastočný: opakovanie sa môže započítať dvakrát, tieto riadky sa nevynechávajú, takže ich súčet nepodhodnotí, a neistý súčet je len orientačný odhad. Nezmenený prefix toho istého súboru sa pri obnovení nepripočítava znova. Ak session ID nie je výslovne prepojené v kontexte, použije sessionId aj model unknown. Overenie voči indexu nepotvrdilo všeobecne spoľahlivé mapovanie korelačných identifikátorov. Pri chýbajúcich povinných poliach sa položka preskočí a sken označí ako čiastočný.
 
 Server číta config/settings.json, spúšťa iba enabled zdroje a pri chýbajúcej zaznamenanej cene skúsi USD cenník podľa známej rýchlosti. Bez platnej sadzby je cena neznáma. Bez overeného FX zdroja zostáva costEur prázdne aj pri staršom nastavení usdToEur; kurz sa cenou nenásobí. Čiastočný súčet ceny je označený costIncomplete. CSV uvádza stav skenu, pôvod ceny a pri neistom súčte, že ide len o orientačný odhad. Žiadne správy alebo prompty sa nevracajú ani neukladajú. Antigravity ostáva prázdny stub.
 
@@ -120,7 +120,7 @@ Prekryté schválené kanonické cesty sa v jednom skene započítajú raz. Samo
 
 Kurzory JSONL spracujú iba celé riadky a kontrolujú SHA-256 celého spracovaného prefixu. Aj append teda zahŕňa čítanie starých bajtov. Zmena súboru počas skenu môže viesť k čiastočnému výsledku a opakovaniu skenu.
 
-Pri šiestich lokálnych nezhodách OpenCode je celkové pole total vždy menšie ako súčet input, output, reasoning, cache.read a cache.write. Všetkých šesť má nenulové reasoning, štyri nenulové cache.read, žiadny nenulové cache.write. Odčítanie iba jediného z týchto piatich komponentov nesúlad nevysvetlilo; konkrétne chybné pole nemožno z uvedených agregátov určiť.
+Lokálne nezhody OpenCode nemožno spoľahlivo vysvetliť odčítaním jediného komponentu. Osobné diagnostické agregáty boli odstránené; konkrétne chybné pole zostáva neoverené.
 
 ## F3: prístup k OpenCode WAL (syntetický test)
 

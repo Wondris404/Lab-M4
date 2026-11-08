@@ -12,6 +12,10 @@
   <a href="LICENSE">MIT licencia</a>
 </p>
 
+Verzia **1.0.0 sa pripravuje**; zatiaľ nejde o publikované vydanie. Rozsah,
+overenie a známe obmedzenia sú v [prehľade vydania](docs/RELEASE-1.0.0.md).
+Parsery Usage zostávajú v `packages/usage-core`.
+
 ## Čo je Lab-M4
 
 Lab-M4 je vyvíjaná desktopová aplikácia pre prácu s AI nástrojmi vo Windows. V jednom okne vieš mať otvorených viac relácií PowerShellu a pozrieť si spotrebu tokenov zo zdrojov, ktoré sám vyberieš.
@@ -102,6 +106,18 @@ Zdroje Usage vyberáš ručne a metriky sa spracúvajú lokálne cez Tauri IPC a
 stdio sidecar. CSV je vedomý lokálny export so skutočnými údajmi; jeho ručným
 zdieľaním ich poskytneš ďalej. Zdrojové logy, cache, exporty ani prihlasovacie
 údaje nepatria do repozitára. Testovacie fixtures sú syntetické.
+
+Samostatný proces Usage pred načítaním parserov blokuje sieťové API,
+spúšťanie ďalších procesov a workerov. Desktop mu neodovzdáva zdedené provider
+credentials. Ide o obranu proti náhodnému odoslaniu dát, nie OS sandbox proti
+škodlivému natívnemu kódu. AI CLI a voliteľné diktovanie mimo Usage sú oddelené
+funkcie. Identifikátory relácií v lokálnej cache sú pseudonymizované, nie úplne
+anonymné.
+
+Pred publikovaním spusti `pnpm check:release-privacy`. Jeho vzory nenahrádzajú
+ručnú kontrolu osobného obsahu. Osobné diagnostické počty a konkrétne home cesty
+boli z navrhovanej dokumentácie redigované; bežný PR však nevymazáva staré
+commity, iné vetvy ani cache GitHubu. História sa neprepisovala.
 
 Banner v úvode je statické SVG; jeho označenie AI chat nie je potvrdením
 dokončenej funkcie. Celá aplikácia sa neoznačuje za offline — požiadavky fontov

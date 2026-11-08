@@ -1,3 +1,4 @@
+import './local-only.js';
 import { parserRegistry } from '../../../packages/usage-core/src/parsers/index.js';
 
 const [agent, source, ...extra] = process.argv.slice(2);

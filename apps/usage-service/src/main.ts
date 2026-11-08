@@ -1,3 +1,4 @@
+import './local-only.js';
 import { createInterface } from 'node:readline';
 import { handleRequest } from '../../../packages/usage-core/src/service/protocol.js';
 

@@ -2,7 +2,7 @@ import { createHash } from 'node:crypto';
 import { lstat, open } from 'node:fs/promises';
 import type { FileHandle } from 'node:fs/promises';
 import sqlite3 from 'sqlite3';
-import { emptyResult, type ParseResult } from '../parsers/contracts.js';
+import { emptyResult, mergeCountRisk, type ParseResult } from '../parsers/contracts.js';
 import { assertSafeFile, LineLimitError } from '../parsers/shared.js';
 import { normalizeRecord } from './normalize.js';
 
@@ -105,6 +105,7 @@ export async function scanJsonlAppend(
     let position = offset;
     let carry = Buffer.alloc(0);
     const chunk = Buffer.alloc(64 * 1024);
+    let oversized = false;
     try {
       while (position < info.size) {
         const { bytesRead } = await file.read(
@@ -134,9 +135,8 @@ export async function scanJsonlAppend(
         if (carry.length > 1024 * 1024) throw new LineLimitError();
       }
     } catch (error) {
-      if (error instanceof LineLimitError)
-        return { ...emptyResult(), warnings: 1, partial: true };
-      throw error;
+      if (!(error instanceof LineLimitError)) throw error;
+      oversized = true;
     }
     const tail = await prefixHash(file, offset);
     const endInfo = await file.stat();
@@ -156,6 +156,13 @@ export async function scanJsonlAppend(
       records: [...oldResult.records, ...fresh.records.map(normalizeRecord)],
       limits: [...oldResult.limits, ...fresh.limits],
       warnings: oldResult.warnings + fresh.warnings,
+      ...(fresh.partial && { partial: true }),
+      ...((fresh.countRisk || oldResult.countRisk) && {
+        countRisk: mergeCountRisk(oldResult.countRisk ?? 'none', fresh.countRisk ?? 'none'),
+      }),
+      ...(fresh.warningDetails && {
+        warningDetails: [...new Set([...(oldResult.warningDetails ?? []), ...fresh.warningDetails])],
+      }),
       ...(accumulator.fingerprints && {
         _fingerprints: [
           ...((oldResult as CursorResult)._fingerprints ?? []),
@@ -163,6 +170,13 @@ export async function scanJsonlAppend(
         ],
       }),
     };
+    if (oversized) {
+      // Publish only the validated prefix and leave the last saved cursor intact.
+      result.warnings++;
+      result.partial = true;
+      result.countRisk = mergeCountRisk(result.countRisk ?? 'none', 'under-count');
+      return result;
+    }
     await run(
       'INSERT OR REPLACE INTO grok_cursor (id, dev, ino, size, mtime, ctime, offset, tail, state, result) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
       [

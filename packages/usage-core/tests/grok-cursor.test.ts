@@ -1,8 +1,11 @@
 import { appendFile, open, readFile, rename, writeFile } from 'node:fs/promises';
+import { appendFileSync } from 'node:fs';
 import { join } from 'node:path';
+import sqlite3 from 'sqlite3';
 import { expect, it } from 'vitest';
-import { grokBuildParser } from '../src/parsers/grok-build.js';
+import { grokAccumulator, grokBuildParser } from '../src/parsers/grok-build.js';
 import { scanCached } from '../src/service/cache.js';
+import { scanJsonlAppend } from '../src/service/grok-cursor.js';
 import { testTempDir } from './test-temp.js';
 
 const line = (value: unknown) => JSON.stringify(value);
@@ -43,11 +46,16 @@ it('scans appends, defers partial lines, and rescans on truncation and rotation'
   expect(appended.records[1]?.warnings).toContain('MODEL_UNVERIFIED');
   expect(appended.records[1]?.sessionId).toBe(appended.records[0]?.sessionId);
   await appendFile(file, `${usage(2)}\n${usage(3)}\n`);
-  expect(
-    (await scanCached(grokBuildParser, file, cache)).records.map(
-      (item) => item.inputTokens,
-    ),
-  ).toEqual([10, 20, 30]);
+  const ambiguous = await scanCached(grokBuildParser, file, cache);
+  expect(ambiguous.records.map((item) => item.inputTokens)).toEqual([10, 20, 20, 30]);
+  expect(ambiguous).toMatchObject({ partial: true, warnings: 1 });
+  expect(ambiguous.warningDetails?.[0]).toContain('dvojité započítanie');
+  expect(ambiguous.countRisk).toBe('double-count');
+  expect(await scanCached(grokBuildParser, file, cache)).toEqual(ambiguous);
+  await appendFile(file, '{broken\n');
+  const damaged = await scanCached(grokBuildParser, file, cache);
+  expect(damaged).toMatchObject({ partial: true, warnings: 2, countRisk: 'both' });
+  expect(damaged.records).toEqual(ambiguous.records);
   expect(
     (await readFile(cache)).includes(Buffer.from('synthetic-private-session')),
   ).toBe(false);
@@ -100,4 +108,79 @@ it('invalidates an old rewrite outside the last 4 KiB followed by an append', as
   const full = await grokBuildParser.parse(file);
   expect(cached.records.map((record) => record.inputTokens)).toEqual([90, 20]);
   expect(cached.records.map((record) => record.inputTokens)).toEqual(full.records.map((record) => record.inputTokens));
+});
+
+it('defers a split UTF-8 character across append and read-buffer boundaries', async () => {
+  const dir = await testTempDir('grok-utf8-');
+  const file = join(dir, 'grok.jsonl');
+  const reference = join(dir, 'reference.jsonl');
+  const cache = join(dir, 'cache.sqlite');
+  const metadata = Buffer.from(context('syntetická-🐱'));
+  const split = metadata.indexOf(Buffer.from('🐱')) + 2;
+  const padding = Buffer.from(`${' '.repeat(64 * 1024 - split - 1)}\n`);
+  await writeFile(file, Buffer.concat([padding, metadata.subarray(0, split)]));
+  expect((await scanCached(grokBuildParser, file, cache)).records).toEqual([]);
+
+  await appendFile(file, Buffer.concat([metadata.subarray(split), Buffer.from(`\n${usage(1)}\n`)]));
+  await writeFile(reference, Buffer.concat([metadata, Buffer.from(`\n${usage(1)}\n`)]));
+  const appended = await scanCached(grokBuildParser, file, cache);
+  expect(appended.warnings).toBe(0);
+  expect(appended.records).toHaveLength(1);
+  expect(appended.records).toEqual((await scanCached(grokBuildParser, reference, cache)).records);
+  expect((await scanCached(grokBuildParser, file, cache, true)).records).toEqual(appended.records);
+});
+
+it('keeps a stable Grok prefix before an oversized row without moving the persisted cursor', async () => {
+  const dir = await testTempDir('grok-oversized-');
+  const file = join(dir, 'grok.jsonl');
+  const cache = join(dir, 'cache.sqlite');
+  const original = `${context('synthetic-session')}\n${usage(1)}\n${usage(1)}\n`;
+  await writeFile(file, original);
+  expect((await scanCached(grokBuildParser, file, cache)).countRisk).toBe('double-count');
+  await appendFile(file, `${usage(2)}\n${'x'.repeat(1024 * 1024 + 1)}\n${usage(3)}\n`);
+  const partial = await scanCached(grokBuildParser, file, cache);
+  expect(partial.records.map((record) => record.inputTokens)).toEqual([10, 10, 20]);
+  expect(partial).toMatchObject({ partial: true, countRisk: 'both', warnings: 2 });
+  expect(await scanCached(grokBuildParser, file, cache, true)).toEqual(partial);
+  const db = new sqlite3.Database(cache);
+  try {
+    const row = await new Promise<{ offset: number }>((resolve, reject) => db.get(
+      'SELECT offset FROM grok_cursor', (error, value) => error ? reject(error) : resolve(value as { offset: number }),
+    ));
+    expect(row.offset).toBe(Buffer.byteLength(original));
+  } finally {
+    await new Promise<void>((resolve, reject) => db.close((error) => error ? reject(error) : resolve()));
+  }
+  await writeFile(file, `${original}${usage(2)}\n${usage(3)}\n`);
+  expect((await scanCached(grokBuildParser, file, cache)).records.map((record) => record.inputTokens))
+    .toEqual([10, 10, 20, 30]);
+});
+
+it.each([false, true])('does not publish a changing cursor snapshot with oversized line = %s', async (oversized) => {
+  const dir = await testTempDir('grok-live-append-');
+  const file = join(dir, 'grok.jsonl');
+  await writeFile(file, `${context('synthetic-session')}\n${usage(1)}\n`);
+  if (oversized) await appendFile(file, `${'x'.repeat(1024 * 1024 + 1)}\n`);
+  const db = new sqlite3.Database(join(dir, 'cache.sqlite'));
+  try {
+    let appended = false;
+    const changing = await scanJsonlAppend(db, 'synthetic', file, () => {
+      const accumulator = grokAccumulator();
+      return {
+        ...accumulator,
+        consume(line) {
+          accumulator.consume(line);
+          if (!appended) {
+            appended = true;
+            appendFileSync(file, `${usage(2)}\n`);
+          }
+        },
+      };
+    }, false);
+    expect(changing).toMatchObject({ partial: true, records: [] });
+    const stable = await scanJsonlAppend(db, 'synthetic', file, () => grokAccumulator(), false);
+    expect(stable.records.map((record) => record.inputTokens)).toEqual(oversized ? [10] : [10, 20]);
+  } finally {
+    await new Promise<void>((resolve, reject) => db.close((error) => error ? reject(error) : resolve()));
+  }
 });

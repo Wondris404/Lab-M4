@@ -10,6 +10,7 @@ import { getCurrentWindow, UserAttentionType } from "@tauri-apps/api/window";
 import { open } from "@tauri-apps/plugin-dialog";
 import "@xterm/xterm/css/xterm.css";
 import { shouldWaitForCursorCorrection } from "./terminalOutput";
+import { writeTerminalInput } from "./terminalInput";
 import { createTerminalSession } from "./terminalSession";
 import openaiIcon from "./assets/ai-openai.svg";
 import claudeIcon from "./assets/ai-claude.svg";
@@ -943,7 +944,10 @@ function attachPtyListeners(
     // ConPTY expects CR; LF alone triggers PowerShell's >> continuation prompt.
     const input = d.replace(/\n/g, "\r");
     onInput?.(ptyId, input);
-    void invoke("write_powershell", { id: ptyId, input });
+    void writeTerminalInput(ptyId, input).catch((error: unknown) => {
+      const message = String(error).replace(/[\u0000-\u001f\u007f-\u009f]/g, " ");
+      term.write(`\r\n\x1b[31m[Terminal input failed: ${message}]\x1b[0m\r\n`);
+    });
   });
   return {
     onResizeDispose: onResize.dispose,
@@ -1764,7 +1768,7 @@ function App() {
     if (!win || !win.alive || !cleaned) return;
 
     win.term.focus();
-    await invoke("write_powershell", { id: win.id, input: cleaned });
+    await writeTerminalInput(win.id, cleaned);
   }, [findWinByPaneId]);
 
   const handlePaneDictationAudio = useCallback(
@@ -2423,8 +2427,9 @@ function App() {
     stopBlinkingPane(paneId);
 
     fitAndRefresh(win);
-    void invoke("write_powershell", { id: win.id, input }).catch(() => {
+    void writeTerminalInput(win.id, input).catch(() => {
       clearAgentTracking(win.id);
+      win.term.write("\r\n\x1b[31m[Could not send the shortcut to PowerShell]\x1b[0m\r\n");
     });
     win.term.focus();
   }, [clearAgentTracking, stopBlinkingPane]);
@@ -2487,7 +2492,7 @@ function App() {
 
         const waitPromise = waitForAgentToken(token);
         try {
-          await invoke("write_powershell", { id: win.id, input });
+          await writeTerminalInput(win.id, input);
         } catch {
           clearAgentTracking(win.id);
           return { output: "error: failed to write to pane", exitCode: 1 };
@@ -2526,7 +2531,7 @@ function App() {
         }
 
         try {
-          await invoke("write_powershell", { id: win.id, input });
+          await writeTerminalInput(win.id, input);
         } catch {
           return { output: "error: failed to write to pane", exitCode: 1 };
         }

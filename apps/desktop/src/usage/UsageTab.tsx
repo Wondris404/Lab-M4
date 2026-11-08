@@ -16,10 +16,11 @@ export interface UsageItem {
   cached: number;
   reasoning: number;
   costUsd?: number;
+  costSource?: 'skutočné' | 'odhad' | 'neznáme';
   warnings: string[];
 }
 export function UsageTab() {
-  const { records, sources, warnings, loading, error, refresh, addSource } =
+  const { records, sources, warnings, partial, loading, error, refresh, addSource, removeSource } =
     useUsage();
   const [sourceAgent, setSourceAgent] = useState('codex');
   const [folder, setFolder] = useState(true);
@@ -59,7 +60,7 @@ export function UsageTab() {
   };
   const download = () => {
     const url = URL.createObjectURL(
-      new Blob([usageCsv(shown)], { type: 'text/csv;charset=utf-8' }),
+      new Blob([usageCsv(shown, partial, warnings)], { type: 'text/csv;charset=utf-8' }),
     );
     const link = document.createElement('a');
     link.href = url;
@@ -110,8 +111,30 @@ export function UsageTab() {
       </div>
       {status === 'loading' && <p role="status">Načítavam údaje Usage…</p>}
       {status === 'error' && <p role="alert">{error}</p>}
+      {partial && status !== 'loading' && status !== 'error' && (
+        <p role="status">Orientačný odhad, nie fakturácia. Súčet môže obsahovať replay (dvojité započítanie) alebo podpočítanie chýbajúceho zdroja.</p>
+      )}
       {status === 'needs-source' && (
         <p>Vyberte zdroj, ktorý chcete zahrnúť do Usage.</p>
+      )}
+      {sources.length > 0 && (
+        <>
+          <h2>Uložené zdroje</h2>
+          <ul>
+            {sources.map((source) => (
+              <li key={source.id}>
+                {source.agent} ({source.name}){' '}
+                <button
+                  disabled={loading}
+                  aria-label={`Odobrať z Usage: ${source.agent} (${source.name})`}
+                  onClick={() => void removeSource(source.id)}
+                >
+                  Odobrať z Usage
+                </button>
+              </li>
+            ))}
+          </ul>
+        </>
       )}
       <div className="usage-filters">
         <label>
@@ -171,7 +194,7 @@ export function UsageTab() {
             <div>
               Cena (USD) <strong>{cost}</strong>
               {known.length > 0 && known.length < shown.length && ' (neúplné údaje)'}
-              {known.length < shown.length && (
+              {(partial || known.length < shown.length) && (
                 <span> Čiastočné / NEOVERENÉ</span>
               )}
             </div>
@@ -233,6 +256,7 @@ export function UsageTab() {
                   <td>{formatFull(r.reasoning)}</td>
                   <td>
                     {r.costUsd === undefined ? '—' : formatFull(r.costUsd)}
+                    {r.costUsd !== undefined && r.costSource === 'odhad' && ' (odhad)'}
                   </td>
                 </tr>
               ))}

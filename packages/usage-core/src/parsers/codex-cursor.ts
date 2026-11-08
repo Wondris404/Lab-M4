@@ -40,6 +40,7 @@ export function codexAccumulator(
       event = obj(JSON.parse(line));
     } catch {
       result.warnings++;
+      result.partial = true;
       return;
     }
     const payload = obj(event.payload);
@@ -102,6 +103,7 @@ export function codexAccumulator(
       !Object.keys(total).length
     ) {
       result.warnings++;
+      result.partial = true;
       return;
     }
     const fingerprint = createHash('sha256')

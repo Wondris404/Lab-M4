@@ -1,10 +1,11 @@
 import { createHash } from 'node:crypto';
-import { emptyResult, type Parser } from './contracts.js';
+import { emptyResult, mergeCountRisk, type Parser } from './contracts.js';
 import {
   count,
+  assertSafeFile,
   ExpansionLimitError,
   LineLimitError,
-  UnverifiedChecksumError,
+  ZstdIntegrityError,
   lines,
   obj,
   str,
@@ -16,6 +17,8 @@ export interface GrokCursorState {
   sessions: [string, string][];
   seen: string[];
 }
+
+const AMBIGUOUS_EVENT = 'Grok Build: orientačný odhad. Zhodné záznamy sa počítajú všetky, takže súčet môže obsahovať replay (dvojité započítanie). Tieto riadky sa nepodpočítavajú. Neistý súčet je len orientačný odhad.';
 
 /** With a pseudonymizer, persisted state contains no source session identifiers. */
 export function grokAccumulator(
@@ -33,6 +36,8 @@ export function grokAccumulator(
       event = obj(JSON.parse(line));
     } catch {
       result.warnings++;
+      result.partial = true;
+      result.countRisk = mergeCountRisk(result.countRisk ?? 'none', 'under-count');
       return;
     }
     const ctx = obj(event.ctx),
@@ -63,6 +68,8 @@ export function grokAccumulator(
       reasoningTokens > outputTokens
     ) {
       result.warnings++;
+      result.partial = true;
+      result.countRisk = mergeCountRisk(result.countRisk ?? 'none', 'under-count');
       return;
     }
     const fingerprint = createHash('sha256')
@@ -81,7 +88,14 @@ export function grokAccumulator(
         ]),
       )
       .digest('hex');
-    if (seen.has(fingerprint)) return;
+    // sid correlates context. Neither it nor this fingerprint establishes
+    // event identity. Preserve each physical record and disclose ambiguity.
+    if (seen.has(fingerprint)) {
+      result.warnings++;
+      result.partial = true;
+      result.countRisk = mergeCountRisk(result.countRisk ?? 'none', 'double-count');
+      result.warningDetails = [AMBIGUOUS_EVENT];
+    }
     seen.add(fingerprint);
     result.records.push({
       provider: 'grok-build',
@@ -114,26 +128,33 @@ export function grokAccumulator(
 export const grokBuildParser: Parser = {
   provider: 'grok-build',
   async parse(path) {
+    await assertSafeFile(path);
     const accumulator = grokAccumulator();
     const result = accumulator.result;
     try {
       for await (const line of lines(path)) accumulator.consume(line);
     } catch (error) {
       if (
+        !/\.zst$/i.test(path) &&
         !(error instanceof LineLimitError) &&
         !(error instanceof ExpansionLimitError) &&
-        !(error instanceof UnverifiedChecksumError)
+        !(error instanceof ZstdIntegrityError)
       )
         throw error;
-      if (error instanceof ExpansionLimitError || error instanceof UnverifiedChecksumError) {
+      if (/\.zst$/i.test(path) || error instanceof ExpansionLimitError) {
         result.records.length = 0;
         result.limits.length = 0;
         result.warnings = 0;
+        delete result.warningDetails;
+        delete result.countRisk;
       }
       result.warnings++;
       result.partial = true;
-      if (error instanceof UnverifiedChecksumError)
-        result.warningDetails = ['Zstd checksum nemožno overiť; súbor bol vynechaný.'];
+      result.countRisk = mergeCountRisk(result.countRisk ?? 'none', 'under-count');
+      if (error instanceof ZstdIntegrityError)
+        result.warningDetails = ['Zstd checksum nesúhlasí; súbor bol vynechaný.'];
+      else if (/\.zst$/i.test(path) && !(error instanceof ExpansionLimitError))
+        result.warningDetails = ['Komprimovaný súbor je poškodený alebo neúplný; bol vynechaný.'];
     }
     return result;
   },

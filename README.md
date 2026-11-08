@@ -29,3 +29,22 @@ with code 2 (pnpm can report its own failure code). Unreadable sources exit
 with code 1.
 Only use sources you are authorised to read. OpenCode may be unavailable when
 safe read-only access cannot be guaranteed.
+
+## Windows release
+
+Use the official Node.js 24.22.2 Windows archive with its `LICENSE` file
+alongside `node.exe`. Put that directory first on `PATH` for the build and
+enable Corepack shims there. The sidecar packs the executable and license from
+the same distribution.
+
+```powershell
+pnpm.cmd install --frozen-lockfile
+pnpm.cmd package:usage-sidecar
+pnpm.cmd test
+pnpm.cmd tauri build --bundles nsis
+```
+
+CI runs the terminal smoke separately from the installed Usage smoke. The
+installed test takes the NSIS artifact from the same workflow, runs on a clean
+Windows runner without a developer sidecar, and restricts the app's `PATH`
+to Windows System32. It scans valid and damaged synthetic Usage archives.

@@ -5,21 +5,30 @@ permissions:
   contents: read
 jobs:
   node:
-    runs-on: windows-latest
+    runs-on: windows-2022
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
           node-version: 24.22.2
+      # sqlite3's bundled node-gyp 8 needs distutils when it builds from source.
+      - uses: actions/setup-python@v5
+        id: python
+        with:
+          python-version: '3.11'
       - run: corepack enable
       - run: pnpm install --frozen-lockfile
+        env:
+          PYTHON: ${{ steps.python.outputs.python-path }}
+          # Build the N-API addon with the runner's MSVC, even if Node was built with clang.
+          npm_config_clang: '0'
       - run: pnpm package:usage-sidecar
       - run: pnpm lint
       - run: pnpm typecheck
       - run: pnpm test
       - run: pnpm test:orchestrator
   desktop:
-    runs-on: windows-latest
+    runs-on: windows-2022
     defaults:
       run:
         working-directory: apps/desktop
@@ -28,8 +37,15 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 24.22.2
+      - uses: actions/setup-python@v5
+        id: python
+        with:
+          python-version: '3.11'
       - run: corepack enable
       - run: pnpm install --frozen-lockfile
+        env:
+          PYTHON: ${{ steps.python.outputs.python-path }}
+          npm_config_clang: '0'
       - run: pnpm --dir ../.. package:usage-sidecar
       - uses: dtolnay/rust-toolchain@stable
         with:
@@ -38,11 +54,149 @@ jobs:
       - run: ./job-stop-proof.exe --self-test
       - run: rustc --edition 2021 ../../packages/orchestrator-core/native/supervisor_test.rs -o job-supervisor-test.exe
       - run: ./job-supervisor-test.exe
+      - run: rustc --edition 2021 -D warnings ../../packages/orchestrator-core/native/agent_transport.rs -o agent-transport.exe
+      - run: node ../../packages/orchestrator-core/tests/windows-agent-transport.mjs agent-transport.exe job-supervisor-test.exe
       - run: cargo fmt --manifest-path src-tauri/Cargo.toml --check
       - run: cargo clippy --manifest-path src-tauri/Cargo.toml -- -D warnings
       - run: cargo test --manifest-path src-tauri/Cargo.toml
-      - run: pnpm tauri build
+      # This explicit native ConPTY smoke does not exercise the Tauri GUI.
+      - name: PowerShell PTY smoke (Windows)
+        timeout-minutes: 3
+        run: cargo test --manifest-path src-tauri/Cargo.toml --test terminal_pty_smoke -- --ignored --nocapture
+      - run: pnpm tauri build --no-bundle
+      - name: Package Windows installers
+        shell: pwsh
+        run: |
+          for ($attempt = 1; $attempt -le 3; $attempt++) {
+            $output = pnpm tauri bundle --ci 2>&1 | ForEach-Object { "$_" }
+            $code = $LASTEXITCODE
+            $output | Write-Output
+            if ($code -eq 0) { exit 0 }
+            if ($attempt -eq 3 -or -not ($output -match 'http status: 50[234]')) { exit $code }
+            Start-Sleep -Seconds (5 * $attempt)
+          }
       - uses: actions/upload-artifact@v4
         with:
           name: lab-m4-windows-x64
           path: apps/desktop/src-tauri/target/release/bundle
+  windows-webdriver:
+    # The Server 2025 image can start WebView2 without exposing its DevTools
+    # port, so EdgeDriver never completes POST /session. See runner-images#14738.
+    runs-on: windows-2022
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24.22.2
+      - uses: actions/setup-python@v5
+        id: python
+        with:
+          python-version: '3.11'
+      - run: corepack enable
+      - run: pnpm install --frozen-lockfile
+        env:
+          PYTHON: ${{ steps.python.outputs.python-path }}
+          npm_config_clang: '0'
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Install Tauri WebDriver
+        run: cargo install tauri-driver --version 2.1.0 --locked
+      - name: Match EdgeDriver to the installed WebView2 runtime
+        shell: pwsh
+        run: ./scripts/windows-webdriver-setup.ps1
+      - name: Build isolated debug app
+        shell: pwsh
+        run: |
+          $config = Join-Path $env:RUNNER_TEMP 'lab-m4-terminal-smoke.json'
+          '{"identifier":"com.wondris.labm4.terminal-smoke"}' | Set-Content -LiteralPath $config -Encoding utf8NoBOM
+          pnpm tauri build --debug --no-bundle --features webdriver --config $config
+      - name: Exercise terminal and window through WebDriver
+        shell: pwsh
+        run: |
+          $env:TAURI_DRIVER = Join-Path $HOME '.cargo/bin/tauri-driver.exe'
+          node scripts/windows-webdriver-smoke.mjs
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: lab-m4-webdriver-diagnostics
+          path: .lab-m4/webdriver-artifacts
+          if-no-files-found: ignore
+  automation-installer:
+    runs-on: windows-2022
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24.22.2
+      - uses: actions/setup-python@v5
+        id: python
+        with:
+          python-version: '3.11'
+      - run: corepack enable
+      - run: pnpm install --frozen-lockfile
+        env:
+          PYTHON: ${{ steps.python.outputs.python-path }}
+          npm_config_clang: '0'
+      - uses: dtolnay/rust-toolchain@stable
+      - run: pnpm package:usage-sidecar
+      - run: cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml --features webdriver
+      - run: pnpm tauri build --no-bundle --features webdriver
+      - name: Package automation-only installer
+        shell: pwsh
+        run: |
+          for ($attempt = 1; $attempt -le 3; $attempt++) {
+            $output = pnpm tauri bundle --ci --features webdriver --bundles nsis 2>&1 | ForEach-Object { "$_" }
+            $code = $LASTEXITCODE
+            $output | Write-Output
+            if ($code -eq 0) { exit 0 }
+            if ($attempt -eq 3 -or -not ($output -match 'http status: 50[234]')) { exit $code }
+            Start-Sleep -Seconds (5 * $attempt)
+          }
+      - uses: actions/upload-artifact@v4
+        with:
+          name: lab-m4-automation-only
+          path: apps/desktop/src-tauri/target/release/bundle
+  windows-installed-usage:
+    runs-on: windows-2022
+    needs: automation-installer
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24.22.2
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Install Tauri WebDriver
+        run: cargo install tauri-driver --version 2.1.0 --locked
+      - name: Match EdgeDriver to the installed WebView2 runtime
+        shell: pwsh
+        run: ./scripts/windows-webdriver-setup.ps1
+      - uses: actions/download-artifact@v4
+        with:
+          name: lab-m4-automation-only
+          path: ${{ runner.temp }}/lab-m4-bundle
+      - name: Install automation-only artifact and scan Usage
+        shell: pwsh
+        run: |
+          $env:TAURI_DRIVER = Join-Path $HOME '.cargo/bin/tauri-driver.exe'
+          ./scripts/windows-installed-usage-smoke.ps1 -BundleDirectory (Join-Path $env:RUNNER_TEMP 'lab-m4-bundle')
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: lab-m4-installed-usage-diagnostics
+          path: .lab-m4/webdriver-artifacts
+          if-no-files-found: ignore
+
+  windows-production-installed:
+    runs-on: windows-2022
+    needs: desktop
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: lab-m4-windows-x64
+          path: ${{ runner.temp }}/lab-m4-production
+      - name: Production NSIS launch, DevTools denial and installed sidecar
+        shell: pwsh
+        run: ./scripts/windows-production-smoke.ps1 -BundleDirectory (Join-Path $env:RUNNER_TEMP 'lab-m4-production')

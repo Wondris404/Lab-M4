@@ -1,5 +1,6 @@
 import { lstat } from 'node:fs/promises';
 import { createHash, type Hash } from 'node:crypto';
+import { estimateNoteFor } from '../core/estimate-note.js';
 import { scanCached } from './cache.js';
 import { parserRegistry, type Parser } from '../parsers/index.js';
 import { providers, type Provider } from '../core/types.js';
@@ -30,6 +31,7 @@ export function scanSnapshotId(parsed: ParseResult): string {
   const hash = createHash('sha256');
   hashField(hash, 'lab-m4-usage-snapshot-v1');
   hashField(hash, Boolean(parsed.partial));
+  hashField(hash, parsed.countRisk);
   hashField(hash, parsed.warnings);
   const warningDetails = parsed.warningDetails ?? [];
   hashField(hash, warningDetails.length);
@@ -84,18 +86,27 @@ export async function handleRequest(input: unknown) {
   const parsed = (info.isFile() || (agent === 'codex' && info.isDirectory())) && request.params.cachePath
     ? await scanCached(parser, path, request.params.cachePath, request.params.force ?? false)
     : await parser.parse(path).then((result) => ({ ...result, records: result.records.map(normalizeRecord) }));
+  const countRisk = parsed.countRisk ?? (parsed.partial ? 'under-count' : 'none');
+  const warningDetails = parsed.warningDetails ?? [];
+  const estimateNote = estimateNoteFor(parsed.partial || countRisk !== 'none', countRisk === 'both' ? [] : warningDetails);
   return {
     version: 1, requestId: request.requestId,
     result: {
-      status: parsed.partial ? 'partial' : 'ok', snapshotId: scanSnapshotId(parsed), totalRecords: parsed.records.length, offset, warnings: [
+      status: parsed.partial ? 'partial' : 'ok',
+      countRisk,
+      accounting: parsed.partial || countRisk !== 'none' ? 'orientational-estimate' : 'exact',
+      estimateNote,
+      snapshotId: scanSnapshotId(parsed), totalRecords: parsed.records.length, offset, warnings: [
         ...(parsed.warnings ? [`${parsed.warnings} parser warnings`] : []),
-        ...(parsed.warningDetails ?? []),
+        ...warningDetails,
+        ...(estimateNote && !warningDetails.includes(estimateNote) ? [estimateNote] : []),
         ...Object.entries(parsed.mismatchFields).map(([kind, count]) => `${kind}: ${count}`),
       ],
       records: parsed.records.slice(offset, offset + limit).map((r) => ({
         agent: r.provider, model: r.model, session: r.sessionId, sessionKnown: r.sessionKnown !== false, timestamp: r.timestamp,
         input: r.inputTokens, output: r.outputTokens, cached: r.cachedInputTokens,
-        reasoning: r.reasoningTokens, ...(r.costUsd !== undefined && { costUsd: r.costUsd }), warnings: r.warnings ?? [],
+        reasoning: r.reasoningTokens, costSource: r.costSource,
+        ...(r.costUsd !== undefined && { costUsd: r.costUsd }), warnings: r.warnings ?? [],
       })),
     },
   };

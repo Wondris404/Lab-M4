@@ -348,3 +348,182 @@
 - `fzstd` neoveruje checksum Zstandard; poškodený syntetický rámec predtým vrátil dáta bez varovania. Sken teraz takéto rámce bezpečne odmietne, označí výsledok partial a vysvetlí dôvod; invaliduje dotknutú cache. To dočasne vylučuje aj platné checksummed archívy. Ďalší krok je streamingové overenie každého rámca bez oslabenia limitov.
 - Doplnené označenie neznámych Grok relácií, ochrana pred ich falošným sčítaním, hlásenie chyby vytvorenia terminálu a úzko vymedzené CSP pre existujúce Google fonty. Načítanie fontu posiela požiadavku poskytovateľovi, pozri README. Zablokovaný PTY zápis môže stále blokovať zatvorenie; bezpečná oprava poradia vstupu a Windows overenie zostávajú otvorené.
 - Pred poslednou checksum zmenou prešli na Linuxe `pnpm package:usage-sidecar`, `pnpm lint`, `pnpm typecheck`, `pnpm test` (61 testov) exit 0; cielené testy checksumu a parserov po zmene prešli 19/19. Windows GUI aj živí agenti NEOVERENÉ.
+
+## 2026-11-07 00:23 +01:00 (Europe/Bratislava) – Overenie Zstandard checksumov
+- Na základe `4488c96afaa2bd0de38535d7bbf516ae51da73e1` nahradené odmietanie checksummed rámcov skutočným streamovým XXH64 overením každého rámca. Použitá je knižnica `xxhash-wasm` 1.1.0 s licenciou MIT, ktorá sa prikladá k zabalenému sidecaru. Existujúci `fzstd` a limity okna, súboru a skenu zostávajú; checksum sa overuje nad rozbalenými bajtmi a porovnáva sa jeho dolných 32 bitov.
+- Testy pokrývajú platný checksum, chybný checksum, rámec bez checksumu, hranicu čítacieho chunku, skippable a zreťazené rámce, neskoršiu korupciu, skrátenie a limity. Pri chybnom súbore sa jeho záznamy nezapočítajú; ostatné úplné súbory sa zachovajú a výsledok je partial. Zastarané cache verzie sa nepoužijú.
+- Na Linuxe prešli `pnpm package:usage-sidecar`, `pnpm lint`, `pnpm typecheck` a celá sada `pnpm test` 96/96; cielené testy po dodatočnej kontrole bezpečných ciest 24/24. Node 20.20.2 prešiel 11 testov dekompresie. Použitý pnpm 10.29.3. Windows sidecar a GUI zatiaľ NEOVERENÉ.
+
+## 2026-11-07 11:15 +01:00 (Europe/Bratislava) – Overený základ a diagnostika terminálu
+- Izolovaný Git clone prešiel kontrolou `git fsck --full`. Serverový `main` je `4488c96afaa2bd0de38535d7bbf516ae51da73e1`; hlava otvoreného PR #12 je `eb329bec9de65ee826ecd3deb4020e0102af7cd0`, strom `9bf01bc7b6cc4c64fc63a83ab259e422cd4e8322`. Vetva `codex/terminal-lifecycle` vychádza z PR #12. Pôvodný checkout a vnorený repozitár zostali nedotknuté.
+- Po `pnpm install --frozen-lockfile` s pnpm 10.29.3 prešli `package:usage-sidecar`, `lint`, `typecheck` s frontend buildom, `test` (98/98) a `test:orchestrator` (15/15 syntetických), všetky exit 0. Baseline používal commit `a913acc6a4621ed0248deb04a1a0cd088ee17291`, ktorý oproti #12 mení iba WebDriver harness a jeho CI.
+- Draft PR #13 nadväzuje na #12. Diagnostický CI https://github.com/Wondris404/Lab-M4/actions/runs/42362559107 potvrdil timeout pri `POST /session` po úspešnej odpovedi drivera na `/status`. K načítaniu UI a testu relácie sa nedostal. Presná príčina neúspešného pripojenia zostáva otvorená.
+- Zápis do PTY teraz vlastní jeden worker na reláciu s ohraničenou frontou a potvrdením výsledku. Renderer posiela vstupy jednej relácie postupne a explicitne hlási odmietnutie. Pri ukončení Windows worker zruší synchrónny zápis a čaká na koniec vlákna. Reader ďalej odčerpáva ConPTY výstup počas jeho zatvorenia. Rust `cargo test --locked --manifest-path apps/desktop/src-tauri/Cargo.toml --lib` prešiel 10/10 vrátane blokovaného Windows pipe. Nový test fronty, typecheck a lint prešli.
+- NEOVERENÉ: úplný lifecycle GUI, ukončenie celého stromu potomkov terminálového procesu a balený runtime. Izolovaný GUI build používa oddelený identifikátor aplikácie a testovací WebView2 profil.
+- Natívny EdgeDriver 156.0.4314.58 sa lokálne zhodoval s WebView2. Verbose log potvrdil spustenie wraith.exe a WebView2 log načítanie frontendu, ale do timeoutu nevznikol DevToolsActivePort. Samotná nezhoda verzií preto lokálny timeout nevysvetľuje. CI runner používal Server 2025; https://github.com/actions/runner-images/issues/14738 popisuje rovnaký problém pripájania a úspech na Server 2022. Zmenený je iba runner WebDriver jobu. Výsledok nového behu je ešte NEOVERENÝ.
+- Prvý Server 2022 beh https://github.com/Wondris404/Lab-M4/actions/runs/42363723211 vrátil chybu `session not created`: predinštalovaný EdgeDriver 156 a používaný WebView2 131.0.2903.86. GUI job preto číta verziu WebView2 z dokumentovaného registračného kľúča a pri nezhode získa kompatibilný driver od Microsoftu. Pôvodný timeout na Server 2025 má stále iba čiastočnú diagnózu.
+- Windows terminál používa natívny ConPTY a `PROC_THREAD_ATTRIBUTE_JOB_LIST`. PowerShell je v súkromnom Job Object už pri vytvorení procesu. Cleanup ukončuje procesy relácie, zatiaľ čo reader odčerpáva výstup. Native regresia overila chybu spawnu a retry, príslušnosť potomka do jobu, jeho ukončenie a funkčný `Get-Date` v druhej relácii. Pred doplnením poslednej regresie súbežného close prešlo 11/11 Rust testov a Clippy. Lokálny MSVC linker pri opakovanom použití mena testovacieho exe dvakrát hlásil LNK1104; overenie konečného commitu pokračuje samostatným výstupom a CI.
+- CI https://github.com/Wondris404/Lab-M4/actions/runs/42364177113 so zhodným WebView2 a EdgeDriver 131 prešiel pripojením, načítaním UI, bridge aj vytvorením prvej relácie. Screenshot pri chýbajúcom markeri zachytil zaplnenie pôvodnej frontendovej fronty pri dávke klávesov a neúplný príkaz PowerShellu. Renderer teraz spája čakajúce vstupy jednej relácie v poradí do IPC dávok najviac 256 KiB, s limitom 512 KiB a 4096 čakajúcich požiadaviek na reláciu. Syntetické regresie zahŕňajú 200 rýchlych klávesov, nezávislú reláciu, hranice dávok a explicitné odmietnutie pretečenia. Natívny Rust test s oddeleným debug výstupom prešiel 12/12 vrátane súbežného close. GUI na novej hlave ešte NEOVERENÉ.
+- CI na `d2f28dd` https://github.com/Wondris404/Lab-M4/actions/runs/42364899189: Node PASS. GUI znovu dosiahlo prvú PowerShell reláciu. Screenshot ukazuje dva dokončené príkazy a celý tretí príkaz bez odmietnutých klávesov, ale test nepozoroval očakávaný súbor. Diagnostika teraz odlíši nesprávnu hodnotu od chýbajúceho súboru a pred zápisom vykreslí výsledok PowerShellu. Pri close počas výstupu test vyžaduje signál, že výstup začal, a overuje, že skončil skôr než sa dokončil.
+- Kombinovaná natívna regresia vloží deterministicky blokovaný Windows pipe do skutočnej ConPTY relácie a spustí dve súbežné zatvorenia. Overí jedno prevzatie cleanupu, zrušený zápis a bezpečný opakovaný close. `cargo test --offline --locked --config 'profile.test.package.wraith.debug=0' --manifest-path apps/desktop/src-tauri/Cargo.toml --lib` exit 0, 12/12. `cargo fmt --check`, `node --check scripts/windows-webdriver-smoke.mjs` a `git diff --check` exit 0.
+
+## 2026-11-07 18:24 +01:00 (Europe/Bratislava) – Overený terminál a správnosť Usage
+- PR #13 na hlave 40d326d prešiel všetkými tromi jobmi na testovacom merge commite 6a8c3cf: https://github.com/Wondris404/Lab-M4/actions/runs/42365454495. WebDriver overil dve nezávislé PowerShell relácie, poradie, Get-Date, zatvorenie relácie, zatvorenie okna v nečinnosti aj počas výstupu a opätovný štart.
+- Na vetve `codex/usage-correctness` zachované lokálne commity `1dd6c1f`, `7fc8dbf` a `e83a0dc`. Grokove zmeny pridali označenie neistých súčtov, testy ConPTY a časovo ohraničené čakanie na ukončenie PowerShellu.
+- Grok zachová riadky bez doloženej identity udalosti. Rovnaký fingerprint znamená možné opakovanie, chybný riadok možný podpočet. Súbeh oboch stavov sa prenáša do kurzora, protokolu a súhrnu. Codex označí vynechaný poškodený riadok ako čiastočný sken. Zmenené verzie kurzorov a cache zabránia opakovanému použitiu starých výsledkov.
+- Legacy EUR zostáva null bez overeného FX zdroja. CSV prenáša USD, pôvod ceny a stav skenu. OpenCode je explicitne nedostupný, kým nie je overený snapshot bez zmeny zdroja alebo WAL/SHM.
+- V jednom Windows Node behu prešli `package:usage-sidecar`, `lint`, `typecheck` s buildom, `test` 105/105 a `test:orchestrator` 15/15, všetky exit 0. Testy zahŕňajú integritu Zstandard, neúplné riadky, UTF-8 hranicu, zmenu prefixu, rotáciu, truncation a súbežný append. Cargo fmt a git diff --check exit 0. Balík spustený z čistej inštalácie a živá orchestrácia zostávajú NEOVERENÉ.
+- Natívne Windows `cargo test --lib` prešlo 15/15 s oddeleným link výstupom `profile.test.package.wraith.debug="line-tables-only"`, exit 0. Zahŕňa Grokove regresie blokovaného skutočného ConPTY vstupu, timeoutu a zatvorenia počas výstupu.
+
+## 2026-11-07 – Balenie sidecaru a Windows release
+- Windows staging sa generuje zo zdrojov. Obsahuje Node 24.22.2 z oficiálneho archívu, metadáta runtime, licencie Node, fzstd, xxhash-wasm a SQLite a natívny modul SQLite. Manifest je viazaný na zostavenie desktopu. Test čerstvosti zachytí starší staging.
+- Jeden lokálny Windows Node beh s pripnutou verziou prešiel: `pnpm package:usage-sidecar`, `pnpm lint`, `pnpm typecheck` vrátane frontend buildu, `pnpm test` 105/105 a `pnpm test:orchestrator` 15/15, všetko exit 0. Test zabaleného sidecaru spustil pribalený Node bez PATH a overil `snapshotId`, stránkovanie a čiastočný výsledok pri poškodenom vstupe. Samostatná kontrola s PATH iba na System32 vrátila jeden riadok, 10 vstupných a 4 výstupné tokeny a neznámu cenu.
+- `pnpm tauri build --ci --bundles nsis` v izolovanej kópii, exit 0. Výsledok `Lab-M4_0.2.0_x64-setup.exe`, 30 767 306 bajtov, SHA-256 `925a9cac755a3a8208b0470420e8500dc76962616f5dd876b2eb2cd4aa470888`. Vygenerovaný NSIS manifest zahrnul očakávané zdroje.
+- Samostatný job `windows-installed-usage` je pripravený spustiť presný NSIS artefakt z toho istého CI behu na čistom Windows runneri. Vyžaduje neprítomnosť vývojárskeho stagingu a kontroluje obsah balíka a Usage GUI nad syntetickými vstupmi s PATH obmedzenou na System32. Výsledok čistej inštalácie a GUI na tejto vetve zostáva NEOVERENÝ.
+
+## 2026-11-07 – Windows transport pre procesy adaptérov
+- OrchestratorInc/agent-orchestrator bol preskúmaný na `8bf36847091d0fe2767a199f95b8f6f48ccc35db`: Apache-2.0, bez `NOTICE` v danom strome, backend Go 1.27.1 s `acp-go-sdk` a internými adaptérmi. Windows ACP cleanup používa `taskkill /T /F` s fallbackom na ukončenie koreňového procesu. Lab-M4 potrebuje vlastný Job Object pri spawne aj nezávislé pravidlá approvals. Kód kandidáta sa neprevzal.
+- Native supervisor teraz vytvorí proces priamo v privátnom kill-on-close Job Objecte, odovzdá iba tri explicitné štandardné streamy a použije výslovne zostavené prostredie. Syntetický Windows test potvrdil oddelený stdout a stderr, prenos Unicode hodnoty, odmietnutie duplicitnej premennej, chýbajúcu premennú rodiča, zrušenie blokovaného stdin zápisu, ukončenie vlastného potomka a prežitie procesu mimo jobu. `rustc --edition 2021 -D warnings` a beh testu exit 0.
+- Ručný protokolový smoke s týmto supervisorom spustil skutočné CLI v nových prázdnych profiloch. Codex 0.166.0 odpovedal na `initialize` a `account/read` s `refreshToken: false`. Grok Build 1.0.77 odpovedal cez ACP v1, ponúkol iba `grok.com` a odmietol `session/new` s kódom `-32000`. Pri STOP sa počet aktívnych procesov v privátnych joboch znížil pri Codexe z 3 na 0 a pri Groku z 2 na 0. Bez loginu, obnovy tokenu, modelového turnu alebo prenosu kódu.
+- Dokumentácia xAI uvádza aj `cached_token` a `xai.api_key` pri vhodnej autentifikácii. Tento smoke overuje transport a lifecycle konkrétnych bináriek v prázdnom profile. Pre živý režim zostáva otvorená existujúca autorizovaná autentifikácia, vynútenie oprávnení na Windows, hranice I/O, skutočný diff a review. Job Object spravuje lifecycle. Fake CLI zostáva oddelené.
+
+## 2026-11-07 20:10 +01:00 (Europe/Bratislava) – Transport s ohraničenou frontou
+- Pracovný strom `C:\Users\ondre\Desktop\Lab-M4\.lab-m4\implementation-verified`, vetva `codex/orchestrator-transport`, commit `d29eb12c01bcaf6bdc21c53569f7a00050055f39`. Pôvodný checkout `C:\Users\ondre\Desktop\Lab-M4` ostal na `d0e50a5` s nesledovaným `agent-usage/`. Push sa nerobil. Zamietnutá publikácia Usage sa neopakovala. PR #13 ostáva na staršej hlave `40d326d`.
+- Natívny transport rozlišuje zatvorenie vstupu (exit 0), zatvorenie výstupu agenta (2), chybu vstupu (3), plnú frontu (4) a timeout (124). Po timeoute aj po plnej fronte vypíše `LAB_M4_JOB_STOP` a skončí vlastný job na nulu. Test `windows-agent-transport.mjs` prešiel dvakrát, exit 0. Nezávislý proces mimo jobu prežil. `node --test` orchestrátora 18/18, exit 0. `cli.mjs start` bez `--fake` exit 1. Dva behy s `--fake` exit 0 a režim ostáva `fake`.
+- Prázdny profil Grok Build skončil exit 1, hláška Not signed in. Prázdny profil Codex CLI exit 1 a nedokončil úlohu, diff ani review. Živý cyklus je BLOCKED. Tokeny sa nekopírovali.
+- `pnpm package:usage-sidecar` v tomto shelli exit 1: Node v24.22.1 nemá vedľa seba LICENSE. Existujúci staging uvádza Node v24.22.2, preto freshness test neprešiel (110/111, jeden fail). Staging sa nemazal. Nový NSIS z tohto commitu sa nestaval. GUI sa v tejto session nespúšťalo. Oboje je NEOVERENÉ pre `d29eb12`.
+- Report: `.lab-m4/reports/stav-2026-11-07-2010.md`.
+
+## 2026-11-07 20:20 +01:00 (Europe/Bratislava) – Sidecar Node 24.22.2 a NSIS
+- Na `84a9e4f5f1460b1f6e13eb660b7ccbbd2f3069aa` som zabalil sidecar oficiálnym Node v24.22.2, ktorý má vedľa seba LICENSE. `package:usage-sidecar` exit 0. Freshness test tým istým Node exit 0.
+- S tým istým Node na PATH: `pnpm lint` exit 0, `pnpm test` exit 0 (33 súborov, 111 testov), `pnpm test:orchestrator` exit 0 (18/18), `pnpm typecheck` exit 0, `cargo fmt --check` exit 0, `cargo clippy -- -D warnings` exit 0, `cargo test --offline --locked` exit 0 (lib 15/15), ignorovaný `terminal_pty_smoke` exit 0 (1/1).
+- `pnpm --filter wraith exec tauri build --ci --bundles nsis` exit 0. Inštalátor `apps/desktop/src-tauri/target/release/bundle/nsis/Lab-M4_0.2.0_x64-setup.exe`, 30 780 068 bajtov, SHA-256 `AE618BA4E48FBF7BF4A602BAE3E3B2CF42131F70A0E8BFFB6CEA50CEC7104645`, zo stromu `84a9e4f`. Nie je to starý balík z `5e0eee4`.
+- `windows-installed-usage-smoke.ps1` exit 1: vyžaduje disposable GitHub-hosted runner a pred inštaláciou skončil. Používateľova aplikácia sa neinštalovala. Čistá inštalácia a GUI na `84a9e4f` ostávajú NEOVERENÉ.
+- Živý Codex → Grok Build cyklus ostáva BLOCKED. Iný model sa nenasadil. Push sa nerobil.
+- Na `4e128295` som dvakrát spustil `node scripts/windows-webdriver-smoke.mjs` proti čerstvému debug `wraith.exe`, s `tauri-driver` 2.1.0 a EdgeDriver 156.0.4314.58. Oba behy exit 1: `POST /session` TimeoutError a `hyper::Error(IncompleteMessage)` ešte pred terminálom. GUI na tomto SHA je NEOVERENÉ. Čistá inštalácia ostáva NEOVERENÉ, lebo inštalačný smoke skončil pred inštaláciou požiadavkou na GitHub-hosted runner.
+
+## 2026-11-07 21:05 +01:00 (Europe/Bratislava) – WebView2 prepínače a nový NSIS
+- Commit `5bf789be909b42a57f489fea66b988da894dd57a` na `codex/orchestrator-transport`. Okno z `tauri.conf.json` sa vytvára v setup, lebo automatické okno vzniká skôr, než sa dajú nastaviť argumenty. Pri `TAURI_WEBVIEW_AUTOMATION=true` alebo `TAURI_AUTOMATION=true` ide celý zoznam `WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS` cez API, doplnený o `--remote-debugging-port`, ak v ňom nie je číselný port, a o pôvodné `msWebOOUI` features v jednom `--disable-features`. Bežný štart premennú nevidí a port neotvára. Overené: proces žil, `debugPort=False`.
+- `cargo test --offline --locked --lib` exit 0, 17/17. `cargo fmt --check` exit 0.
+- Verbose msedgedriver 156.0.4314.58 nastaví `--enable-automation` a `--remote-debugging-port=0`. Príkazový riadok `msedgewebview2.exe` pre `wraith.exe` tieto prepínače obsahoval a `user-data-dir` bol v `scoped_dir` drivera. `DevToolsActivePort` počas behu nevznikol. Shell mal Medium integrity. Zhoda EdgeDriver a WebView2 156.0.4314.58 teda nestačí.
+- `node scripts/windows-webdriver-smoke.mjs` na tomto debug exe: RUN1 exit 1, RUN2 exit 1. Oba skončili na `POST /session` TimeoutError a `hyper::Error(IncompleteMessage)`. K terminálu sa nedostali. Po behu neostal `wraith.exe`, `tauri-driver.exe` ani `msedgedriver.exe`. GUI ostáva NEOVERENÉ.
+- `pnpm --filter wraith exec tauri build --ci --bundles nsis` s Node v24.22.2 exit 0. Inštalátor `apps/desktop/src-tauri/target/release/bundle/nsis/Lab-M4_0.2.0_x64-setup.exe`, 30 761 348 bajtov, SHA-256 `C593422C822A7F60E290D6CF0617728FA0F81DAC21605C025E151C707838766C`, čas súboru 2026-11-07 21:01:04, strom `5bf789b`. Čistá inštalácia sa nespúšťala. Push nebol. PR #13 ostáva na `40d326d`. Živý Codex → Grok Build ostáva BLOCKED.
+- Report: `.lab-m4/reports/stav-2026-11-07-2105.md`.
+
+## 2026-11-07 21:06 +01:00 (Europe/Bratislava) – Regresia na 8a69230
+- Strom `8a69230f673fa145750c4094ceaa77b7f88be107`. Kód aplikácie je `5bf789b`; tento commit je denník nad ním. Node v24.22.2.
+- `pnpm lint` exit 0. `pnpm typecheck` exit 0, vrátane produkčného frontend buildu. `pnpm test` exit 0: 33 súborov, 111 testov. `pnpm test:orchestrator` exit 0: 18 pass, 0 fail.
+- `cargo clippy --offline --locked -- -D warnings` exit 0, `Finished dev profile` za 6,80 s, bez warningu. Ignorovaný `cargo test --test terminal_pty_smoke -- --ignored` exit 0: 1 passed, 0 failed.
+- `rustc --edition 2021 -D warnings` pre `agent_transport.rs` aj `supervisor_test.rs` exit 0. `node packages/orchestrator-core/tests/windows-agent-transport.mjs` exit 0: spawn failure, deadline, EOF, backpressure, surviving control.
+
+## 2026-11-07 21:14 +01:00 (Europe/Bratislava) – Jeden meraný strom 4f59e4c
+- Všetky príkazy nižšie bežali pri checkout `4f59e4c67883beb6e7b78072e1e235c2fac4baad`. Node v24.22.2.
+- `pnpm package:usage-sidecar` exit 0. `pnpm lint` exit 0. `pnpm typecheck` exit 0. `pnpm test` exit 0: 33 súborov, 111 testov. `pnpm test:orchestrator` exit 0: 18 pass, 0 fail.
+- `cargo fmt --check` exit 0. `cargo clippy --offline --locked -- -D warnings` exit 0. `cargo test --offline --locked` exit 0: lib 17 passed, 0 failed, ConPTY test v predvolenom behu 1 ignored. Samostatný `--test terminal_pty_smoke -- --ignored` exit 0: 1 passed.
+- `rustc -D warnings` transport aj sleeper exit 0. `windows-agent-transport.mjs` exit 0.
+- `pnpm --filter wraith exec tauri build --ci --bundles nsis` exit 0. Inštalátor `apps/desktop/src-tauri/target/release/bundle/nsis/Lab-M4_0.2.0_x64-setup.exe`, 30 764 250 bajtov, SHA-256 `39A1F44DAF424D05D7A985F10F326FF71DC9C5C3AE00D6CFEDD84F86A9896F29`, čas súboru 2026-11-07 21:13:24, strom `4f59e4c`.
+- GUI a živý Codex → Grok Build nie sú PASS. Čistá inštalácia je NEOVERENÉ. Push nebol.
+- Report: `.lab-m4/reports/stav-2026-11-07-2113.md`.
+
+## 2026-11-07 21:20 +01:00 (Europe/Bratislava) – Trvalý izolovaný domov pre login
+- Predvolené profily Codex aj Grok Build majú uložené prihlásenie. Súbory sa nečítali do chatu a nekopírovali sa.
+- `agent-preflight.mjs` predtým vytváral pri každom behu nový prázdny `CODEX_HOME` a `GROK_HOME`, takže bežné `grok login` v používateľskom profile tento beh nevidí.
+- Commit `b45d365266056ab50f5ba84fb426caefc61cf5b2` necháva oba domovy v gitignorovanom `.lab-m4/agent-homes`. `USERPROFILE` ostáva jednorazový. Test `agent-preflight.test.mjs` je v `pnpm test:orchestrator`: 19 pass, 0 fail, exit 0. Živý cyklus ostáva BLOCKED, kým sa používateľ neprihlási do týchto dvoch priečinkov.
+
+## 2026-11-07 21:28 +01:00 (Europe/Bratislava) – Overenie po b45d365 na jednom strome
+- Checkout `98568951f71771c5f8fcec7e2e2e1807600bcf32` obsahuje kód `b45d365` aj predchádzajúci denník. Node v24.22.2.
+- `pnpm lint` exit 0. `pnpm typecheck` exit 0. `pnpm test` exit 0: 33 súborov, 111 testov. `pnpm test:orchestrator` exit 0: 19 pass, 0 fail.
+- Desktop Rust tento balík neimportuje, preto sa fmt, Clippy a `cargo test` znova nespúšťali a nie sú PASS tohto SHA. `pnpm --filter wraith exec tauri build --ci --bundles nsis` exit 0 a release desktop preložil z tohto checkoutu.
+- Inštalátor `apps/desktop/src-tauri/target/release/bundle/nsis/Lab-M4_0.2.0_x64-setup.exe`, 30 764 218 bajtov, SHA-256 `2F361A7720F1E255279114FB1FA8921997782F0AB5CCB5BBBB60AC5CA13ECF14`, čas súboru 2026-11-07 21:27:45, strom `9856895`.
+- Push sa nerobil. Izolované prihlásenie, `DevToolsActivePort` a čistá inštalácia ostávajú krokom používateľa.
+- Report: `.lab-m4/reports/stav-2026-11-07-2128.md`.
+
+## 2026-11-07 21:32 +01:00 (Europe/Bratislava) – Rust kontroly na 01190f8
+- Checkout pred týmto zápisom: `01190f830d508142e9450f4e2a6f1bb39601af59`. Žiadny ďalší commit nepredchádzal týmto príkazom.
+- `cargo fmt --manifest-path apps/desktop/src-tauri/Cargo.toml --check` exit 0.
+- `cargo clippy --offline --locked --manifest-path apps/desktop/src-tauri/Cargo.toml -- -D warnings` exit 0. `Finished dev profile` za 2,73 s.
+- `cargo test --offline --locked --manifest-path apps/desktop/src-tauri/Cargo.toml` exit 0. Lib 17 passed, 0 failed. ConPTY test ostal 1 ignored a v tomto behu sa nespustil.
+- `rustc --edition 2021 -D warnings` pre `agent_transport.rs` aj `supervisor_test.rs` exit 0. `node packages/orchestrator-core/tests/windows-agent-transport.mjs` exit 0: spawn failure, deadline, EOF, backpressure, surviving control. Job skončil v limite, vlastné procesy neostali, kontrolný proces prežil.
+
+## 2026-11-07 21:36 +01:00 (Europe/Bratislava) – ConPTY smoke a ukončovanie na 95f3fdc
+- Checkout pred týmto zápisom: `95f3fdc78d902b5863ea6ae73acac5a2083f441b`.
+- `cargo test --offline --locked --manifest-path apps/desktop/src-tauri/Cargo.toml --test terminal_pty_smoke -- --ignored --nocapture` exit 0. `powershell_ptys_accept_input_and_close_independently` 1 passed, 0 failed, 0,66 s. Dve relácie, Get-Date, prvá skončila, druhá ostala nažive.
+- `cargo test --offline --locked --manifest-path apps/desktop/src-tauri/Cargo.toml -- close` exit 0. 6 passed, 0 failed, 11 filtered out: pipe close, PowerShell print close, wait timeout, súbežný close, blokovaný ConPTY zápis a vlastný process tree.
+- `cargo test --offline --locked --manifest-path apps/desktop/src-tauri/Cargo.toml -- native_terminal` exit 0. 1 passed, 0 failed. Je to ten istý process-tree test, spustený ešte raz.
+- Prihlásenie do izolovaných domovov, `DevToolsActivePort` a čistá inštalácia ostávajú BLOCKED alebo NEOVERENÉ. Push sa nerobil.
+
+## 2026-11-07 21:40 +01:00 (Europe/Bratislava) – Diff voči NSIS a žiadny push
+- Na `5729c78f5d67ca552fcd5d3e35c1ee0290999d95` je `git diff --stat 98568951f71771c5f8fcec7e2e2e1807600bcf32 HEAD` iba `docs/DENNIK.md`, 22 vložených riadkov. Medzi nimi sú commity `01190f8`, `95f3fdc` a `5729c78`, všetky denník. Inštalátor z `9856895` sa tým nemení.
+- `1dd6c1f` nie je predok PR #13 `40d326d`. Vetva `codex/orchestrator-transport` nad `40d326d` pridáva Usage commity `1dd6c1f`, `7fc8dbf`, `e83a0dc`, `570dc0c` a `7b84185`, ktoré na remote nie sú. Push tejto vetvy by tú zamietnutú publikáciu poslal pod iným menom. Neurobil som ho. `gh` ukazuje PR #13 stále OPEN draft, hlava `40d326d`, base `fix/terminal-zstd-integrity`. Remote `codex/orchestrator-transport` neexistuje.
+- GUI NEOVERENÉ. `scripts/windows-webdriver-smoke.mjs` dvakrát exit 1: `POST /session` TimeoutError a `hyper::Error(IncompleteMessage)`, log so zapísaným HEAD `4910bc1`. Po `5bf789b` mal `msedgewebview2.exe` prepínače drivera vrátane `--remote-debugging-port=0` a súbor `DevToolsActivePort` aj tak nevznikol. K terminálu sa test nedostal.
+- Čistá inštalácia NEOVERENÉ. `windows-installed-usage-smoke.ps1` exit 1: `Installer smoke must run on a disposable GitHub-hosted runner.` Inštalácia sa nespustila.
+- Živý cyklus BLOCKED. Prázdny profil Grok Build exit 1, hláška Not signed in. Prázdny profil Codex exit 1. Credential súbory sa nekopírovali. Izolované domovy `.lab-m4/agent-homes/codex` a `grok` čakajú na prihlásenie používateľa.
+
+## 2026-11-07 21:45 +01:00 (Europe/Bratislava) – Jedna sada na 72ff0cb
+- Pred sadou `git status --porcelain` na `72ff0cbd1dc6ff83530dbdb2585ab2dd722839c1` nič nevypísal. Node v24.22.2.
+- `pnpm package:usage-sidecar` exit 0. `pnpm lint` exit 0. `pnpm typecheck` exit 0 a v ňom produkčný frontend build, `built in 2.05s`. `pnpm test` exit 0: 33 súborov, 111 testov. `pnpm test:orchestrator` exit 0: 19 pass, 0 fail.
+- `cargo fmt --check` exit 0. `cargo clippy --offline --locked -- -D warnings` exit 0, dev profil za 4,51 s.
+- Prvý `cargo test` na tomto SHA narazil na LNK1104, lebo linker neotvoril testovacie exe. Po uvoľnení súborov rovnaký checkout: `cargo test --offline --locked` exit 0, lib 17 passed, 0 failed, ConPTY test v predvolenom behu 1 ignored. `cargo test --test terminal_pty_smoke -- --ignored` exit 0, 1 passed, 0 failed, 0,83 s. `cargo test -- close` exit 0, 6 passed, 0 failed, 11 filtered out.
+- Push, prihlásenie a inštalácia sa nerobili. GUI, čistá inštalácia a živý cyklus ostávajú NEOVERENÉ alebo BLOCKED.
+
+## 2026-11-07 21:50 +01:00 (Europe/Bratislava) – Natívny timeout na 9505e9b
+- `git diff --stat 98568951f71771c5f8fcec7e2e2e1807600bcf32 9505e9bc7ab0e31872200425665ffe9d6acbc21b` je iba `docs/DENNIK.md`, 36 vložených riadkov. Medzi nimi nie je zmena kódu.
+- Na tomto checkoute `rustc --edition 2021 -D warnings` pre `agent_transport.rs` aj `supervisor_test.rs` exit 0. `node packages/orchestrator-core/tests/windows-agent-transport.mjs` exit 0. Výstup: `Native transport passed: spawn failure, deadline, EOF, backpressure, surviving control`.
+- Invariant: testovaný job skončil v limite (deadline, exit 124), po `LAB_M4_JOB_STOP` neostal žiadny vlastný proces a nezávislý kontrolný proces prežil. Push, prihlásenie a inštalácia sa nerobili.
+
+## 2026-11-07 21:55 +01:00 (Europe/Bratislava) – Interrupt, STOP a súbežný cleanup
+- K `windows-agent-transport.mjs` pribudli interrupt, explicitný STOP živého sleepra a súbežné zatvorenie dvoch jobov. Každý má limit 8 s a vlastné upratanie. Plná fronta ostáva exit 4.
+- Beh pri HEAD `05d9436085f4528b22e1cdcc070cdb6d882d51cc` pred týmto commitom: `rustc -D warnings` transport aj sleeper exit 0, test exit 0. Výstup: `Native transport passed: spawn failure, deadline, EOF, backpressure, interrupt, STOP, concurrent cleanup, surviving control`.
+
+## 2026-11-07 21:58 +01:00 (Europe/Bratislava) – Regresia a NSIS z bbf7c06
+- Checkout `bbf7c06870da027120df4d1ea236ae7ebd9054f1`, porcelain prázdny. Node v24.22.2. Balík z `9856895` už nie je odovzdaný artefakt.
+- `pnpm package:usage-sidecar` exit 0. `pnpm lint` exit 0. `pnpm typecheck` exit 0, produkčný frontend `built in 1.68s`. `pnpm test` exit 0: 33 súborov, 111 testov. `pnpm test:orchestrator` exit 0: 19 pass, 0 fail.
+- `cargo fmt --check` exit 0. `cargo clippy --offline --locked -- -D warnings` exit 0. Prvý `cargo test` exit 101, LNK1104 na zamknuté testovacie exe. Opakovaný `cargo test --offline --locked` exit 0: lib 17 passed, 0 failed, ConPTY v predvolenom behu 1 ignored.
+- `cargo test --test terminal_pty_smoke -- --ignored` exit 0: 1 passed, 0 failed, 0,71 s. `cargo test -- close` exit 0: 6 passed, 0 failed, 11 filtered out.
+- `rustc -D warnings` transport aj sleeper exit 0. `windows-agent-transport.mjs` exit 0: spawn failure, deadline, EOF, backpressure, interrupt, STOP, concurrent cleanup, surviving control.
+- `pnpm --filter wraith exec tauri build --ci --bundles nsis` exit 0. Inštalátor `apps/desktop/src-tauri/target/release/bundle/nsis/Lab-M4_0.2.0_x64-setup.exe`, 30 761 705 bajtov, SHA-256 `0465D164A7A526B377D68EB0E58F4DEC0B13B327B23376D1D8B051B9A221AA09`, čas súboru 2026-11-07 21:58:04, strom `bbf7c06`.
+- Push, prihlásenie a inštalácia sa nerobili. GUI ostáva NEOVERENÉ, čistá inštalácia NEOVERENÉ, živý cyklus BLOCKED.
+
+## 2026-11-07 22:05 +01:00 (Europe/Bratislava) – WebDriver nie je regresia voči 40d326d
+- `40d326d` prešiel na CI windows-2022 so zhodným starším WebView2, nie na tomto evergreen runtime. Diff spúšťania voči tomu commitu je `create: false` a okno v setup. Samotný debug smoke stále volá rovnaké `POST /session`. Timeout bol už na `4e128295` pred touto zmenou okna.
+- WebView2 je teraz `157.0.4341.42`. Probe bez `TAURI_WEBVIEW_AUTOMATION`, teda cestou ako `40d326d`, dal na príkazový riadok `--edge-webview-switches=--remote-debugging-port`. Port `9333` neodpovedal a `DevToolsActivePort` nevznikol.
+- Jeden beh `node scripts/windows-webdriver-smoke.mjs` pri HEAD `f8446b6`, debug `wraith.exe`, EdgeDriver `157.0.4341.42` zhodný s runtime: exit 1, `POST /session` TimeoutError, `hyper::Error(IncompleteMessage)`. Po behu `DevToolsActivePort` nebol v `wraith.exe.WebView2` ani v `Temp\lab-m4-webdriver-*`. K session, Get-Date ani zatvoreniu sa test nedostal. Kód som kvôli tomu nemenil: runtime port nezapíše ani na pôvodnej ceste.
+
+## 2026-11-07 22:10 +01:00 (Europe/Bratislava) – Odovzdanie na 23bedc9
+- HEAD `23bedc9fa69b8e0b2f21aa5dd56cb616a1ecef7c`. `git diff --stat bbf7c06870da027120df4d1ea236ae7ebd9054f1 HEAD` je iba `docs/DENNIK.md`. Inštalátor ostáva z `bbf7c06`: `Lab-M4_0.2.0_x64-setup.exe`, 30 761 705 bajtov, SHA-256 `0465D164A7A526B377D68EB0E58F4DEC0B13B327B23376D1D8B051B9A221AA09`.
+- Jedna neinteraktívna kontrola bez kopírovania credential súborov. `CODEX_HOME` aj `GROK_HOME` boli prázdne `.lab-m4/agent-homes/codex` a `grok`. `codex login status` exit 1, text `Not logged in`. `grok.exe -p ping --output-format json --disable-web-search --no-plan --max-turns 1` exit 1, text `Not signed in`. Živý cyklus je BLOCKED na tomto hlásení.
+- Čistá inštalácia ostáva NEOVERENÉ. Lokálne `windows-installed-usage-smoke.ps1` končí pred inštaláciou: `Installer smoke must run on a disposable GitHub-hosted runner.`
+- Push sa nerobil. Report: `.lab-m4/reports/stav-2026-11-07-2210.md`.
+
+## 2026-11-07 22:55 +01:00 (Europe/Bratislava) – STOP, review diffu a NSIS z dcf2f27
+- `dcf2f2764728147789517b286601d413fe027798` rozlišuje zatvorenie vstupu a STOP. EOF rodiča počká na usporiadaný stdout a končí 0 s `LAB_M4_RESULT parent-closed`. Riadok `LAB_M4_STOP` sa agentovi neprepošle a končí 5 s `LAB_M4_RESULT stop`. Timeout ostáva 124, plná fronta 4, zatvorenie agenta 2, spawn 1.
+- Review berie `git diff` a exit testu z izolovaného worktree. Počet pokusov sám o sebe výsledok neprijme. STOP fake relácie s pripojeným transportom volá odovzdanú binárku a Node peer odmietne. Živý Codex → Grok Build ostáva BLOCKED.
+- Čistý worktree `dcf2f27` nemal staging. `pnpm package:usage-sidecar` exit 0, Node v24.22.2, `snapshotId` je v `main.cjs`, manifest obsahuje `node.exe`, `main.cjs` a `node_sqlite3.node`. `tauri build --ci --bundles nsis` exit 0. Inštalátor `Lab-M4_0.2.0_x64-setup.exe`, 30 774 391 bajtov, SHA-256 `1B5EC2DC75759A6ED444DED6CC753ED19C06E4F2854B90C98992AB3901CBEEA4`, čas 2026-11-07 22:49:44. Starší súbor z `bbf7c06` už nie je odovzdaný balík.
+- Na `dcf2f27`: `package`, `lint`, `typecheck`, `pnpm test` 111/111 a `pnpm test:orchestrator` 22/22 exit 0. `cargo fmt` a `clippy -D warnings` exit 0. Prvé dva `cargo test` exit 101, LNK1104. Ďalší beh exit 0: lib 17 passed, 0 failed. Ignorovaný ConPTY exit 0, 1 passed, 0,64 s. `cargo test -- close` exit 0, 6 passed. Natívny transport exit 0.
+- Čistá inštalácia ostáva NEOVERENÉ. GUI ostáva NEOVERENÉ. Push sa nerobil. Report: `.lab-m4/reports/stav-2026-11-07-2255.md`.
+
+## 2026-11-07 23:05 +01:00 (Europe/Bratislava) – Dva GUI smokes na 38b089a
+- Kód je `dcf2f27`, HEAD pri behu `38b089ab7d2cc19a7ea77e5a70fac6e5a124c8c7`, rozdiel len `docs/DENNIK.md`. Debug `wraith.exe` 2026-11-07 22:52:37, 16 670 208 bajtov. WebView2 aj EdgeDriver `157.0.4341.42`.
+- `node scripts/windows-webdriver-smoke.mjs` dvakrát, exit 1 a exit 1. Oba skončili na `POST /session` TimeoutError a `hyper::Error(IncompleteMessage)`. K reláciám, `Get-Date`, poradiu, zatvoreniu, relaunch ani blokovanému writeru sa test nedostal.
+- `DevToolsActivePort` po oboch behoch chýba. `wraith.exe`, `tauri-driver.exe` a `msedgedriver.exe` neostali. GUI ostáva NEOVERENÉ. Ďalší rovnaký beh nespúšťam.
+
+## 2026-11-07 23:20 +01:00 (Europe/Bratislava) – Vetva je na GitHube
+- `git push -u origin HEAD:codex/orchestrator-transport` prijal novú vetvu. Remote `refs/heads/codex/orchestrator-transport` je `df321fa33e661f20c33041e17251d5443ff04b84`, zhodný s lokálnym HEAD pred týmto zápisom. Do `main` sa nemergovalo. PR #13 ostáva na `40d326d`.
+- Draft PR #14: https://github.com/Wondris404/Lab-M4/pull/14. Hlava po tomto zápise sa posunie ďalším denníkovým commitom. Merge sa nerobil.
+
+- Celý beh na `1eb061f` odhalil náhodný pád `grok-cursor` (104/105, exit 1): dočasná cesta mala suffix `KEYJLz`, ktorý blokuje zámerná kontrola citlivých názvov. Syntetické fixture používajú hexadecimálny UUID suffix. Kontrola zdrojových ciest v aplikácii zostala zachovaná.
+
+## 2026-11-07 – Regresie z review Usage
+- Review pôvodnej vetvy našlo sedem bodov. V nadväzujúcej vetve už boli overené kanonické prekrytia zdrojov a označenie USD. UI po chybe jednotlivého zdroja zachová úplné snímky zdravých zdrojov. Stránky z nedokončeného skenu zdroja vynechá. Zlyhanie všetkých zdrojov alebo neplatný protokol zablokuje export. Používateľ môže odobrať uložený odkaz na zdroj. Pri prepnutí kariet Usage ponechá prebiehajúci sken.
+- Úspešne overený Zstandard archív prijme aj posledný JSON záznam bez LF. Živý plain JSONL ďalej čaká na oddeľovač. Sken priečinka Codex zachová zdravé súbory pri individuálnej chybe čítania. Nadlimitný riadok v živom Grok logu vráti stabilný prefix ako čiastočný výsledok bez posunu uloženého kurzora.
+- Po zostavení čerstvého sidecaru prešlo 111/111 JavaScript testov a 15/15 natívnych Rust testov. Prešiel aj TypeScript, ESLint, produkčný frontend build, Rust fmt a kontrola diffu. Lokálny MSVC opakovane odmietol zápis do pôvodného výstupu testov. Testy prešli s oddeleným výstupom cez `profile.test.package.wraith.debug=0`. Interaktívny smoke nainštalovanej aplikácie zostáva NEOVERENÝ.
+
+## 2026-11-08 – WebDriver a kontrola výsledku PowerShellu
+- PR #12 `95611cb` sa v CI zastavil na `POST /session`. PR #13 `c438f2f` a PR #14 `bb47ce6` otvorili reláciu, ale nedostali `first.txt`. Aktualizovaný test z `9134978` čaká na vypočítané potvrdenie každého z prvých dvoch príkazov a porovnáva výsledok PowerShellu so súborom `first.txt`. Súbor sa stále musí vytvoriť.
+- Po zlyhaniach záložnej kompilácie SQLite v CI používa `80b8a6e` Windows Server 2022, Python 3.11 a MSVC pre natívny N-API modul. Verzie Node, SQLite aj lockfile sa nezmenili. CI https://github.com/Wondris404/Lab-M4/actions/runs/42468338935 testovalo merge `966205d` z `80b8a6e` do `95611cb`. Node a celý Windows WebDriver test prešli. Desktop prešiel Clippy, 12 Rust testami, samostatným ConPTY smoke a release kompiláciou. NSIS sťahovanie skončilo HTTP 504, takže celý desktop job má výsledok FAIL.
+- Lokálne: debug build a natívny ConPTY smoke s dvoma reláciami exit 0. EdgeDriver a WebView2 `157.0.4341.42` sa zhodovali. `POST /session` skončil timeoutom aj na izolovanom debug builde. Samostatná sonda s čerstvým profilom a pevným loopback portom nedostala odpoveď. Lokálne GUI zostáva NEOVERENÉ.
+
+## 2026-11-08 – Ohraničený Windows cleanup relácie
+- ConPTY beží v samostatnom pomocnom procese privátneho Job Objectu. Ak riadne ukončenie neprejde do 300 ms, desktop ukončí celý strom aj pri zablokovanom `ClosePseudoConsole`. Desktop používa NOWAIT konce rúr. Po zastavení vstupu a výstupu potvrdí ukončenie procesov a počká na obe pracovné vlákna. Pri zatvorení okna majú všetky relácie spoločný termín 3 sekundy.
+- Prvé natívne regresie našli prípady, kde accounting jobu hlásil nulu skôr než handly jednotlivých procesov potvrdili ukončenie. Cleanup teraz pred stopom a pri eskalácii zaznamená handly vlastného jobu a čaká na ich potvrdenie v zostávajúcom limite. V prípade zlyhania overenia výsledok hlási chybu. Kooperatívne vlákna sa neodpájajú ani pri prekročení termínu.
+- Lokálne prešli `cargo fmt --check`, `cargo clippy --offline --locked --all-targets -- -D warnings` a Rust testy s `profile.test.package.wraith.debug=0` a `opt-level=2`, všetky exit 0. Výsledky 11 unit testov, 1 ConPTY smoke a 4 natívne regresné testy. Regresie so zablokovaným vstupom a plným výstupom potvrdili prázdny job, ukončenie brokera, PowerShellu a potomka a prežitie druhej relácie. Výstupná rúra dosiahla EOF v spoločnom limite. Prvý opakovaný link do existujúceho mena zlyhal LNK1104. Oddelený výstup umožnil finálny beh.

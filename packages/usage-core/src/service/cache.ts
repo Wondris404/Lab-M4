@@ -3,7 +3,7 @@ import { lstat, realpath } from 'node:fs/promises';
 import { basename } from 'node:path';
 import sqlite3 from 'sqlite3';
 import { type Parser, type ParseResult } from '../parsers/contracts.js';
-import { assertSafeFile, findCodexFiles } from '../parsers/shared.js';
+import { assertSafeFile, assertSafePath, findCodexFiles } from '../parsers/shared.js';
 import { normalizeRecord } from './normalize.js';
 import { grokAccumulator, grokBuildParser, type GrokCursorState } from '../parsers/grok-build.js';
 import { codexParser } from '../parsers/codex.js';
@@ -30,8 +30,11 @@ export async function scanCached(parser: Parser, source: string, cachePath: stri
     return opencodeReadUnavailable();
   }
   const key = createHash('sha256').update(`${parser.provider}\0${canonical}`).digest('hex');
-  let signature: string;
-  if (original.isDirectory() && parser.provider === 'codex') {
+  const codexDirectory = original.isDirectory() && parser === codexParser;
+  let signature: string | undefined;
+  if (codexDirectory) {
+    await assertSafePath(source);
+  } else if (original.isDirectory() && parser.provider === 'codex') {
     const files: string[] = [];
     for await (const file of findCodexFiles(canonical)) {
       await assertSafeFile(file);
@@ -44,7 +47,10 @@ export async function scanCached(parser: Parser, source: string, cachePath: stri
     await assertSafeFile(source);
     const info = await lstat(canonical);
     const wal = await lstatIfExists(`${canonical}-wal`);
-    signature = JSON.stringify([parser === grokBuildParser ? 11 : 9, info.dev, info.ino, info.size, info.mtimeMs, info.ctimeMs, wal?.size ?? null, wal?.mtimeMs ?? null]);
+    const version = /\.zst$/i.test(canonical)
+      ? (parser === grokBuildParser ? 17 : 12)
+      : (parser === grokBuildParser ? 17 : 11);
+    signature = JSON.stringify([version, info.dev, info.ino, info.size, info.mtimeMs, info.ctimeMs, wal?.size ?? null, wal?.mtimeMs ?? null]);
   }
   if (/auth|credential|token|secret|key|login|\.env/i.test(basename(cachePath))) {
     throw new Error('Nepovolená cache.');
@@ -62,14 +68,14 @@ export async function scanCached(parser: Parser, source: string, cachePath: stri
     await exec('INSERT OR IGNORE INTO cache_meta (name, value) VALUES (?, ?)', ['session_salt', randomBytes(32).toString('hex')]);
     const metadata = await new Promise<{ value: string }>((resolve, reject) => db.get('SELECT value FROM cache_meta WHERE name = ?', ['session_salt'], (e, value) => e ? reject(e) : resolve(value as { value: string })));
     const pseudonym = (sessionId: string) => createHmac('sha256', metadata.value).update(`${parser.provider}\0${sessionId}`).digest('hex');
-    if (parser === codexParser && original.isDirectory())
+    if (codexDirectory)
       return await scanCodexDirectory(db, key, canonical, pseudonym, force);
     if (parser === grokBuildParser && original.isFile() && !/\.zst$/i.test(canonical))
-      return await scanJsonlAppend(db, `${key}:v4`, canonical, (previous) => grokAccumulator(previous as GrokCursorState | undefined, pseudonym), force);
+      return await scanJsonlAppend(db, `${key}:v7`, canonical, (previous) => grokAccumulator(previous as GrokCursorState | undefined, pseudonym), force);
     if (parser === codexParser && original.isFile() && /\.jsonl$/i.test(canonical))
-      return await scanJsonlAppend(db, `${key}:v4`, canonical, (previous) => codexAccumulator(previous as CodexCursorState | undefined, pseudonym), force);
+      return await scanJsonlAppend(db, `${key}:v5`, canonical, (previous) => codexAccumulator(previous as CodexCursorState | undefined, pseudonym), force);
     const row = await new Promise<{ signature: string; result: string } | undefined>((resolve, reject) => db.get('SELECT signature, result FROM scan_cache WHERE id = ?', [key], (e, value) => e ? reject(e) : resolve(value as { signature: string; result: string } | undefined)));
-    if (!force && row?.signature === signature) return JSON.parse(row.result) as ParseResult;
+    if (!force && row && row.signature === signature) return JSON.parse(row.result) as ParseResult;
     const parsed = await parser.parse(canonical);
     const result = { ...parsed, records: parsed.records.map((record) => ({ ...normalizeRecord(record), sessionId: pseudonym(record.sessionId) })), limits: parsed.limits.map((limit) => ({ ...limit, sessionId: pseudonym(limit.sessionId) })) };
     // Cache replacement is atomic; no original file is written.

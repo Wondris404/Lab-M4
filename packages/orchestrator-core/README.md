@@ -1,10 +1,13 @@
 # Fake orchestration lifecycle
 
 This is a synthetic state-machine test harness. It does not invoke Codex or Grok,
-execute commands, create worktrees, review a real diff, enforce a sandbox, report
-real tokens or costs, or terminate a Windows process tree. Live adapters are not
-implemented and a start without `--fake` fails closed. It is not an orchestrator
-for real project work.
+enforce a sandbox, or report real tokens or costs. A worker attempt writes one
+file in a throwaway git worktree, then the review reads that `git diff` and the
+exit code of `check.mjs`. Attempt number alone cannot accept a result. Live
+adapters are not implemented and a start without `--fake` fails closed. The CLI
+does not spawn a process; its stop cancels fake state only. OS STOP is confirmed
+only by `stopShippedTransport` on the shipped Windows transport binary, which
+rejects a Node peer. It is not an orchestrator for real project work.
 
 From the repository root on Windows:
 
@@ -20,9 +23,11 @@ node packages/orchestrator-core/src/cli.mjs resume <session-id>
 ```
 
 `list`, `events` and `budget` also expose the synthetic state. `step` requests an
-approval, simulates a worker result after approval, and simulates a manager review;
-the first review requests one correction. Every new approval has a fresh ID.
-The fixed synthetic artifacts are not derived from repository contents. The
+approval, runs the synthetic attempt in a new temporary worktree, and reviews
+the captured diff and test exit. The first attempt fails its check and is
+repaired once; a passing corrected diff is accepted. A second failing result is
+not accepted. Every new approval has a fresh ID. The synthetic file is not taken
+from this repository. The
 figures in `budget` are synthetic and say nothing about subscription billing or
 actual spend. State is stored under `.lab-m4/orchestration-fake/`; sessions are
 left in place. A stale lock after an interrupted write fails closed and requires

@@ -51,7 +51,7 @@ export async function updateSession(id, update) {
   const lockInfo = await lock.stat();
   try {
     const state = await readState(path, id);
-    update(state);
+    await update(state);
     const temp = join(dir, `${id}.${randomUUID()}.tmp`);
     await writeFile(temp, JSON.stringify(state), { flag: 'wx' });
     await rename(temp, path);

@@ -3,7 +3,7 @@ fn main() {
     println!("cargo:rerun-if-changed=icons/icon.ico");
     println!("cargo:rerun-if-changed=icons/icon.png");
     // Own invoke commands are allowed by default. Limit that set to the pty,
-    // shell, session, and settings commands the frontend actually calls.
+    // shell, session, settings, and Usage commands the frontend actually calls.
     tauri_build::try_build(tauri_build::Attributes::new().app_manifest(
         tauri_build::AppManifest::new().commands(&[
             "spawn_powershell",
@@ -17,6 +17,7 @@ fn main() {
             "save_app_settings",
             "usage_list_sources",
             "usage_select_source",
+            "usage_remove_source",
             "usage_scan",
         ]),
     ))

@@ -27,3 +27,10 @@ portable-pty = "0.9"
 tokio = { version = "1", features = ["rt-multi-thread", "sync", "macros"] }
 reqwest = { version = "0.13", default-features = false, features = ["json", "rustls"] }
 
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.61", features = ["Win32_Security", "Win32_Storage_FileSystem", "Win32_System_Console", "Win32_System_IO", "Win32_System_JobObjects", "Win32_System_Memory", "Win32_System_Pipes", "Win32_System_SystemInformation", "Win32_System_Threading"] }
+
+
+[features]
+default = []
+webdriver = []

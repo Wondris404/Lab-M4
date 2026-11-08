@@ -149,12 +149,18 @@ describe('grok', () => {
         lines.map((x) => (typeof x === 'string' ? x : record(x))).join('\n') + '\n',
       );
       const r = await grokBuildParser.parse(file);
-      expect(r.records.map((x) => x.model)).toEqual(['model-test', 'unknown']);
+      expect(r.records.map((x) => x.model)).toEqual(['model-test', 'model-test', 'unknown']);
       const response = await handleRequest({ version: 1, requestId: 'synthetic', method: 'scan', params: { agent: 'grok-build', path: file } });
-      expect(response.result.records.map((item) => item.model)).toEqual(['unknown', 'unknown']);
+      expect(response.result.records.map((item) => item.model)).toEqual(['unknown', 'unknown', 'unknown']);
       expect(response.result.records[0]?.warnings).toContain('MODEL_UNVERIFIED');
-      expect(r.records).toHaveLength(2);
-      expect(r.warnings).toBe(1);
+      expect(response.result.status).toBe('partial');
+      expect(response.result.countRisk).toBe('both');
+      expect(response.result.estimateNote).toContain('len orientačný odhad');
+      expect(response.result.estimateNote).toContain('započítať dvakrát');
+      expect(response.result.estimateNote).toContain('podhodnotiť');
+      expect(response.result.records[0]).not.toHaveProperty('costEur');
+      expect(r.records).toHaveLength(3);
+      expect(r.warnings).toBe(2);
     }));
   it('clears old model when a correlation id changes sessions', () =>
     temp(async (dir) => {
@@ -358,7 +364,10 @@ it('prices a known speed via settings and keeps warnings in the summary', () =>
     const result = await summarize(settings);
     expect(result.recordCount).toBe(1);
     expect(result.warnings.codex).toBe(1);
+    expect(result.sourcesIncomplete).toBe(true);
     expect(result.totals?.sessions).toBe(1);
     expect(result.totals?.costUsd).toBeCloseTo(0.000027);
+    expect(result.totals?.costEur).toBeNull();
+    expect((await summarize({ ...settings, usdToEur: 1 })).totals?.costEur).toBeNull();
     expect(result.agents.codex?.records[0]?.costSource).toBe('odhad');
   }));

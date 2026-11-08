@@ -1,5 +1,10 @@
+mod pty_input;
 mod usage;
 mod usage_integrity;
+#[cfg(windows)]
+mod windows_pty;
+#[cfg(windows)]
+mod windows_pty_host;
 
 use std::collections::HashMap;
 use std::io::{Read, Write};
@@ -9,22 +14,99 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::Duration;
+#[cfg(windows)]
+use std::time::Instant;
 
+#[cfg(not(windows))]
 use portable_pty::{native_pty_system, CommandBuilder, PtySize};
 use serde::Serialize;
 use serde_json::{json, Value};
 use tauri::{AppHandle, Emitter, Manager, State};
 
 struct PtyInstance {
-    writer: Box<dyn std::io::Write + Send>,
-    master: Box<dyn portable_pty::MasterPty + Send>,
+    input: pty_input::PtyInput,
+    #[cfg(not(windows))]
     child: Box<dyn portable_pty::Child + Send + Sync>,
+    #[cfg(windows)]
+    master: windows_pty_host::WindowsPtyHost,
+    #[cfg(not(windows))]
+    master: Box<dyn portable_pty::MasterPty + Send>,
     kill_flag: Arc<AtomicBool>,
+    reader: thread::JoinHandle<()>,
+}
+
+impl PtyInstance {
+    #[cfg(windows)]
+    fn close(mut self) -> Result<(), String> {
+        let deadline = Instant::now() + windows_pty_host::CLEANUP_LIMIT;
+        self.begin_close();
+        let stopped = self.master.stop_by(deadline);
+        self.finish_close(deadline, stopped)
+    }
+
+    #[cfg(windows)]
+    fn begin_close(&mut self) {
+        self.kill_flag.store(true, Ordering::Release);
+        self.reader.thread().unpark();
+        self.input.begin_close();
+        // stop_by checks the stop again and forces the job if needed.
+        let _ = self.master.request_stop();
+    }
+
+    #[cfg(windows)]
+    fn finish_close(self, deadline: Instant, stopped: std::io::Result<()>) -> Result<(), String> {
+        let host = match stopped {
+            Ok(()) => self.master.wait_closed_by(deadline),
+            Err(error) => {
+                // The last job handle still triggers kill-on-close.
+                drop(self.master);
+                Err(error)
+            }
+        }
+        .map_err(|error| format!("PowerShell cleanup failed: {error}"));
+        let input = self.input.finish_by(deadline);
+        let reader = pty_input::join_worker_by(self.reader, deadline, "PTY output reader");
+        host.and(input).and(reader)?;
+        if Instant::now() > deadline {
+            return Err("Terminal cleanup exceeded its shared deadline".into());
+        }
+        Ok(())
+    }
+
+    #[cfg(not(windows))]
+    fn close(self) -> Result<(), String> {
+        let Self {
+            input,
+            master,
+            child,
+            kill_flag,
+            reader,
+        } = self;
+        kill_flag.store(true, Ordering::Release);
+        let child_result = {
+            let mut child = child;
+            let result = match child.try_wait() {
+                Ok(Some(_)) => Ok(()),
+                _ => child.kill().and_then(|()| child.wait().map(|_| ())),
+            };
+            drop(input);
+            result
+        };
+        drop(master);
+        reader.join().map_err(|_| "PTY output reader panicked")?;
+        child_result.map_err(|error| format!("PowerShell cleanup failed: {error}"))
+    }
+}
+
+#[derive(Default)]
+struct PtyRegistry {
+    closing: bool,
+    instances: HashMap<String, PtyInstance>,
 }
 
 #[derive(Default)]
 struct AppState {
-    pty: Mutex<HashMap<String, PtyInstance>>,
+    pty: Mutex<PtyRegistry>,
     agent_hook_url: Mutex<Option<String>>,
 }
 
@@ -32,6 +114,28 @@ struct AppState {
 struct PtyOutput {
     id: String,
     data: String,
+}
+
+fn publish_pty_event<T: Serialize + Clone + Send + 'static>(
+    app: &AppHandle,
+    _closing: &Arc<AtomicBool>,
+    event: &'static str,
+    payload: T,
+) {
+    #[cfg(windows)]
+    {
+        // The reader must not wait for WebView or listener locks while the
+        // main thread is closing the window and joining it.
+        let emitter = app.clone();
+        let closing = _closing.clone();
+        let _ = app.run_on_main_thread(move || {
+            if !closing.load(Ordering::Acquire) {
+                let _ = emitter.emit(event, payload);
+            }
+        });
+    }
+    #[cfg(not(windows))]
+    let _ = app.emit(event, payload);
 }
 
 // A PTY read can end in the middle of a UTF-8 character. Keep those bytes
@@ -98,26 +202,60 @@ struct AgentAudioTranscriptionResponse {
     body: String,
 }
 
-fn kill_instance(id: &str, state: &AppState) {
-    let removed = state.pty.lock().ok().and_then(|mut map| map.remove(id));
-    if let Some(mut instance) = removed {
-        instance.kill_flag.store(true, Ordering::SeqCst);
-        let _ = instance.child.kill();
-    }
+fn kill_instance(id: &str, state: &AppState) -> Result<bool, String> {
+    let removed = state
+        .pty
+        .lock()
+        .map_err(|_| "PTY registry unavailable")?
+        .instances
+        .remove(id);
+    let Some(instance) = removed else {
+        return Ok(false);
+    };
+    instance.close()?;
+    Ok(true)
 }
 
 fn kill_all(state: &AppState) {
-    let instances: Vec<PtyInstance> = if let Ok(mut map) = state.pty.lock() {
-        map.drain().map(|(_, instance)| instance).collect()
+    let instances: Vec<PtyInstance> = if let Ok(mut registry) = state.pty.lock() {
+        registry.closing = true;
+        registry
+            .instances
+            .drain()
+            .map(|(_, instance)| instance)
+            .collect()
     } else {
         return;
     };
 
-    for mut instance in instances {
-        instance.kill_flag.store(true, Ordering::SeqCst);
-        thread::spawn(move || {
-            let _ = instance.child.kill();
-        });
+    #[cfg(windows)]
+    {
+        let deadline = Instant::now() + windows_pty_host::CLEANUP_LIMIT;
+        let mut instances = instances;
+        for instance in &mut instances {
+            instance.begin_close();
+        }
+        // Send all forced terminations before waiting for any job to empty.
+        let stopped: Vec<_> = instances
+            .into_iter()
+            .map(|instance| {
+                let result = instance.master.stop_by(deadline);
+                (instance, result)
+            })
+            .collect();
+        for (instance, result) in stopped {
+            if let Err(error) = instance.finish_close(deadline, result) {
+                eprintln!("{error}");
+            }
+        }
+    }
+    #[cfg(not(windows))]
+    {
+        for instance in instances {
+            if let Err(error) = instance.close() {
+                eprintln!("{error}");
+            }
+        }
     }
 }
 
@@ -628,38 +766,47 @@ fn spawn_powershell(
     state: State<'_, AppState>,
     cwd: Option<String>,
 ) -> Result<String, String> {
-    let pty_system = native_pty_system();
-    let pty_pair = pty_system
-        .openpty(PtySize {
-            rows: 24,
-            cols: 80,
-            pixel_width: 0,
-            pixel_height: 0,
-        })
-        .map_err(|e| format!("openpty failed: {e}"))?;
-
-    let mut cmd = CommandBuilder::new("powershell.exe");
-    cmd.arg("-NoLogo");
-    if let Some(path) = cwd.as_deref() {
-        if !path.trim().is_empty() {
-            cmd.cwd(path);
+    const MAX_SESSIONS: usize = 32;
+    {
+        let registry = state.pty.lock().map_err(|_| "PTY registry unavailable")?;
+        if registry.closing {
+            return Err("Terminal is closing".into());
+        }
+        if registry.instances.len() >= MAX_SESSIONS {
+            return Err("Terminal session limit reached".into());
         }
     }
-
-    let child = pty_pair
-        .slave
-        .spawn_command(cmd)
-        .map_err(|e| format!("spawn failed: {e}"))?;
-
-    let reader = pty_pair
-        .master
-        .try_clone_reader()
-        .map_err(|e| format!("clone reader failed: {e}"))?;
-
-    let writer = pty_pair
-        .master
-        .take_writer()
-        .map_err(|e| format!("take writer failed: {e}"))?;
+    #[cfg(windows)]
+    let (master, reader, writer) = windows_pty_host::WindowsPtyHost::start(80, 24, cwd.as_deref())
+        .map_err(|error| format!("openpty failed: {error}"))?;
+    #[cfg(not(windows))]
+    let (master, slave, reader, writer) = {
+        let pty_pair = native_pty_system()
+            .openpty(PtySize {
+                rows: 24,
+                cols: 80,
+                pixel_width: 0,
+                pixel_height: 0,
+            })
+            .map_err(|e| format!("openpty failed: {e}"))?;
+        let reader = pty_pair
+            .master
+            .try_clone_reader()
+            .map_err(|e| format!("clone reader failed: {e}"))?;
+        let writer = pty_pair
+            .master
+            .take_writer()
+            .map_err(|e| format!("take writer failed: {e}"))?;
+        (pty_pair.master, pty_pair.slave, reader, writer)
+    };
+    let input = match pty_input::PtyInput::start(writer) {
+        Ok(input) => input,
+        Err(error) => {
+            #[cfg(windows)]
+            let _ = master.close_by(Instant::now() + windows_pty_host::CLEANUP_LIMIT);
+            return Err(format!("start input worker failed: {error}"));
+        }
+    };
 
     let id = new_id();
     let kill_flag = Arc::new(AtomicBool::new(false));
@@ -667,77 +814,141 @@ fn spawn_powershell(
     let app_handle = app.clone();
     let id_for_thread = id.clone();
 
-    thread::spawn(move || {
-        let mut reader = reader;
-        let mut buf = [0u8; 4096];
-        let mut decoder = Utf8OutputDecoder::default();
-        loop {
-            if kill_flag_reader.load(Ordering::SeqCst) {
-                break;
-            }
-            match reader.read(&mut buf) {
-                Ok(0) => break,
-                Ok(n) => {
-                    let data = decoder.push(&buf[..n]);
-                    if data.is_empty() {
-                        continue;
-                    }
-                    let payload = PtyOutput {
-                        id: id_for_thread.clone(),
-                        data,
-                    };
-                    if app_handle.emit("pty-output", payload).is_err() {
-                        break;
-                    }
+    let reader = thread::Builder::new()
+        .name("pty-output".into())
+        .spawn(move || {
+            let mut reader = reader;
+            let mut buf = [0u8; 4096];
+            let mut decoder = Utf8OutputDecoder::default();
+            loop {
+                #[cfg(windows)]
+                if kill_flag_reader.load(Ordering::Acquire) {
+                    break;
                 }
-                Err(_) => break,
+                match reader.read(&mut buf) {
+                    Ok(0) => break,
+                    Ok(n) => {
+                        if kill_flag_reader.load(Ordering::Acquire) {
+                            continue;
+                        }
+                        let data = decoder.push(&buf[..n]);
+                        if data.is_empty() {
+                            continue;
+                        }
+                        let payload = PtyOutput {
+                            id: id_for_thread.clone(),
+                            data,
+                        };
+                        publish_pty_event(&app_handle, &kill_flag_reader, "pty-output", payload);
+                    }
+                    #[cfg(windows)]
+                    Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                        thread::park_timeout(Duration::from_millis(10));
+                    }
+                    Err(_) => break,
+                }
             }
-        }
-        let remaining = decoder.finish();
-        if !remaining.is_empty() {
-            let _ = app_handle.emit(
-                "pty-output",
-                PtyOutput {
-                    id: id_for_thread.clone(),
-                    data: remaining,
-                },
-            );
-        }
-        let _ = app_handle.emit("pty-exit", id_for_thread);
-    });
+            if kill_flag_reader.load(Ordering::Acquire) {
+                return;
+            }
+            let remaining = decoder.finish();
+            if !remaining.is_empty() {
+                publish_pty_event(
+                    &app_handle,
+                    &kill_flag_reader,
+                    "pty-output",
+                    PtyOutput {
+                        id: id_for_thread.clone(),
+                        data: remaining,
+                    },
+                );
+            }
+            publish_pty_event(&app_handle, &kill_flag_reader, "pty-exit", id_for_thread);
+        });
 
-    let instance = PtyInstance {
-        writer,
-        master: pty_pair.master,
-        child,
-        kill_flag,
+    let reader = match reader {
+        Ok(reader) => reader,
+        Err(error) => {
+            #[cfg(windows)]
+            {
+                let deadline = Instant::now() + windows_pty_host::CLEANUP_LIMIT;
+                let mut input = input;
+                input.begin_close();
+                let _ = master.close_by(deadline);
+                let _ = input.finish_by(deadline);
+            }
+            return Err(format!("start output reader failed: {error}"));
+        }
     };
 
-    state
-        .pty
-        .lock()
-        .map_err(|e| format!("lock poisoned: {e}"))?
-        .insert(id.clone(), instance);
+    #[cfg(not(windows))]
+    let child = {
+        let mut cmd = CommandBuilder::new("powershell.exe");
+        cmd.arg("-NoLogo");
+        if let Some(path) = cwd.as_deref().filter(|path| !path.trim().is_empty()) {
+            cmd.cwd(path);
+        }
+        slave.spawn_command(cmd)
+    };
+    #[cfg(not(windows))]
+    let child = match child {
+        Ok(child) => child,
+        Err(error) => {
+            kill_flag.store(true, Ordering::Release);
+            drop(input);
+            drop(master);
+            let _ = reader.join();
+            return Err(format!("spawn failed: {error}"));
+        }
+    };
 
-    Ok(id)
+    let instance = PtyInstance {
+        input,
+        master,
+        #[cfg(not(windows))]
+        child,
+        kill_flag,
+        reader,
+    };
+
+    if let Ok(mut registry) = state.pty.lock() {
+        if !registry.closing && registry.instances.len() < MAX_SESSIONS {
+            registry.instances.insert(id.clone(), instance);
+            return Ok(id);
+        }
+    }
+    instance.close()?;
+    Err("Cannot register another terminal session".into())
 }
 
 #[tauri::command]
-fn write_powershell(id: String, input: String, state: State<'_, AppState>) -> Result<(), String> {
-    let mut slot = state
-        .pty
-        .lock()
-        .map_err(|e| format!("lock poisoned: {e}"))?;
-    let instance = slot.get_mut(&id).ok_or("no such pty")?;
-    instance
-        .writer
-        .write_all(input.as_bytes())
-        .map_err(|e| format!("write failed: {e}"))?;
-    instance
-        .writer
-        .flush()
-        .map_err(|e| format!("flush failed: {e}"))?;
-    Ok(())
+async fn write_powershell(
+    _app: AppHandle,
+    id: String,
+    input: String,
+    state: State<'_, AppState>,
+) -> Result<(), String> {
+    #[cfg(feature = "webdriver")]
+    let mut trace =
+        json!({"id": id.clone(), "bytes": input.len(), "carriageReturn": input.ends_with('\r')});
+    let completed = {
+        let registry = state.pty.lock().map_err(|_| "PTY registry unavailable")?;
+        registry
+            .instances
+            .get(&id)
+            .ok_or("Terminal session is closed")?
+            .input
+            .enqueue(input)?
+    };
+    let result = completed
+        .await
+        .map_err(|_| "Terminal input was cancelled")?;
+    #[cfg(feature = "webdriver")]
+    {
+        trace["ok"] = json!(result.is_ok());
+        let _ = _app.emit("terminal-input-completed", trace);
+    }
+    result
 }
 
 #[tauri::command]
@@ -751,22 +962,33 @@ fn resize_powershell(
         .pty
         .lock()
         .map_err(|e| format!("lock poisoned: {e}"))?;
-    let instance = slot.get(&id).ok_or("no such pty")?;
-    instance
-        .master
-        .resize(PtySize {
-            rows,
-            cols,
-            pixel_width: 0,
-            pixel_height: 0,
-        })
-        .map_err(|e| format!("resize failed: {e}"))?;
-    Ok(())
+    let instance = slot.instances.get(&id).ok_or("no such pty")?;
+    #[cfg(windows)]
+    {
+        instance
+            .master
+            .resize(cols, rows)
+            .map_err(|e| format!("resize failed: {e}"))
+    }
+    #[cfg(not(windows))]
+    {
+        instance
+            .master
+            .resize(PtySize {
+                rows,
+                cols,
+                pixel_width: 0,
+                pixel_height: 0,
+            })
+            .map_err(|e| format!("resize failed: {e}"))
+    }
 }
 
 #[tauri::command]
-fn kill_powershell(id: String, state: State<'_, AppState>) -> Result<(), String> {
-    kill_instance(&id, &state);
+fn kill_powershell(id: String, app: AppHandle, state: State<'_, AppState>) -> Result<(), String> {
+    if kill_instance(&id, &state)? {
+        let _ = app.emit("pty-exit", id);
+    }
     Ok(())
 }
 
@@ -776,7 +998,7 @@ fn list_powershell(state: State<'_, AppState>) -> Result<Vec<String>, String> {
         .pty
         .lock()
         .map_err(|e| format!("lock poisoned: {e}"))?;
-    Ok(slot.keys().cloned().collect())
+    Ok(slot.instances.keys().cloned().collect())
 }
 
 fn sessions_path(app: &AppHandle) -> Result<std::path::PathBuf, String> {
@@ -815,8 +1037,154 @@ fn save_sessions(app: AppHandle, state: Value) -> Result<(), String> {
     Ok(())
 }
 
+/// Arguments passed through WebView2's API when a WebDriver session asked for automation.
+///
+/// `TAURI_WEBVIEW_AUTOMATION` is set by tauri-driver. wry treats that flag as a no-op on
+/// Windows, and WebView2 150+ does not open a DevTools port from
+/// `WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS` alone. The port stays closed for a normal launch.
+#[cfg_attr(not(feature = "webdriver"), allow(dead_code))]
+pub(crate) fn automation_browser_args(
+    webview_automation: Option<&str>,
+    legacy_automation: Option<&str>,
+    webview_arguments: Option<&str>,
+) -> Option<String> {
+    if !automation_requested(webview_automation, legacy_automation) {
+        return None;
+    }
+    // Keep the driver's full switch list. WebView2 only honors it through the
+    // API, and dropping `--enable-automation` leaves the debugging port closed.
+    let mut args = webview_arguments.unwrap_or("").trim().to_string();
+    if remote_debugging_port(&args).is_none() {
+        if !args.is_empty() {
+            args.push(' ');
+        }
+        args.push_str("--remote-debugging-port=0");
+    }
+    if !args.contains("--remote-allow-origins=") {
+        args.push_str(" --remote-allow-origins=*");
+    }
+    Some(with_required_disabled_features(&args))
+}
+
+#[cfg_attr(not(feature = "webdriver"), allow(dead_code))]
+fn with_required_disabled_features(args: &str) -> String {
+    const REQUIRED: [&str; 3] = ["msWebOOUI", "msPdfOOUI", "msSmartScreenProtection"];
+    let mut kept = Vec::new();
+    let mut features = Vec::new();
+    for token in args.split_whitespace() {
+        if let Some(value) = token.strip_prefix("--disable-features=") {
+            for feature in value.split(',').filter(|feature| !feature.is_empty()) {
+                if !features.iter().any(|have: &String| have == feature) {
+                    features.push(feature.to_string());
+                }
+            }
+        } else {
+            kept.push(token.to_string());
+        }
+    }
+    for feature in REQUIRED {
+        if !features.iter().any(|have| have == feature) {
+            features.push(feature.to_string());
+        }
+    }
+    if !features.is_empty() {
+        kept.push(format!("--disable-features={}", features.join(",")));
+    }
+    kept.join(" ")
+}
+
+#[cfg_attr(not(feature = "webdriver"), allow(dead_code))]
+pub(crate) fn automation_data_dir(
+    webview_automation: Option<&str>,
+    legacy_automation: Option<&str>,
+    user_data_folder: Option<&str>,
+) -> Option<PathBuf> {
+    if !automation_requested(webview_automation, legacy_automation) {
+        return None;
+    }
+    let raw = user_data_folder?.trim();
+    let path = PathBuf::from(raw);
+    if raw.is_empty() || !path.is_absolute() {
+        return None;
+    }
+    Some(path)
+}
+
+#[cfg_attr(not(feature = "webdriver"), allow(dead_code))]
+fn automation_requested(webview_automation: Option<&str>, legacy_automation: Option<&str>) -> bool {
+    cfg!(feature = "webdriver")
+        && (webview_automation == Some("true") || legacy_automation == Some("true"))
+}
+
+#[cfg_attr(not(feature = "webdriver"), allow(dead_code))]
+fn remote_debugging_port(extra: &str) -> Option<&str> {
+    extra.split_whitespace().find_map(|token| {
+        let value = token
+            .trim_matches('"')
+            .strip_prefix("--remote-debugging-port=")?;
+        if (1..=5).contains(&value.len()) && value.bytes().all(|byte| byte.is_ascii_digit()) {
+            Some(value)
+        } else {
+            None
+        }
+    })
+}
+
+fn open_configured_window(app: &tauri::App) -> Result<(), std::io::Error> {
+    #[cfg(all(windows, not(feature = "webdriver")))]
+    for name in [
+        "TAURI_WEBVIEW_AUTOMATION",
+        "TAURI_AUTOMATION",
+        "WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS",
+    ] {
+        // WebView2 also reads arguments directly from the environment.
+        std::env::remove_var(name);
+    }
+    let config = app
+        .config()
+        .app
+        .windows
+        .first()
+        .cloned()
+        .ok_or_else(|| std::io::Error::other("Lab-M4 window config is missing"))?;
+    #[allow(unused_mut)]
+    let mut builder = tauri::WebviewWindowBuilder::from_config(app.handle(), &config)
+        .map_err(|error| std::io::Error::other(error.to_string()))?;
+    #[cfg(all(windows, feature = "webdriver"))]
+    {
+        let webview_automation = std::env::var("TAURI_WEBVIEW_AUTOMATION").ok();
+        let legacy_automation = std::env::var("TAURI_AUTOMATION").ok();
+        let webview_arguments = std::env::var("WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS").ok();
+        if let Some(args) = automation_browser_args(
+            webview_automation.as_deref(),
+            legacy_automation.as_deref(),
+            webview_arguments.as_deref(),
+        ) {
+            builder = builder.additional_browser_args(&args);
+            // The loader appends the environment copy after the API arguments.
+            // Keeping both lets the ignored copy win on the command line.
+            std::env::remove_var("WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS");
+        }
+        if let Some(dir) = automation_data_dir(
+            webview_automation.as_deref(),
+            legacy_automation.as_deref(),
+            std::env::var("WEBVIEW2_USER_DATA_FOLDER").ok().as_deref(),
+        ) {
+            builder = builder.data_directory(dir);
+        }
+    }
+    builder
+        .build()
+        .map_err(|error| std::io::Error::other(error.to_string()))?;
+    Ok(())
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    #[cfg(windows)]
+    if let Some(code) = windows_pty_host::maybe_run() {
+        std::process::exit(code);
+    }
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
@@ -829,6 +1197,7 @@ pub fn run() {
             if let Ok(mut slot) = state.agent_hook_url.lock() {
                 *slot = Some(url);
             }
+            open_configured_window(app)?;
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -850,7 +1219,10 @@ pub fn run() {
             usage::usage_cancel_scan
         ])
         .on_window_event(|window, event| {
-            if let tauri::WindowEvent::CloseRequested { .. } = event {
+            if matches!(
+                event,
+                tauri::WindowEvent::CloseRequested { .. } | tauri::WindowEvent::Destroyed
+            ) {
                 if let Some(state) = window.app_handle().try_state::<AppState>() {
                     kill_all(&state);
                 }
@@ -862,7 +1234,65 @@ pub fn run() {
 
 #[cfg(test)]
 mod tests {
-    use super::Utf8OutputDecoder;
+    use super::{automation_browser_args, automation_data_dir, Utf8OutputDecoder};
+
+    #[cfg(feature = "webdriver")]
+    #[test]
+    fn webdriver_port_is_enabled_only_for_an_automation_session() {
+        assert!(automation_browser_args(None, None, None).is_none());
+        assert!(automation_browser_args(Some("false"), Some("1"), None).is_none());
+        let enabled = automation_browser_args(Some("true"), None, None).unwrap();
+        assert!(enabled.contains("--disable-features=msWebOOUI,msPdfOOUI,msSmartScreenProtection"));
+        assert!(enabled.contains("--remote-debugging-port=0"));
+        assert!(enabled.contains("--remote-allow-origins=*"));
+        let driver_port = automation_browser_args(
+            None,
+            Some("true"),
+            Some("--disable-gpu --remote-debugging-port=9333"),
+        )
+        .unwrap();
+        assert!(driver_port.contains("--remote-debugging-port=9333"));
+        assert!(!driver_port.contains("--remote-debugging-port=0"));
+        assert!(
+            automation_browser_args(Some("true"), None, Some("--remote-debugging-port=nope"))
+                .unwrap()
+                .contains("--remote-debugging-port=0")
+        );
+        let driver = "--enable-automation --disable-features=IgnoreDuplicateNavs,Prewarm --remote-debugging-port=0 --test-type=webdriver";
+        let kept = automation_browser_args(Some("true"), None, Some(driver)).unwrap();
+        assert!(kept.contains("--enable-automation"));
+        assert!(kept.contains("--test-type=webdriver"));
+        assert_eq!(kept.matches("--disable-features=").count(), 1);
+        assert!(kept.contains("IgnoreDuplicateNavs"));
+        assert!(kept.contains("msWebOOUI"));
+        assert_eq!(kept.matches("--remote-debugging-port=").count(), 1);
+    }
+
+    #[cfg(feature = "webdriver")]
+    #[test]
+    fn automation_profile_accepts_only_an_absolute_driver_folder() {
+        let absolute = std::env::temp_dir();
+        let text = absolute.to_str().expect("temp dir is unicode");
+        assert_eq!(
+            automation_data_dir(Some("true"), None, Some(text)).as_deref(),
+            Some(absolute.as_path())
+        );
+        assert!(automation_data_dir(None, None, Some(text)).is_none());
+        assert!(automation_data_dir(Some("true"), None, Some("relative\\profile")).is_none());
+        assert!(automation_data_dir(Some("true"), None, Some("  ")).is_none());
+    }
+
+    #[cfg(not(feature = "webdriver"))]
+    #[test]
+    fn production_ignores_automation_environment_values() {
+        assert!(automation_browser_args(
+            Some("true"),
+            Some("true"),
+            Some("--remote-debugging-port=9333")
+        )
+        .is_none());
+        assert!(automation_data_dir(Some("true"), Some("true"), Some("C:\\test")).is_none());
+    }
 
     #[test]
     fn pty_text_preserves_characters_split_across_reads() {

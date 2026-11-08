@@ -1,7 +1,11 @@
 import { createHash, randomUUID } from 'node:crypto';
+import { reviewWorkerResult } from './review.mjs';
+import { stopShippedTransport } from './transport-stop.mjs';
+import { captureSyntheticAttempt } from './worktree.mjs';
 
-// This engine never starts a process, accesses a worktree or runs a command.
-// Its constants and event types describe a synthetic test, not a live adapter.
+// The lifecycle stays fake: it does not start Codex or Grok. A worker attempt
+// reads a git diff and a test exit from an isolated worktree. OS STOP runs
+// only when a shipped transport process is attached.
 const TERMINAL = new Set(['completed', 'failed', 'cancelled']);
 const MAX_EVENTS = 64;
 const MAX_ATTEMPTS = 2;
@@ -9,7 +13,7 @@ const MAX_ATTEMPTS = 2;
 function event(state, type) {
   // Reserve one terminal event beyond the ordinary limit. This lets timeout,
   // STOP and log exhaustion remain durable when no regular slots remain.
-  if (state.events.length >= MAX_EVENTS && !['fake_stop', 'timeout', 'event_limit'].includes(type))
+  if (state.events.length >= MAX_EVENTS && !['fake_stop', 'supervisor_stop', 'timeout', 'event_limit'].includes(type))
     throw new Error('Synthetic event limit reached');
   state.events.push({ sequence: state.events.length + 1, type });
 }
@@ -74,20 +78,26 @@ export function stepFake(state, now = Date.now()) {
     return state;
   }
   if (state.status === 'running') {
-    // A deliberately fixed fake result. No filesystem mutation or child process.
     state.task.attempts++;
     state.budget.syntheticTokens += 500; state.budget.syntheticCostEur += 0.01;
-    state.task.review = { changedFiles: ['synthetic.md'], checks: 'synthetic-pass',
-      diff: state.task.attempts === 1 ? '+ draft\n' : '+ corrected\n' };
+    const artifact = captureSyntheticAttempt(state.task.attempts);
+    const verdict = reviewWorkerResult(artifact);
+    state.task.review = { ...artifact, decision: verdict.decision, reason: verdict.reason };
     state.status = 'review'; state.task.status = 'review';
     event(state, 'fake_worker_result');
     return state;
   }
   if (state.status === 'review') {
-    if (state.task.attempts === 1) {
-      state.status = 'queued'; state.task.status = 'queued'; event(state, 'fake_manager_requested_correction');
-    } else {
+    const verdict = reviewWorkerResult({
+      diff: state.task.review?.diff, test: state.task.review?.test,
+    });
+    state.task.review = { ...state.task.review, decision: verdict.decision, reason: verdict.reason };
+    if (verdict.decision === 'accept') {
       state.status = 'completed'; state.task.status = 'completed'; event(state, 'fake_manager_accepted');
+    } else if (state.task.attempts >= MAX_ATTEMPTS) {
+      state.status = 'failed'; state.task.status = 'failed'; event(state, 'attempt_limit');
+    } else {
+      state.status = 'queued'; state.task.status = 'queued'; event(state, 'fake_manager_requested_correction');
     }
     return state;
   }
@@ -110,11 +120,12 @@ export function decideFakeApproval(state, id, decision, now = Date.now()) {
   return state;
 }
 
-export function stopFake(state) {
+export async function stopFake(state, ownedTransport) {
   if (state.mode !== 'fake' || state.version !== 1) throw new Error('Unsupported session');
+  if (ownedTransport) state.jobStop = await stopShippedTransport(ownedTransport);
   if (TERMINAL.has(state.status)) return state;
   state.approval = null; state.status = 'cancelled'; state.task.status = 'cancelled';
-  event(state, 'fake_stop');
+  event(state, ownedTransport ? 'supervisor_stop' : 'fake_stop');
   return state;
 }
 

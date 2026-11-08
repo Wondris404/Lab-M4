@@ -2,7 +2,8 @@
 import { createFakeSession, decideFakeApproval, resumeFake, stepFake, stopFake } from './fake-engine.mjs';
 import { createSession, listSessions, loadSession, updateSession } from './fake-store.mjs';
 
-const help = `FAKE SIMULATION ONLY — no Codex/Grok adapter, process, worktree, billing or OS STOP.
+const help = `FAKE SIMULATION ONLY — no Codex or Grok adapter and no billing.
+This CLI does not spawn a shipped transport, so its stop cancels fake state only.
   node packages/orchestrator-core/src/cli.mjs start --fake
   node packages/orchestrator-core/src/cli.mjs list
   node packages/orchestrator-core/src/cli.mjs status|events|budget <session-id>

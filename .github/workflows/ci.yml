@@ -61,7 +61,18 @@ jobs:
       - name: PowerShell PTY smoke (Windows)
         timeout-minutes: 3
         run: cargo test --manifest-path src-tauri/Cargo.toml --test terminal_pty_smoke -- --ignored --nocapture
-      - run: pnpm tauri build
+      - run: pnpm tauri build --no-bundle
+      - name: Package Windows installers
+        shell: pwsh
+        run: |
+          for ($attempt = 1; $attempt -le 3; $attempt++) {
+            $output = pnpm tauri bundle --ci 2>&1 | ForEach-Object { "$_" }
+            $code = $LASTEXITCODE
+            $output | Write-Output
+            if ($code -eq 0) { exit 0 }
+            if ($attempt -eq 3 -or -not ($output -match 'http status: 50[234]')) { exit $code }
+            Start-Sleep -Seconds (5 * $attempt)
+          }
       - uses: actions/upload-artifact@v4
         with:
           name: lab-m4-windows-x64

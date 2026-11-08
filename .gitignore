@@ -9,3 +9,37 @@ config/settings.json
 .lab-m4/
 
 apps/desktop/usage-service/
+
+# Personal runtime state, exports and credentials never belong in source control.
+/agent-usage/
+/usage-data/
+/usage-exports/
+/exports/
+/backups/
+**/.codex/
+**/.grok/
+**/auth.json
+**/credentials.json
+**/.env
+**/.env.*
+!**/.env.example
+**/*.sqlite
+**/*.sqlite-*
+**/*.db
+**/*.db-*
+**/cache-v*.json
+**/sources.json
+**/sessions.json
+**/usage.csv
+*.log.*
+*.pem
+*.key
+**/.gemini/
+**/config/settings.json
+**/settings.local.json
+**/config.local.json
+**/*.sqlite3
+**/*.sqlite3-*
+**/*.jsonl
+**/*.csv
+**/*.har

@@ -22,6 +22,7 @@ jobs:
           PYTHON: ${{ steps.python.outputs.python-path }}
           # Build the N-API addon with the runner's MSVC, even if Node was built with clang.
           npm_config_clang: '0'
+      - run: pnpm check:release-privacy
       - run: pnpm package:usage-sidecar
       - run: pnpm lint
       - run: pnpm typecheck

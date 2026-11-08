@@ -71,6 +71,8 @@ export function UsageTab() {
   return (
     <main className="usage-tab" aria-label="Usage">
       <h1>Usage</h1>
+      <p role="note">Údaje Usage sa spracúvajú iba lokálne v tomto počítači. Neodosielajú sa na server ani na GitHub.
+        CSV sa uloží lokálne a obsahuje vaše skutočné údaje; zdieľajte ho iba vedome.</p>
       <div className="usage-filters">
         <label>
           Zdroj{' '}

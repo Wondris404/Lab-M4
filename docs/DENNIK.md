@@ -103,7 +103,7 @@
 ## 2026-11-05 20:40 – Lokálne súčty a zabalený sidecar
 - Branch / commit SHA: `feat/usage-hardening` / `0eca0d2`.
 - Čo som spravil: Po výslovnom povolení som znovu vytvoril generovaný sidecar a jednorazovo otestoval miestne zdroje; zaznamenávam len číselné súčty. Hodnoty sú okamžitý stav v čase testu, pričom cache a reasoning sú podmnožiny, nie ďalšie tokeny na sčítanie.
-- Ako som to otestoval (príkazy + výsledok, lokálne na PC aj CI): `pnpm package:usage-sidecar` úspešné; `sidecar.test.ts`, `codex-directory.test.ts`, `locked-database.test.ts` 3/3. Codex: 3207 záznamov, vstup 614258289, výstup 868177, cache 593283840, reasoning 272234; výsledok čiastočný, 1 kategória upozornení. Grok: 1107 záznamov, vstup 203555613, výstup 932624, cache 190199808, reasoning 573882; bez upozornení. CI pre `0eca0d2`: node úspešné, desktop prebieha.
+- Ako som to otestoval (príkazy + výsledok, lokálne na PC aj CI): `pnpm package:usage-sidecar` úspešné; `sidecar.test.ts`, `codex-directory.test.ts`, `locked-database.test.ts` 3/3. Osobné agregáty spotreby odstránené; nejde o syntetické testovacie dáta. CI pre `0eca0d2`: node úspešné, desktop prebieha.
 - Problémy / rozhodnutia: OpenCode má aktívny SQLite žurnál, preto som zdroj neotvoril a súčet nevypočítal; neuvádzam ho ako nulu. Pri čiastočnom výsledku Codex sa stránkovanie môže medzi volaniami zmeniť, preto čísla nemožno považovať za úplné alebo nemenné.
 - NEOVERENÉ: OpenCode a úplnosť Codex súčtu; GUI, CSP a živé WAL no-write.
 - Ďalší krok: Overiť desktop na vetve F4 v izolovanom aplikačnom profile a dokončiť F3.
@@ -123,7 +123,7 @@
 - Dôkaz F4: Pri `c4a48fa` mal `git diff origin/main feat/usage-ui --stat` 13 súborov, 698 pridaných a 7 odstránených riadkov; `git diff --name-status --diff-filter=D origin/main feat/usage-ui` nevrátil odstránený súbor. Úplný výpis pôvodného merge je vyššie v denníku; ďalšie riadky denníka tento stat prirodzene zväčšia.
 - Problémy / rozhodnutia: F3 kontroluje len posledných 4 KiB pred kurzorom, čo nedokazuje nemennosť celého staršieho obsahu. Aktívne WAL sa nezapočíta; zostáva pretek medzi kontrolou WAL a otvorením databázy. Používateľ povolil opätovné vytvorenie generovaného sidecaru a čítanie miestnych súčtov. Vnorený `agent-usage/` a automaticky generované Tauri permissions zostali nesledované a nedotknuté.
 - NEOVERENÉ: Kompletný Codex súčet (sken čiastočný), OpenCode (aktívny žurnál), skutočný obsah okna, PowerShell `Get-Date`, About, Usage a CSP konzola. Automatická kontrola computer-use odmietla prístup k oknu Wraith/Lab-M4 bez podrobnejšieho dôvodu.
-- Ďalší krok: Dokončiť no-write správanie SQLite/WAL, presnejšie overenie zmien pred kurzorom a výsledky CI; po schválení a používateľskom zlúčení F3 znova zlúčiť `main` do F4. V `C:\Users\ondre\Desktop\Lab-M4` spustiť `corepack pnpm install --frozen-lockfile` a `corepack pnpm tauri dev`; v okne overiť PowerShell `Get-Date`, About „Based on Wraith“, potom Usage → pridať zdroj → skontrolovať čísla, filtre, graf, triedenie, CSV a konzolu CSP. Až po zelenom F3/F4 začať F5–F7.
+- Ďalší krok: Dokončiť no-write správanie SQLite/WAL, presnejšie overenie zmien pred kurzorom a výsledky CI; po schválení a používateľskom zlúčení F3 znova zlúčiť `main` do F4. V `<repo>` spustiť `corepack pnpm install --frozen-lockfile` a `corepack pnpm tauri dev`; v okne overiť PowerShell `Get-Date`, About „Based on Wraith“, potom Usage → pridať zdroj → skontrolovať čísla, filtre, graf, triedenie, CSV a konzolu CSP. Až po zelenom F3/F4 začať F5–F7.
 
 ## 2026-11-06 08:35 +01:00 (Europe/Bratislava) – Inventúra a poškodený archív
 - Vetva: `feat/usage-hardening`; predchádzajúci implementačný HEAD `83d147d1096cad2e5ab3879d0df135c5badc466f`. Predbežný lokálny remote-tracking ukazoval rovnaké SHA; aktuálny serverový stav sa nedal načítať.
@@ -388,7 +388,7 @@
 - Dokumentácia xAI uvádza aj `cached_token` a `xai.api_key` pri vhodnej autentifikácii. Tento smoke overuje transport a lifecycle konkrétnych bináriek v prázdnom profile. Pre živý režim zostáva otvorená existujúca autorizovaná autentifikácia, vynútenie oprávnení na Windows, hranice I/O, skutočný diff a review. Job Object spravuje lifecycle. Fake CLI zostáva oddelené.
 
 ## 2026-11-07 20:10 +01:00 (Europe/Bratislava) – Transport s ohraničenou frontou
-- Pracovný strom `C:\Users\ondre\Desktop\Lab-M4\.lab-m4\implementation-verified`, vetva `codex/orchestrator-transport`, commit `d29eb12c01bcaf6bdc21c53569f7a00050055f39`. Pôvodný checkout `C:\Users\ondre\Desktop\Lab-M4` ostal na `d0e50a5` s nesledovaným `agent-usage/`. Push sa nerobil. Zamietnutá publikácia Usage sa neopakovala. PR #13 ostáva na staršej hlave `40d326d`.
+- Pracovný strom `<repo>\.lab-m4\implementation-verified`, vetva `codex/orchestrator-transport`, commit `d29eb12c01bcaf6bdc21c53569f7a00050055f39`. Pôvodný checkout `<repo>` ostal na `d0e50a5` s nesledovaným `agent-usage/`. Push sa nerobil. Zamietnutá publikácia Usage sa neopakovala. PR #13 ostáva na staršej hlave `40d326d`.
 - Natívny transport rozlišuje zatvorenie vstupu (exit 0), zatvorenie výstupu agenta (2), chybu vstupu (3), plnú frontu (4) a timeout (124). Po timeoute aj po plnej fronte vypíše `LAB_M4_JOB_STOP` a skončí vlastný job na nulu. Test `windows-agent-transport.mjs` prešiel dvakrát, exit 0. Nezávislý proces mimo jobu prežil. `node --test` orchestrátora 18/18, exit 0. `cli.mjs start` bez `--fake` exit 1. Dva behy s `--fake` exit 0 a režim ostáva `fake`.
 - Prázdny profil Grok Build skončil exit 1, hláška Not signed in. Prázdny profil Codex CLI exit 1 a nedokončil úlohu, diff ani review. Živý cyklus je BLOCKED. Tokeny sa nekopírovali.
 - `pnpm package:usage-sidecar` v tomto shelli exit 1: Node v24.22.1 nemá vedľa seba LICENSE. Existujúci staging uvádza Node v24.22.2, preto freshness test neprešiel (110/111, jeden fail). Staging sa nemazal. Nový NSIS z tohto commitu sa nestaval. GUI sa v tejto session nespúšťalo. Oboje je NEOVERENÉ pre `d29eb12`.
@@ -527,3 +527,13 @@
 - ConPTY beží v samostatnom pomocnom procese privátneho Job Objectu. Ak riadne ukončenie neprejde do 300 ms, desktop ukončí celý strom aj pri zablokovanom `ClosePseudoConsole`. Desktop používa NOWAIT konce rúr. Po zastavení vstupu a výstupu potvrdí ukončenie procesov a počká na obe pracovné vlákna. Pri zatvorení okna majú všetky relácie spoločný termín 3 sekundy.
 - Prvé natívne regresie našli prípady, kde accounting jobu hlásil nulu skôr než handly jednotlivých procesov potvrdili ukončenie. Cleanup teraz pred stopom a pri eskalácii zaznamená handly vlastného jobu a čaká na ich potvrdenie v zostávajúcom limite. V prípade zlyhania overenia výsledok hlási chybu. Kooperatívne vlákna sa neodpájajú ani pri prekročení termínu.
 - Lokálne prešli `cargo fmt --check`, `cargo clippy --offline --locked --all-targets -- -D warnings` a Rust testy s `profile.test.package.wraith.debug=0` a `opt-level=2`, všetky exit 0. Výsledky 11 unit testov, 1 ConPTY smoke a 4 natívne regresné testy. Regresie so zablokovaným vstupom a plným výstupom potvrdili prázdny job, ukončenie brokera, PowerShellu a potomka a prežitie druhej relácie. Výstupná rúra dosiahla EOF v spoločnom limite. Prvý opakovaný link do existujúceho mena zlyhal LNK1104. Oddelený výstup umožnil finálny beh.
+
+
+## 2026-11-08 — príprava 1.0.0 a ochrana súkromia
+
+Základom je aktuálny main, nie starší lokálny snapshot. Prenesená je iba
+samostatná lokálna oprava prístupnosti settings dialógu; ostatné rozhodnutia,
+privacy kontrola a obmedzenia sú v `docs/RELEASE-1.0.0.md`. Osobné diagnostické
+počty a konkrétne home cesty boli z aktuálneho stromu redigované. Pôvodné dáta
+na PC sa nemenili; história Git ani iné vetvy sa neprepisovali. Verzia desktopu
+je 1.0.0, ale tag/release/main merge sa nevykonal.

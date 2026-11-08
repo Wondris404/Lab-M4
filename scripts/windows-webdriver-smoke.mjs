@@ -11,7 +11,7 @@ const installed = process.env.LAB_M4_INSTALLED_EXE;
 if (installed && process.env.RUNNER_ENVIRONMENT !== 'github-hosted') {
   throw new Error('The installed Usage smoke requires a disposable GitHub-hosted runner');
 }
-const binary = installed ? resolve(installed) : resolve('apps/desktop/src-tauri/target/debug/wraith.exe');
+const binary = resolve(installed ?? process.env.LAB_M4_TERMINAL_EXE ?? 'apps/desktop/src-tauri/target/debug/wraith.exe');
 const driverPath = process.env.TAURI_DRIVER;
 if (!driverPath) throw new Error('TAURI_DRIVER must point to the installed tauri-driver executable');
 const scratch = await mkdtemp(join(tmpdir(), 'lab-m4-webdriver-'));
@@ -89,24 +89,54 @@ async function click(selector, index = 0) {
 }
 async function typeLine(line) {
   await click('.session-view.active .xterm-screen');
-  const actions = [...line].flatMap((value) => [
+  const actions = [...line, '\uE007'].flatMap((value) => [
     { type: 'keyDown', value }, { type: 'keyUp', value },
   ]);
   await request('POST', endpoint('/actions'), { actions: [{ type: 'key', id: 'keyboard', actions }] }, 30_000);
   await request('DELETE', endpoint('/actions'));
-  // A separate action tick releases the text keyboard state before Return.
-  await request('POST', endpoint('/actions'), { actions: [{ type: 'key', id: 'keyboard', actions: [
-    { type: 'keyDown', value: '\uE007' }, { type: 'keyUp', value: '\uE007' },
-  ] }] });
-  await request('DELETE', endpoint('/actions'));
 }
 
+async function beginOutputCapture() {
+  const result = await request('POST', endpoint('/execute/async'), {
+    script: `const done = arguments[arguments.length - 1];
+      const bridge = window.__TAURI_INTERNALS__;
+      const output = window.labTerminalOutput = Object.create(null);
+      const handler = bridge.transformCallback(({payload}) => {
+        if (typeof payload?.id !== 'string' || typeof payload.data !== 'string') return;
+        output[payload.id] = ((output[payload.id] || '') + payload.data).slice(-8192);
+      });
+      bridge.invoke('plugin:event|listen', {event: 'pty-output', target: {kind: 'Any'}, handler})
+        .then(() => done(true), () => done(false));`,
+    args: [],
+  });
+  if (!result) throw new Error('Could not observe PowerShell output');
+}
+async function terminalOutput() {
+  return request('POST', endpoint('/execute/sync'), {
+    script: 'return Object.entries(window.labTerminalOutput ?? {});', args: [],
+  });
+}
+async function waitForOutput(label, pattern, expectedSession) {
+  return until(label, async () => {
+    for (const [id, text] of await terminalOutput()) {
+      if (expectedSession && id !== expectedSession) continue;
+      // ConPTY adds cursor and styling sequences to the visible result.
+      const match = pattern.exec(text.replace(/\x1b\[[0-?]*[ -/]*[@-~]/g, ''));
+      if (match) return { id, match };
+    }
+  });
+}
 async function readMarker(name) {
   try { return (await readFile(join(scratch, name), 'utf8')).replace(/^\uFEFF/, '').trim(); }
   catch (error) { if (error.code === 'ENOENT') return ''; throw error; }
 }
 async function marker(name, expected) {
-  const result = await until(`PowerShell to write ${name}`, () => readMarker(name));
+  const { match } = await waitForOutput(`PowerShell result for ${name}`,
+    new RegExp(`LAB-M4-RESULT:${name.replace('.', '\\.')}:(${expected}\\|\\d{4}\\|\\d+):END`));
+  // These are independent observations. A missing file after a visible result
+  // means the command ran and its marker write needs separate investigation.
+  const result = await until(`marker file ${name} after confirmed PowerShell execution`, () => readMarker(name));
+  if (result !== match[1]) throw new Error(`PowerShell output and marker disagree for ${name}`);
   const [value, year, pid] = result.split('|');
   if (value !== expected || Number(year) < 2020 || Number(year) > 2200 || !/^\d+$/.test(pid))
     throw new Error(`Unexpected PowerShell result for ${name}`);
@@ -131,6 +161,7 @@ async function startSession() {
     await request('POST', endpoint('/execute/sync'), {
       script: `window.labNativeTrace = []; window.__TAURI_INTERNALS__.invoke('plugin:event|listen', {event:'terminal-input-completed', target:{kind:'Any'}, handler:window.__TAURI_INTERNALS__.transformCallback(e => {window.labNativeTrace.push(e.payload); if(window.labNativeTrace.length > 512) window.labNativeTrace.shift();})}); window.labKeyTrace = []; for (const type of ['keydown','keyup','beforeinput','input']) document.addEventListener(type, e => { window.labKeyTrace.push({type, key:e.key, data:e.data, shift:e.shiftKey, ctrl:e.ctrlKey, alt:e.altKey, target:e.target?.className}); if(window.labKeyTrace.length > 512) window.labKeyTrace.shift(); }, true);`, args: [],
     });
+    await beginOutputCapture();
   });
   await step('create initial terminal session', () =>
     until('initial terminal session', async () => (await elements('.session-item')).length === 1));
@@ -143,7 +174,7 @@ async function closeWindow() {
 function writeMarker(name, expr) {
   // Print the computed result before writing the out-of-band marker so a
   // screenshot can distinguish PowerShell execution from marker I/O failure.
-  return `$labMarker="${expr}|$((Get-Date).Year)|$PID"; Write-Output $labMarker; [IO.File]::WriteAllText([IO.Path]::Combine($env:LAB_E2E_DIR,'${name}'),$labMarker)`;
+  return `$m="${expr}|$((Get-Date).Year)|$PID"; 'LAB-M4-'+'RESULT:${name}:'+$m+':END'; [IO.File]::WriteAllText("$env:LAB_E2E_DIR\\${name}",$m)`;
 }
 
 async function verifyInstalledUsage() {
@@ -175,8 +206,10 @@ async function verifyInstalledUsage() {
 async function verifyTerminal() {
   await startSession();
   await step('send ordered input to first terminal', async () => {
-    await typeLine("$global:labSession='first'; $global:labOrder='A'");
-    await typeLine("$global:labOrder+='B'");
+    await typeLine("$global:labSession='first'; $global:labOrder='A'; 'LAB-M4-ORDER:'+$global:labOrder+':END'");
+    const first = await waitForOutput('first PowerShell assignment', /LAB-M4-ORDER:A:END/);
+    await typeLine("$global:labOrder+='B'; 'LAB-M4-ORDER:'+$global:labOrder+':END'");
+    await waitForOutput('second PowerShell assignment', /LAB-M4-ORDER:AB:END/, first.id);
     await typeLine(writeMarker('first.txt', '$global:labSession-$global:labOrder'));
   });
   const firstPid = await step('read first terminal marker', () => marker('first.txt', 'first-AB'));
@@ -233,10 +266,19 @@ try {
 } catch (error) {
   console.error(`[webdriver] failed during ${stage}`, error);
   if (session) {
+    const artifacts = resolve('.lab-m4/webdriver-artifacts');
+    try {
+      await mkdir(artifacts, { recursive: true });
+      const output = await terminalOutput();
+      const diagnostic = process.env.RUNNER_ENVIRONMENT === 'github-hosted' ? output
+        : output.map(([id, data]) => ({ id, characters: data.length }));
+      await writeFile(join(artifacts, 'terminal-output.json'), JSON.stringify(diagnostic));
+    } catch (outputError) {
+      console.error('[webdriver] terminal output unavailable:', outputError.message);
+    }
     try {
       const trace = await request('POST', endpoint('/execute/sync'), { script: 'return {keys:window.labKeyTrace, native:window.labNativeTrace};', args: [] }, 3000);
       const png = await request('GET', endpoint('/screenshot'), undefined, 3000);
-      const artifacts = resolve('.lab-m4/webdriver-artifacts');
       await mkdir(artifacts, { recursive: true });
       await writeFile(join(artifacts, 'keys.json'), JSON.stringify({stage, trace}));
       await writeFile(join(artifacts, 'failure.png'), Buffer.from(png, 'base64'));

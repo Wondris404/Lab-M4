@@ -5,21 +5,30 @@ permissions:
   contents: read
 jobs:
   node:
-    runs-on: windows-latest
+    runs-on: windows-2022
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
           node-version: 24.22.2
+      # sqlite3's bundled node-gyp 8 needs distutils when it builds from source.
+      - uses: actions/setup-python@v5
+        id: python
+        with:
+          python-version: '3.11'
       - run: corepack enable
       - run: pnpm install --frozen-lockfile
+        env:
+          PYTHON: ${{ steps.python.outputs.python-path }}
+          # Build the N-API addon with the runner's MSVC, even if Node was built with clang.
+          npm_config_clang: '0'
       - run: pnpm package:usage-sidecar
       - run: pnpm lint
       - run: pnpm typecheck
       - run: pnpm test
       - run: pnpm test:orchestrator
   desktop:
-    runs-on: windows-latest
+    runs-on: windows-2022
     defaults:
       run:
         working-directory: apps/desktop
@@ -28,8 +37,15 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 24.22.2
+      - uses: actions/setup-python@v5
+        id: python
+        with:
+          python-version: '3.11'
       - run: corepack enable
       - run: pnpm install --frozen-lockfile
+        env:
+          PYTHON: ${{ steps.python.outputs.python-path }}
+          npm_config_clang: '0'
       - run: pnpm --dir ../.. package:usage-sidecar
       - uses: dtolnay/rust-toolchain@stable
         with:
@@ -47,7 +63,18 @@ jobs:
       - name: PowerShell PTY smoke (Windows)
         timeout-minutes: 3
         run: cargo test --manifest-path src-tauri/Cargo.toml --test terminal_pty_smoke -- --ignored --nocapture
-      - run: pnpm tauri build
+      - run: pnpm tauri build --no-bundle
+      - name: Package Windows installers
+        shell: pwsh
+        run: |
+          for ($attempt = 1; $attempt -le 3; $attempt++) {
+            $output = pnpm tauri bundle --ci 2>&1 | ForEach-Object { "$_" }
+            $code = $LASTEXITCODE
+            $output | Write-Output
+            if ($code -eq 0) { exit 0 }
+            if ($attempt -eq 3 -or -not ($output -match 'http status: 50[234]')) { exit $code }
+            Start-Sleep -Seconds (5 * $attempt)
+          }
       - uses: actions/upload-artifact@v4
         with:
           name: lab-m4-windows-x64
@@ -62,8 +89,15 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 24.22.2
+      - uses: actions/setup-python@v5
+        id: python
+        with:
+          python-version: '3.11'
       - run: corepack enable
       - run: pnpm install --frozen-lockfile
+        env:
+          PYTHON: ${{ steps.python.outputs.python-path }}
+          npm_config_clang: '0'
       - uses: dtolnay/rust-toolchain@stable
       - name: Install Tauri WebDriver
         run: cargo install tauri-driver --version 2.1.0 --locked
@@ -94,12 +128,30 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 24.22.2
+      - uses: actions/setup-python@v5
+        id: python
+        with:
+          python-version: '3.11'
       - run: corepack enable
       - run: pnpm install --frozen-lockfile
+        env:
+          PYTHON: ${{ steps.python.outputs.python-path }}
+          npm_config_clang: '0'
       - uses: dtolnay/rust-toolchain@stable
       - run: pnpm package:usage-sidecar
       - run: cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml --features webdriver
-      - run: pnpm tauri build --features webdriver --bundles nsis
+      - run: pnpm tauri build --no-bundle --features webdriver
+      - name: Package automation-only installer
+        shell: pwsh
+        run: |
+          for ($attempt = 1; $attempt -le 3; $attempt++) {
+            $output = pnpm tauri bundle --ci --features webdriver --bundles nsis 2>&1 | ForEach-Object { "$_" }
+            $code = $LASTEXITCODE
+            $output | Write-Output
+            if ($code -eq 0) { exit 0 }
+            if ($attempt -eq 3 -or -not ($output -match 'http status: 50[234]')) { exit $code }
+            Start-Sleep -Seconds (5 * $attempt)
+          }
       - uses: actions/upload-artifact@v4
         with:
           name: lab-m4-automation-only

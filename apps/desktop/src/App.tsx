@@ -29,7 +29,9 @@ import {
   splitAgentCompletionMarkers as splitAgentCompletionMarkersShared,
 } from "./agent/commandMarker";
 import type { OrchestratorApi, PaneAgentName } from "./agent/orchestratorTypes";
-import { OrchestrationPanel } from "./agent/OrchestrationPanel";
+import { OrchestratorDialog } from "./agent/OrchestratorDialog";
+import { OrchestratorActivity } from "./agent/OrchestratorActivity";
+import { useOrchestrationRun } from "./agent/useOrchestrationRun";
 import { waitForAgentToken, waitForPaneOutput } from "./agent/orchestratorWait";
 import type { PaneInfo } from "./agent/tools";
 import {
@@ -1392,14 +1394,30 @@ function App({ appSettings }: { appSettings: AppSettingsApi }) {
     flushPersist: flushSettingsPersist,
   } = appSettings;
 
-  const [workspaceView, setWorkspaceView] = useState<"primary" | "usage" | "orchestrator" | "terminal">("primary");
+  const [workspaceView, setWorkspaceView] = useState<"primary" | "usage" | "terminal">("primary");
   const usageVisible = workspaceView === "usage";
-  const orchestrationVisible = workspaceView === "orchestrator";
+  // The orchestrator opens as a small window over the normal terminal / chat view, and its
+  // agent activity streams into a panel docked in that view.
+  const [orchestratorOpen, setOrchestratorOpen] = useState(false);
+  const [activityVisible, setActivityVisible] = useState(false);
+  const orchestration = useOrchestrationRun(orchestratorOpen || activityVisible);
   const [usageOpened, setUsageOpened] = useState(false);
   const chatMode = settings.appearance.appMode === "chat";
   const chatVisible = workspaceView === "primary" && chatMode;
   const terminalVisible = workspaceView === "terminal" || (workspaceView === "primary" && !chatMode);
   const terminalTheme = appSettings.appearance.terminalTheme;
+  const activityTheme = useMemo(() => resolveTerminalTheme(terminalTheme, settings.terminal.colorMode, settings.terminal.colors),
+    [terminalTheme, settings.terminal.colorMode, settings.terminal.colors]);
+  const pendingApprovalId = orchestration.snapshot?.approval?.id;
+  useEffect(() => {
+    // A new approval always brings the orchestrator window back, even if it was hidden.
+    if (pendingApprovalId === undefined) return;
+    setActivityVisible(true);
+    setOrchestratorOpen(true);
+  }, [pendingApprovalId]);
+  useEffect(() => {
+    if (orchestration.running) setActivityVisible(true);
+  }, [orchestration.running]);
   const terminalStyle = useMemo(() => ({
     ...Object.fromEntries(Object.entries(getTheme(terminalTheme).css)
       .filter(([name]) => !name.startsWith("--accent"))),
@@ -3486,6 +3504,14 @@ function App({ appSettings }: { appSettings: AppSettingsApi }) {
   const activeLayoutSignature = layoutSignature(activeSession?.layout ?? null);
   const hasSessions = activeSession !== undefined;
 
+  const openOrchestrator = () => {
+    // Show the normal working view for the current mode, then the orchestrator window over it.
+    if (workspaceView === "usage") setWorkspaceView("primary");
+    setActivityVisible(true);
+    setOrchestratorOpen(true);
+    if (!chatMode && !hasSessions) void createSession();
+  };
+
   useEffect(() => {
     let unlistenResize: (() => void) | null = null;
     void getCurrentWindow()
@@ -3953,8 +3979,8 @@ function App({ appSettings }: { appSettings: AppSettingsApi }) {
             {!sidebarCollapsed && <span>Usage</span>}
           </button>
           <button type="button" title="Orchestrátor" aria-label="Orchestrátor"
-            aria-current={orchestrationVisible ? "page" : undefined}
-            onClick={() => setWorkspaceView("orchestrator")}>
+            aria-haspopup="dialog" aria-expanded={orchestratorOpen}
+            onClick={openOrchestrator}>
             <span className="workspace-nav-icon workspace-orchestrator-icon" aria-hidden="true" />
             {!sidebarCollapsed && <span>Orchestrátor</span>}
           </button>
@@ -4092,10 +4118,20 @@ function App({ appSettings }: { appSettings: AppSettingsApi }) {
             </button>
           </div>
         )}
+        {activityVisible && (!chatMode || workspaceView === "terminal") && (
+          <OrchestratorActivity run={orchestration} variant="terminal" theme={activityTheme}
+            fontFamily={settings.terminal.fontFamily} fontSize={settings.terminal.fontSize}
+            onOpenDialog={() => setOrchestratorOpen(true)} onHide={() => setActivityVisible(false)} />
+        )}
       </main>
 
-      <section className="chat-workspace" hidden={!chatVisible}>
+      <section className={`chat-workspace ${activityVisible ? "with-activity" : ""}`} hidden={!chatVisible}>
         <ChatView visible={chatVisible} animation={settings.appearance.chatAnimation} />
+        {activityVisible && chatMode && (
+          <OrchestratorActivity run={orchestration} variant="chat" theme={activityTheme}
+            fontFamily={settings.terminal.fontFamily} fontSize={settings.terminal.fontSize}
+            onOpenDialog={() => setOrchestratorOpen(true)} onHide={() => setActivityVisible(false)} />
+        )}
       </section>
 
       {usageOpened && (
@@ -4104,8 +4140,11 @@ function App({ appSettings }: { appSettings: AppSettingsApi }) {
         </div>
       )}
 
-      <OrchestrationPanel visible={orchestrationVisible} sessionName={activeSession?.name}
-        sessionFolder={activeSession?.folder ?? undefined} onTerminal={() => setWorkspaceView("terminal")} />
+      <OrchestratorDialog open={orchestratorOpen} onClose={() => setOrchestratorOpen(false)} run={orchestration}
+        settings={settings.orchestrator} sessionName={activeSession?.name}
+        sessionFolder={activeSession?.folder ?? undefined}
+        viewLabel={chatMode && workspaceView !== "terminal" ? "v chate" : "v termináli"}
+        onOpenSettings={() => { setOrchestratorOpen(false); openSettings("orchestrator"); }} />
 
       {confirmDialog &&
         createPortal(

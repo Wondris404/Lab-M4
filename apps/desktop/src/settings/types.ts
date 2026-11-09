@@ -86,15 +86,41 @@ export interface AppearanceSettings {
   chatAnimation: "off" | "subtle" | "pixel";
 }
 
+/** AI coding CLIs the orchestrator can drive (manager and workers). */
+export const ORCHESTRATOR_PROVIDERS = ["codex", "grok", "opencode"] as const;
+export type OrchestratorProvider = (typeof ORCHESTRATOR_PROVIDERS)[number];
+
+/** One AI agent: the CLI (company) plus an optional model; "" means the CLI default model. */
+export interface OrchestratorAgentSetting {
+  provider: OrchestratorProvider;
+  model: string;
+}
+
+export type WorkerSelection = "auto" | "manual";
+
+export interface OrchestratorSettings {
+  /** Default orchestrator (manager) preselected in the orchestrator window. */
+  manager: OrchestratorAgentSetting;
+  /** "auto": the orchestrator picks the best AI from `workerPool` for each task. */
+  workerSelection: WorkerSelection;
+  /** Candidate workers the orchestrator chooses from (2–8). */
+  workerPool: OrchestratorAgentSetting[];
+}
+
+export const MIN_ORCHESTRATOR_WORKERS = 2;
+export const MAX_ORCHESTRATOR_WORKERS = 8;
+const MAX_MODEL_ID_LENGTH = 200;
+
 export interface AppSettings {
   version: 1;
   appearance: AppearanceSettings;
   terminal: TerminalSettings;
   ai: AiSettings;
   general: GeneralSettings;
+  orchestrator: OrchestratorSettings;
 }
 
-export type SettingsTab = "appearance" | "mode" | "terminal" | "ai" | "general" | "about";
+export type SettingsTab = "appearance" | "mode" | "terminal" | "orchestrator" | "ai" | "general" | "about";
 
 export const DEFAULT_FONT_SIZE = 13;
 export const MIN_FONT_SIZE = 8;
@@ -159,7 +185,61 @@ export const DEFAULT_APP_SETTINGS: AppSettings = {
       y: null,
     },
   },
+  orchestrator: {
+    manager: { provider: "codex", model: "" },
+    workerSelection: "auto",
+    workerPool: [
+      { provider: "codex", model: "" },
+      { provider: "grok", model: "" },
+      { provider: "opencode", model: "" },
+    ],
+  },
 };
+
+export function isOrchestratorProvider(value: unknown): value is OrchestratorProvider {
+  return typeof value === "string" && (ORCHESTRATOR_PROVIDERS as readonly string[]).includes(value);
+}
+
+function normalizeModelId(value: unknown): string {
+  if (typeof value !== "string") return "";
+  const trimmed = value.trim();
+  // Model ids are short identifiers; reject anything that is not a single printable token.
+  return trimmed.length <= MAX_MODEL_ID_LENGTH && !/[\s\u0000-\u001f]/.test(trimmed) ? trimmed : "";
+}
+
+function normalizeOrchestratorAgent(raw: unknown): OrchestratorAgentSetting | null {
+  if (!raw || typeof raw !== "object") return null;
+  const agent = raw as Record<string, unknown>;
+  if (!isOrchestratorProvider(agent.provider)) return null;
+  return { provider: agent.provider, model: normalizeModelId(agent.model) };
+}
+
+/** Validate persisted orchestrator settings, falling back field by field to defaults. */
+export function normalizeOrchestratorSettings(raw: unknown): OrchestratorSettings {
+  const d = DEFAULT_APP_SETTINGS.orchestrator;
+  const obj = raw && typeof raw === "object" ? (raw as Record<string, unknown>) : {};
+  // The same AI may appear more than once: identical workers can take parallel tasks.
+  const pool = (Array.isArray(obj.workerPool) ? obj.workerPool : [])
+    .map(normalizeOrchestratorAgent)
+    .filter((agent): agent is OrchestratorAgentSetting => agent !== null)
+    .slice(0, MAX_ORCHESTRATOR_WORKERS);
+  return {
+    manager: normalizeOrchestratorAgent(obj.manager) ?? { ...d.manager },
+    workerSelection: obj.workerSelection === "manual" ? "manual" : "auto",
+    workerPool: pool.length >= MIN_ORCHESTRATOR_WORKERS ? pool : d.workerPool.map((agent) => ({ ...agent })),
+  };
+}
+
+/** Pure settings update used by the settings hook (kept separate so it can be unit tested). */
+export function withOrchestratorSettings(
+  prev: AppSettings,
+  patch: Partial<OrchestratorSettings>
+): AppSettings {
+  return {
+    ...prev,
+    orchestrator: normalizeOrchestratorSettings({ ...prev.orchestrator, ...patch }),
+  };
+}
 
 const THEME_IDS: ThemeId[] = [
   "wraith",
@@ -358,6 +438,29 @@ export function normalizeAppSettings(raw: unknown): AppSettings {
         x: asNullableNumber(window.x),
         y: asNullableNumber(window.y),
       },
+    },
+    orchestrator: normalizeOrchestratorSettings(obj.orchestrator),
+  };
+}
+
+/** Shape written to settings.json (window geometry included, runtime-only fields excluded). */
+export function toPersistedSettings(settings: AppSettings): AppSettings {
+  return {
+    version: 1,
+    appearance: { ...settings.appearance },
+    terminal: { ...settings.terminal },
+    ai: { ...settings.ai },
+    general: {
+      confirmClosePane: settings.general.confirmClosePane,
+      confirmCloseSession: settings.general.confirmCloseSession,
+      sidebarCollapsed: settings.general.sidebarCollapsed,
+      sidebarWidth: settings.general.sidebarWidth,
+      window: { ...settings.general.window },
+    },
+    orchestrator: {
+      manager: { ...settings.orchestrator.manager },
+      workerSelection: settings.orchestrator.workerSelection,
+      workerPool: settings.orchestrator.workerPool.map((agent) => ({ ...agent })),
     },
   };
 }

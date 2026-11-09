@@ -452,22 +452,6 @@ impl Drop for SidecarChild {
     }
 }
 
-pub(crate) fn packaged_runtime(app: &AppHandle) -> Result<PathBuf, String> {
-    #[cfg(debug_assertions)]
-    let sidecar = {
-        let _ = app;
-        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../usage-service")
-    };
-    #[cfg(not(debug_assertions))]
-    let sidecar = app
-        .path()
-        .resource_dir()
-        .map_err(|_| "Resources unavailable")?
-        .join("usage-service");
-    super::usage_integrity::verify(&sidecar)?;
-    Ok(sidecar)
-}
-
 fn execute(
     app: AppHandle,
     source: PathBuf,
@@ -480,7 +464,16 @@ fn execute(
         return Err("Scan cancelled".into());
     }
     let source = safe_source(&source, &agent)?;
-    let sidecar = packaged_runtime(&app)?;
+    // NEOVERENÉ: Windows resource resolution requires installed-app testing.
+    #[cfg(debug_assertions)]
+    let sidecar = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../usage-service");
+    #[cfg(not(debug_assertions))]
+    let sidecar = app
+        .path()
+        .resource_dir()
+        .map_err(|_| "Resources unavailable")?
+        .join("usage-service");
+    super::usage_integrity::verify(&sidecar)?;
     let runtime = sidecar.join(if cfg!(windows) { "node.exe" } else { "node" });
     let cache_dir = usage_dir(&app)?;
     std::fs::create_dir_all(&cache_dir).map_err(|_| "Cache unavailable")?;

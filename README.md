@@ -12,7 +12,7 @@
   <a href="LICENSE">MIT licencia</a>
 </p>
 
-Verzia **1.2.0** pridáva Orchestrátor k terminálu, chatu a prehľadu Usage.
+Táto vetva pripravuje verziu **1.1.0** s voliteľným konverzačným režimom.
 Parsery Usage sú v `packages/usage-core`.
 
 ## Čo je Lab-M4
@@ -21,10 +21,9 @@ Lab-M4 je vyvíjaná desktopová aplikácia pre prácu s AI nástrojmi vo Window
 
 - **Terminál:** interaktívny PowerShell s kartami a rozdelením okna na viac panelov.
 - **Chat** používa prihlásený Codex CLI vo Windows. Konverzáciu môžeš otvoriť vedľa terminálu a pri prepnutí ostane zachovaná.
-- **Orchestrátor** koordinuje viac modelov nad vybranými súbormi jedného Git repozitára. Výsledky pripravuje v oddelených pracovných kópiách. [Návod na orchestráciu](packages/orchestrator-core/README.md#windows-orchestration)
 - **Usage:** lokálny prehľad tokenov z ručne vybranej histórie Codexu a Grok Build, s filtrami a lokálnym CSV exportom. Známe ceny/odhady sa zobrazujú v USD, nie ako presná fakturácia. OpenCode čítanie zostáva dočasne vypnuté, kým nebude overený bezpečný SQLite snapshot.
 
-Desktopová aplikácia používa Tauri, Rust, React, TypeScript a xterm.js.
+Desktopová aplikácia používa Tauri, Rust, React, TypeScript a xterm.js. Automatizovaná orchestrácia viacerých agentov je vo vývoji.
 
 ## Chat s Codexom
 

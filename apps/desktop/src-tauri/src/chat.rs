@@ -31,16 +31,6 @@ impl Platform {
     }
 }
 
-#[cfg(windows)]
-pub(crate) fn orchestration_executable(provider: &str) -> Result<std::path::PathBuf, String> {
-    match provider {
-        "codex" => codex::executable().ok_or_else(|| "Codex CLI sa nenašiel.".into()),
-        "grok" => acp::executable(Platform::GrokBuild),
-        "opencode" => acp::executable(Platform::Opencode),
-        _ => Err("Nepodporovaný poskytovateľ.".into()),
-    }
-}
-
 #[derive(Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 struct ChatDelta<'a> {

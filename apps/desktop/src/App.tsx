@@ -29,7 +29,6 @@ import {
   splitAgentCompletionMarkers as splitAgentCompletionMarkersShared,
 } from "./agent/commandMarker";
 import type { OrchestratorApi, PaneAgentName } from "./agent/orchestratorTypes";
-import { OrchestrationPanel } from "./agent/OrchestrationPanel";
 import { waitForAgentToken, waitForPaneOutput } from "./agent/orchestratorWait";
 import type { PaneInfo } from "./agent/tools";
 import {
@@ -1392,13 +1391,10 @@ function App({ appSettings }: { appSettings: AppSettingsApi }) {
     flushPersist: flushSettingsPersist,
   } = appSettings;
 
-  const [workspaceView, setWorkspaceView] = useState<"primary" | "usage" | "orchestrator" | "terminal">("primary");
-  const usageVisible = workspaceView === "usage";
-  const orchestrationVisible = workspaceView === "orchestrator";
+  const [usageVisible, setUsageVisible] = useState(false);
   const [usageOpened, setUsageOpened] = useState(false);
   const chatMode = settings.appearance.appMode === "chat";
-  const chatVisible = workspaceView === "primary" && chatMode;
-  const terminalVisible = workspaceView === "terminal" || (workspaceView === "primary" && !chatMode);
+  const terminalVisible = !usageVisible && !chatMode;
   const terminalTheme = appSettings.appearance.terminalTheme;
   const terminalStyle = useMemo(() => ({
     ...Object.fromEntries(Object.entries(getTheme(terminalTheme).css)
@@ -3930,8 +3926,8 @@ function App({ appSettings }: { appSettings: AppSettingsApi }) {
         )}
         <nav className="workspace-nav" aria-label="Pracovný priestor">
           <button type="button" title={chatMode ? "Chat" : "Terminál"} aria-label={chatMode ? "Chat" : "Terminál"}
-            aria-current={workspaceView === "primary" || (terminalVisible && !chatMode) ? "page" : undefined}
-            onClick={() => setWorkspaceView("primary")}>
+            aria-current={usageVisible ? undefined : "page"}
+            onClick={() => setUsageVisible(false)}>
             <span className="workspace-nav-icon" aria-hidden="true">{chatMode ? "◫" : "›_"}</span>
             {!sidebarCollapsed && <span>{chatMode ? "Chat" : "Terminál"}</span>}
           </button>
@@ -3939,7 +3935,7 @@ function App({ appSettings }: { appSettings: AppSettingsApi }) {
             aria-current={usageVisible ? "page" : undefined}
             onClick={() => {
               setUsageOpened(true);
-              setWorkspaceView("usage");
+              setUsageVisible(true);
             }}>
             <svg className="workspace-nav-icon workspace-usage-icon" viewBox="0 0 18 18"
               aria-hidden="true" focusable="false" fill="none" stroke="currentColor"
@@ -3951,12 +3947,6 @@ function App({ appSettings }: { appSettings: AppSettingsApi }) {
                 M1 9.5h1m2 0h1 M2 11.5h1 M4 12.5h1 M1 13.5h1m3 0h1 M3 14.5h1 M5 15.5h1" />
             </svg>
             {!sidebarCollapsed && <span>Usage</span>}
-          </button>
-          <button type="button" title="Orchestrátor" aria-label="Orchestrátor"
-            aria-current={orchestrationVisible ? "page" : undefined}
-            onClick={() => setWorkspaceView("orchestrator")}>
-            <span className="workspace-nav-icon workspace-orchestrator-icon" aria-hidden="true" />
-            {!sidebarCollapsed && <span>Orchestrátor</span>}
           </button>
           <button type="button" title="Nastavenia" aria-label="Nastavenia"
             onClick={() => openSettings("appearance")}>
@@ -4094,8 +4084,8 @@ function App({ appSettings }: { appSettings: AppSettingsApi }) {
         )}
       </main>
 
-      <section className="chat-workspace" hidden={!chatVisible}>
-        <ChatView visible={chatVisible} animation={settings.appearance.chatAnimation} />
+      <section className="chat-workspace" hidden={!chatMode || usageVisible}>
+        <ChatView visible={chatMode && !usageVisible} animation={settings.appearance.chatAnimation} />
       </section>
 
       {usageOpened && (
@@ -4103,9 +4093,6 @@ function App({ appSettings }: { appSettings: AppSettingsApi }) {
           <UsageTab visible={usageVisible} theme={appSettings.appearance.usageTheme} />
         </div>
       )}
-
-      <OrchestrationPanel visible={orchestrationVisible} sessionName={activeSession?.name}
-        sessionFolder={activeSession?.folder ?? undefined} onTerminal={() => setWorkspaceView("terminal")} />
 
       {confirmDialog &&
         createPortal(

@@ -36,8 +36,12 @@ verified beyond the tests. No claim is made about real approval enforcement.
 
 ## Windows orchestration
 
-Open **Orchestrátor** below **Usage**. Choose a project folder, one to twelve
-UTF-8 files, and the models for the manager and workers. The panel shows
+Click **Orchestrátor** below **Usage**. The normal terminal (or chat) view stays
+open and a small orchestrator window appears over it, preselected with the
+default orchestrator from **Nastavenia → Orchestrátor**. Choose the task, a
+project folder, one to twelve UTF-8 files, and either let the orchestrator pick
+the best worker from the configured pool or choose the workers yourself. What
+the agents do streams into the **Aktivita agentov** panel. The panel shows
 the exact approval currently required and the resulting diff, test evidence,
 and available usage. **STOP** cancels the run and the app waits for Windows to
 confirm cleanup of its process tree.
@@ -85,3 +89,19 @@ overlap, approve sharing the conflicting files with the manager. Review the
 manager's reconciliation and the combined diff, then approve the candidate and
 its tests separately. This creates a detached worktree. Merging into the source
 repository remains a manual decision.
+
+## Agent activity events
+
+`runPlanningSession` accepts an optional `onEvent` callback. It receives short,
+frozen status events (`run-start`, `manager-planning`, `plan` with the chosen
+worker and the manager's `reason` per task, `worker-start`, `worker-done` with
+changed files and `+/-` line counts, `worker-blocked`, `test-result`,
+`review-start`/`review-done`, `integration`, `approval-wait`, `stage`, `done`).
+The desktop bridge forwards them as `{"type":"event"}` frames; the app keeps
+the most recent 4000 per run and renders them in the terminal activity panel
+(or as a feed in chat mode). A throwing listener never affects the run.
+
+`testing/simulated-run.mjs` drives the real session with scripted agents from
+three vendors (concurrent workers, one failing `git diff --check`, one repair
+round). It is used only by tests and the UI preview, is never imported by the
+desktop bridge, and contacts no AI provider.

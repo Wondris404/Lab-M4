@@ -21,6 +21,7 @@ import {
 } from "./fonts";
 import { getTheme } from "./themes";
 import { AboutPanel } from "./AboutPanel";
+import { OrchestratorSettingsPanel } from "./OrchestratorSettingsPanel";
 
 interface AppSettingsModalProps {
   api: AppSettingsApi;
@@ -132,6 +133,7 @@ export function AppSettingsModal({ api }: AppSettingsModalProps) {
     { id: "appearance", label: "Vzhľad" },
     { id: "mode", label: "Režim aplikácie" },
     { id: "terminal", label: "Terminál" },
+    { id: "orchestrator", label: "Orchestrátor" },
     // Lab-M4: credential-backed AI is disabled; original implementation retained.
     // { id: "ai", label: "AI" },
     { id: "general", label: "General" },
@@ -195,6 +197,7 @@ export function AppSettingsModal({ api }: AppSettingsModalProps) {
           <div className="settings-panel">
             {settingsTab === "about" && <AboutPanel />}
             {settingsTab === "appearance" && <AppearancePanel api={api} />}
+            {settingsTab === "orchestrator" && <OrchestratorSettingsPanel api={api} />}
             {settingsTab === "mode" && (
               <div className="settings-section appearance-panel">
                 <label>

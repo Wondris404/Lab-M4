@@ -143,31 +143,6 @@ body,
   background: #fff url("./assets/orchestrator-mark.png") 47% 42% / 170% auto no-repeat;
 }
 
-.orchestrator-workspace {
-  flex: 1;
-  min-width: 0;
-  overflow: auto;
-  padding: clamp(18px, 4vw, 44px);
-}
-
-.orchestrator-workspace header {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 10px;
-}
-
-.orchestrator-workspace h1 { margin: 0; }
-.orchestrator-workspace p,
-.orchestrator-workspace dt,
-.orchestrator-preview { color: var(--text-dim); }
-
-.orchestrator-preview {
-  padding: 4px 8px;
-  border: 1px solid var(--border);
-  border-radius: 999px;
-}
-
 .orchestration-card {
   min-width: 0;
   max-width: 960px;
@@ -198,22 +173,6 @@ body,
 .orchestration-card pre { max-height: 26rem; overflow: auto; padding: 8px; background: var(--btn-bg); }
 .orchestration-result-row { padding-block: 8px; border-bottom: 1px solid var(--border); }
 .orchestration-path, .orchestration-review { overflow-wrap: anywhere; white-space: pre-wrap; }
-
-.orchestrator-workspace button {
-  padding: 7px 12px;
-  border: 1px solid var(--border);
-  border-radius: 7px;
-  background: var(--btn-bg);
-  color: inherit;
-  font: inherit;
-}
-
-.orchestrator-workspace .orchestration-primary { border-color: var(--accent); }
-
-.orchestrator-workspace :is(button, input, select, textarea, summary):focus-visible {
-  outline: 2px solid var(--accent);
-  outline-offset: 2px;
-}
 
 .sidebar.collapsed .workspace-nav button {
   justify-content: center;

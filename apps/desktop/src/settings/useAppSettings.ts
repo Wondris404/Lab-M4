@@ -6,11 +6,14 @@ import {
   DEFAULT_APP_SETTINGS,
   DEFAULT_TERMINAL_COLORS,
   normalizeAppSettings,
+  toPersistedSettings,
+  withOrchestratorSettings,
   readLegacyFontSize,
   type AiSettings,
   type AppearanceSettings,
   type AppSettings,
   type GeneralSettings,
+  type OrchestratorSettings,
   type TerminalColorMode,
   type TerminalColors,
   type SettingsTab,
@@ -24,22 +27,6 @@ import {
 import { getTheme } from "./themes";
 
 const SAVE_DEBOUNCE_MS = 300;
-
-function toPersistedPayload(settings: AppSettings): AppSettings {
-  return {
-    version: 1,
-    appearance: { ...settings.appearance },
-    terminal: { ...settings.terminal },
-    ai: { ...settings.ai },
-    general: {
-      confirmClosePane: settings.general.confirmClosePane,
-      confirmCloseSession: settings.general.confirmCloseSession,
-      sidebarCollapsed: settings.general.sidebarCollapsed,
-      sidebarWidth: settings.general.sidebarWidth,
-      window: { ...settings.general.window },
-    },
-  };
-}
 
 export function useAppSettings() {
   const [settings, setSettings] = useState<AppSettings>(DEFAULT_APP_SETTINGS);
@@ -80,7 +67,7 @@ export function useAppSettings() {
 
   const persist = useCallback((next: AppSettings) => {
     const save = saveQueueRef.current.then(() =>
-      invoke<void>("save_app_settings", { state: toPersistedPayload(next) })
+      invoke<void>("save_app_settings", { state: toPersistedSettings(next) })
     );
     saveQueueRef.current = save.catch(() => undefined);
     return saveQueueRef.current;
@@ -373,6 +360,13 @@ export function useAppSettings() {
     [updateSettings]
   );
 
+  const setOrchestratorSettings = useCallback(
+    (patch: Partial<OrchestratorSettings>) => {
+      updateSettings((prev) => withOrchestratorSettings(prev, patch));
+    },
+    [updateSettings]
+  );
+
   const openSettings = useCallback(
     (tab: SettingsTab = "appearance") => {
       setSettingsTab(tab);
@@ -402,6 +396,7 @@ export function useAppSettings() {
     resetTerminalColorsFromTheme,
     setAiSettings,
     setGeneralSettings,
+    setOrchestratorSettings,
     setSidebarCollapsed,
     setSidebarWidth,
     setSidebarLayout,

@@ -1,5 +1,6 @@
 use serde::Deserialize;
 use serde_json::{json, Value};
+use std::collections::VecDeque;
 use std::sync::{
     mpsc::{self, SyncSender},
     Arc, Mutex,
@@ -28,6 +29,46 @@ pub(crate) struct Settings {
     check: Option<Check>,
 }
 
+/// Most recent agent activity events kept per run for the terminal/chat activity view.
+const MAX_EVENTS: usize = 4000;
+/// Activity events are short status lines; anything larger is dropped rather than stored.
+const MAX_EVENT_BYTES: usize = 16 * 1024;
+
+/// Bounded, append-only activity log. `offset` counts events evicted from the front so
+/// clients can resume with the absolute index they have already seen.
+#[derive(Default)]
+struct EventLog {
+    offset: u64,
+    items: VecDeque<Value>,
+}
+
+impl EventLog {
+    fn push(&mut self, event: Value) -> bool {
+        if !event.is_object()
+            || serde_json::to_vec(&event).map_or(true, |bytes| bytes.len() > MAX_EVENT_BYTES)
+        {
+            return false;
+        }
+        self.items.push_back(event);
+        while self.items.len() > MAX_EVENTS {
+            self.items.pop_front();
+            self.offset += 1;
+        }
+        true
+    }
+
+    fn total(&self) -> u64 {
+        self.offset + self.items.len() as u64
+    }
+
+    /// Events with an absolute index of at least `since`, plus the index of the first one returned.
+    fn since(&self, since: u64) -> (u64, Vec<Value>) {
+        let start = since.clamp(self.offset, self.total());
+        let skip = usize::try_from(start - self.offset).unwrap_or(usize::MAX);
+        (start, self.items.iter().skip(skip).cloned().collect())
+    }
+}
+
 struct Run {
     id: u32,
     stage: String,
@@ -35,6 +76,7 @@ struct Run {
     result: Option<Value>,
     error: Option<String>,
     commands: Option<SyncSender<Value>>,
+    events: EventLog,
 }
 
 #[derive(Clone, Default)]
@@ -70,14 +112,21 @@ fn send(run: &Run, message: Value) -> Result<(), String> {
 #[tauri::command]
 pub(crate) fn orchestration_snapshot(
     state: tauri::State<'_, OrchestrationState>,
+    since: Option<u64>,
 ) -> Result<Value, String> {
     let slot = state.0.lock().map_err(|_| "Orchestrátor je nedostupný.")?;
-    Ok(slot.as_ref().map_or(Value::Null, |run| {
-        json!({
-            "id": run.id, "stage": run.stage, "approval": run.approval,
-            "result": run.result, "error": run.error,
-        })
-    }))
+    Ok(slot
+        .as_ref()
+        .map_or(Value::Null, |run| snapshot(run, since)))
+}
+
+fn snapshot(run: &Run, since: Option<u64>) -> Value {
+    let (event_start, events) = run.events.since(since.unwrap_or(0));
+    json!({
+        "id": run.id, "stage": run.stage, "approval": run.approval,
+        "result": run.result, "error": run.error,
+        "eventStart": event_start, "eventTotal": run.events.total(), "events": events,
+    })
 }
 
 #[tauri::command]
@@ -130,6 +179,7 @@ pub(crate) fn orchestration_start(
         approval: None,
         result: None,
         error: None,
+        events: EventLog::default(),
     });
     let worker_state = state.inner().clone();
     let started = std::thread::Builder::new()
@@ -375,6 +425,13 @@ fn execute(
                     .unwrap_or("Orchestrátor zlyhal.")
                     .into())
             }
+            Some("event") => {
+                if let Ok(mut slot) = state.0.lock() {
+                    if let Some(run) = slot.as_mut().filter(|run| run.id == id) {
+                        run.events.push(frame["event"].clone());
+                    }
+                }
+            }
             Some("approval" | "stage") if stopping.is_none() => {
                 if let Ok(mut slot) = state.0.lock() {
                     if let Some(run) = slot
@@ -406,4 +463,69 @@ fn execute(
         value["cleanupConfirmed"] = Value::Bool(true);
         value
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn run_with(log: EventLog) -> Run {
+        Run {
+            id: 7,
+            stage: "working".into(),
+            approval: None,
+            result: None,
+            error: None,
+            commands: None,
+            events: log,
+        }
+    }
+
+    #[test]
+    fn event_log_returns_only_new_events() {
+        let mut log = EventLog::default();
+        for index in 0..3 {
+            assert!(log.push(json!({"type": "stage", "index": index})));
+        }
+        let (start, events) = log.since(1);
+        assert_eq!(start, 1);
+        assert_eq!(events.len(), 2);
+        assert_eq!(events[0]["index"], 1);
+        assert_eq!(log.since(3).1.len(), 0);
+        assert_eq!(log.since(99), (3, vec![]));
+    }
+
+    #[test]
+    fn event_log_rejects_invalid_and_oversized_events() {
+        let mut log = EventLog::default();
+        assert!(!log.push(Value::Null));
+        assert!(!log.push(json!("text")));
+        assert!(!log.push(json!({"type": "x", "text": "a".repeat(MAX_EVENT_BYTES)})));
+        assert_eq!(log.total(), 0);
+    }
+
+    #[test]
+    fn event_log_is_bounded_and_keeps_absolute_indices() {
+        let mut log = EventLog::default();
+        for index in 0..(MAX_EVENTS + 5) {
+            log.push(json!({"type": "stage", "index": index}));
+        }
+        assert_eq!(log.items.len(), MAX_EVENTS);
+        assert_eq!(log.total(), (MAX_EVENTS + 5) as u64);
+        let (start, events) = log.since(0);
+        assert_eq!(start, 5);
+        assert_eq!(events[0]["index"], 5);
+    }
+
+    #[test]
+    fn snapshot_includes_event_window() {
+        let mut log = EventLog::default();
+        log.push(json!({"type": "plan"}));
+        log.push(json!({"type": "worker-start"}));
+        let value = snapshot(&run_with(log), Some(1));
+        assert_eq!(value["id"], 7);
+        assert_eq!(value["eventStart"], 1);
+        assert_eq!(value["eventTotal"], 2);
+        assert_eq!(value["events"][0]["type"], "worker-start");
+    }
 }

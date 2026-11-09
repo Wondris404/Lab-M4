@@ -12,7 +12,7 @@
   <a href="LICENSE">MIT licencia</a>
 </p>
 
-Verzia **1.2.0** pridáva Orchestrátor k terminálu, chatu a prehľadu Usage.
+Verzia **1.2.1** (early) pridáva Orchestrátor k terminálu, chatu a prehľadu Usage: okno orchestrátora nad terminálom alebo chatom, predvolený orchestrátor v Nastaveniach a živú aktivitu agentov. Pozri [poznámky k vydaniu 1.2.1](docs/RELEASE-1.2.1.md).
 Parsery Usage sú v `packages/usage-core`.
 
 ## Čo je Lab-M4

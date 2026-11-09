@@ -29,6 +29,7 @@ async function run(settings) {
       approveConflicts: (detail) => approval('conflicts', detail),
       approveIntegration: (detail) => approval('integration', detail),
       onStage: (stage) => output({ type: 'stage', stage }),
+      onEvent: (event) => output({ type: 'event', event }),
     });
     for (const row of [...result.workers, ...result.project?.corrections ?? []]) {
       if (row.result?.evidence) delete row.result.text;
@@ -36,7 +37,9 @@ async function run(settings) {
     if (result.project?.integration?.review) delete result.project.integration.review.text;
     output({ type: 'result', result });
   } catch (error) {
-    output({ type: 'error', error: error instanceof Error ? error.message : 'Orchestration failed' });
+    const message = error instanceof Error ? error.message : 'Orchestration failed';
+    output({ type: 'event', event: { type: 'failed', reason: message, at: Date.now() } });
+    output({ type: 'error', error: message });
   } finally {
     input.close();
     process.stdin.pause();

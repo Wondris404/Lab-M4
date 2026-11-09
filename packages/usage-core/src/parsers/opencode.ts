@@ -1,5 +1,9 @@
 import sqlite3 from 'sqlite3';
-import { lstat } from 'node:fs/promises';
+import { createWriteStream, type BigIntStats } from 'node:fs';
+import { lstat, mkdtemp, open, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { pipeline } from 'node:stream/promises';
 import { pathToFileURL } from 'node:url';
 import { emptyResult, type Parser, type ParseResult } from './contracts.js';
 import { assertSafeFile, count, str, time } from './shared.js';
@@ -63,20 +67,48 @@ export function consumeOpenCodeRow(row: Row, result: ParseResult): void {
     ...(warnings.length > 0 && { warnings }),
   });
 }
-async function readDatabase(path: string): Promise<ParseResult> {
+function identity(stat: BigIntStats) {
+  if (!stat.isFile() || stat.isSymbolicLink())
+    throw new Error('Invalid SQLite source');
+  return [stat.dev, stat.ino, stat.size, stat.mtimeNs, stat.ctimeNs].join(':');
+}
+
+async function openCodeSnapshot(path: string) {
   await assertSafeFile(path);
-  // Live WAL readers may write SHM even when the DB is opened read-only.
-  // NEOVERENÉ: a concurrent writer could create WAL after this check.
-  for (const suffix of ['-wal', '-shm']) {
+  const fingerprint = async (file: string) => {
     try {
-      await lstat(`${path}${suffix}`);
-      return { ...emptyResult(), warnings: 1, partial: true };
+      return identity(await lstat(file, { bigint: true }));
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
     }
+  };
+  const [database, wal, journal] = await Promise.all(
+    ['', '-wal', '-journal'].map((suffix) => fingerprint(path + suffix)),
+  );
+  return {
+    signature: JSON.stringify([database, wal, journal]),
+    database,
+    wal,
+    journal,
+  };
+}
+
+async function copySnapshotFile(source: string, destination: string, expected: string) {
+  const file = await open(source, 'r');
+  try {
+    if (identity(await file.stat({ bigint: true })) !== expected)
+      throw new Error('OpenCode source changed before copy');
+    await pipeline(file.createReadStream({ autoClose: false }), createWriteStream(destination, { flags: 'wx' }));
+  } finally {
+    await file.close();
   }
+}
+
+async function readDatabase(path: string, immutable = true): Promise<ParseResult> {
   const result = emptyResult();
-  const uri = pathToFileURL(path).href + '?mode=ro';
+  // Immutable mode avoids source locks, recovery and writes to WAL/SHM.
+  // The caller verifies the database and writer side files around this read.
+  const uri = pathToFileURL(path).href + (immutable ? '?mode=ro&immutable=1' : '?mode=ro');
   const db = await new Promise<sqlite3.Database>((resolve, reject) => {
     const d = new sqlite3.Database(
       uri,
@@ -103,19 +135,40 @@ async function readDatabase(path: string): Promise<ParseResult> {
     new Promise<void>((resolve, reject) => {
       db.exec(sql, (error) => (error ? reject(error) : resolve()));
     });
+  const all = (sql: string) =>
+    new Promise<Row[]>((resolve, reject) =>
+      db.all(sql, (err, rows) => (err ? reject(err) : resolve(rows as Row[]))),
+    );
   try {
-    // query_only is connection-local; the transaction keeps both reads consistent.
-    // https://www.sqlite.org/pragma.html#pragma_query_only
-    await exec('PRAGMA query_only = ON; BEGIN');
+    await exec('PRAGMA query_only = ON; PRAGMA trusted_schema = OFF; BEGIN');
+    const tables = await all(
+      "SELECT name FROM sqlite_schema WHERE type='table' AND name IN ('message','session')",
+    );
+    if (!tables.some(({ name }) => name === 'message'))
+      throw new Error('Unsupported OpenCode schema');
     await query(`SELECT session_id AS sessionId, time_created AS timestamp, json_extract(data,'$.modelID') AS model,
        json_extract(data,'$.tokens.input') AS input, json_extract(data,'$.tokens.cache.read') AS cache, json_extract(data,'$.tokens.cache.write') AS cacheWrite,
        json_extract(data,'$.tokens.output') AS output, json_extract(data,'$.tokens.reasoning') AS reasoning,
-       json_extract(data,'$.tokens.total') AS total, json_extract(data,'$.cost') AS cost
+       json_extract(data,'$.tokens.total') AS total
        FROM message WHERE json_valid(data) AND json_type(data,'$.tokens')='object'`);
-    await query(`SELECT s.id AS sessionId,s.time_created AS timestamp,NULL AS model,s.tokens_input AS input,s.tokens_cache_read AS cache,
-       s.tokens_cache_write AS cacheWrite,s.tokens_output AS output,s.tokens_reasoning AS reasoning,NULL AS total,s.cost AS cost
-       FROM session s WHERE s.tokens_input IS NOT NULL AND NOT EXISTS
-       (SELECT 1 FROM message m WHERE m.session_id=s.id AND json_valid(m.data) AND json_type(m.data,'$.tokens')='object')`);
+    if (tables.some(({ name }) => name === 'session')) {
+      const columns = new Set(
+        (await all("PRAGMA table_info('session')")).map(({ name }) => name),
+      );
+      if (
+        [
+          'tokens_input',
+          'tokens_cache_read',
+          'tokens_cache_write',
+          'tokens_output',
+          'tokens_reasoning',
+        ].every((name) => columns.has(name))
+      )
+        await query(`SELECT s.id AS sessionId,s.time_created AS timestamp,NULL AS model,s.tokens_input AS input,s.tokens_cache_read AS cache,
+           s.tokens_cache_write AS cacheWrite,s.tokens_output AS output,s.tokens_reasoning AS reasoning,NULL AS total
+           FROM session s WHERE s.tokens_input IS NOT NULL AND NOT EXISTS
+           (SELECT 1 FROM message m WHERE m.session_id=s.id AND json_valid(m.data) AND json_type(m.data,'$.tokens')='object')`);
+    }
     const invalid = await new Promise<number>((resolve, reject) =>
       db.get(
         'SELECT count(*) AS n FROM message WHERE NOT json_valid(data)',
@@ -135,35 +188,47 @@ async function readDatabase(path: string): Promise<ParseResult> {
 export const opencodeParser: Parser = {
   provider: 'opencode',
   async parse(path) {
-    await assertSafeFile(path);
-    // Opening SQLite read-only can still create or modify shared-memory files.
-    // A check for -wal/-shm before opening cannot prevent a concurrent writer
-    // from creating them afterwards. Keep reads disabled until a supported,
-    // consistent no-source-write snapshot mechanism is implemented.
-    if (!safeSnapshotAvailable()) return opencodeReadUnavailable();
-    for (let attempt = 0; ; attempt++) {
-      try {
-        return await readDatabase(path);
-      } catch (error) {
-        const code = (error as NodeJS.ErrnoException).code;
-        if (code !== 'SQLITE_BUSY' && code !== 'SQLITE_LOCKED') throw error;
-        if (attempt === 2)
-          return { ...emptyResult(), warnings: 1, partial: true };
-        await new Promise((resolve) => setTimeout(resolve, 50 * (attempt + 1)));
+    const before = await openCodeSnapshot(path);
+    if (before.journal)
+      return unavailable(
+        'OpenCode práve zapisuje databázu. Skúste ju obnoviť neskôr.',
+      );
+    let temporary: string | undefined;
+    try {
+      let source = path;
+      if (before.wal) {
+        // SQLite replays committed WAL frames on a private copy. Opening the
+        // original in immutable mode silently omits those token records.
+        temporary = await mkdtemp(join(tmpdir(), 'lab-m4-opencode-'));
+        source = join(temporary, 'opencode.db');
+        if (!before.database) throw new Error('Missing OpenCode database');
+        await copySnapshotFile(path, source, before.database);
+        await copySnapshotFile(path + '-wal', source + '-wal', before.wal);
+        if (before.signature !== (await openCodeSnapshot(path)).signature)
+          return unavailable('Databáza OpenCode sa počas kopírovania zmenila. Skúste ju obnoviť.');
       }
+      const result = await readDatabase(source, !before.wal);
+      const after = await openCodeSnapshot(path);
+      if (before.signature !== after.signature)
+        return unavailable(
+          'Databáza OpenCode sa počas čítania zmenila. Skúste ju obnoviť.',
+        );
+      return result;
+    } catch {
+      return unavailable(
+        'Databáza OpenCode sa nedá bezpečne prečítať alebo používa nepodporovanú schému.',
+      );
+    } finally {
+      if (temporary) await rm(temporary, { recursive: true, force: true });
     }
   },
 };
 
-function safeSnapshotAvailable(): boolean {
-  return false;
-}
-
-export function opencodeReadUnavailable(): ParseResult {
+function unavailable(message: string): ParseResult {
   return {
     ...emptyResult(),
     warnings: 1,
-    warningDetails: ['OpenCode je dočasne nedostupný: chýba bezpečný SQLite snapshot bez zápisu do zdroja.'],
+    warningDetails: [message],
     partial: true,
     countRisk: 'under-count',
   };

@@ -21,7 +21,7 @@ it('marks aggregate totals incomplete when an OpenCode source is unavailable', a
   expect(summary.recordCount).toBe(1);
   expect(summary.sourcesIncomplete).toBe(true);
   expect(summary.agents.opencode?.partial).toBe(true);
-  expect(summary.agents.opencode?.warningDetails?.[0]).toContain('bez zápisu do zdroja');
+  expect(summary.agents.opencode?.warningDetails?.[0]).toContain('bezpečne prečítať');
   expect(summary.totals?.sessionsIncomplete).toBe(true);
   expect(summary.totals?.costIncomplete).toBe(true);
 });

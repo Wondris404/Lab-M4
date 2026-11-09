@@ -250,27 +250,26 @@ describe('opencode', () => {
     expect(r.mismatchFields.total_less_than_components).toBe(1);
     expect(r.warnings).toBe(1);
   });
-  it('reports non-WAL source unavailable and does not serve stale cache', () =>
+  it('reads a stable database through both entry points without writing to its source', () =>
     temp(async (dir) => {
       const path = join(dir, 'opencode.db');
       await makeDb(path);
       const cache = join(dir, 'cache.sqlite');
-      await writeFile(cache, 'synthetic old cache');
       const before = await readFile(path);
-      const cacheBefore = await readFile(cache);
       const namesBefore = (await readdir(dir)).sort();
       const r = await opencodeParser.parse(path);
       expect(await readFile(path)).toEqual(before);
-      expect(r.records).toEqual([]);
-      expect(r.partial).toBe(true);
-      expect(await scanCached(opencodeParser, path, cache)).toEqual(r);
-      expect(await readFile(cache)).toEqual(cacheBefore);
+      expect(r.records.map(({ inputTokens }) => inputTokens)).toEqual([123, 123, 6]);
+      expect(r.partial).not.toBe(true);
       expect((await readdir(dir)).sort()).toEqual(namesBefore);
+      const cached = await scanCached(opencodeParser, path, cache);
+      expect(cached.records.map(({ inputTokens }) => inputTokens)).toEqual([123, 123, 6]);
+      expect(cached.records[0]?.sessionId).not.toBe(r.records[0]?.sessionId);
       const response = await handleRequest({ version: 1, requestId: 'synthetic', method: 'scan', params: { agent: 'opencode', path, cachePath: cache } });
-      expect(response.result.status).toBe('partial');
-      expect(response.result.warnings.some((warning) => warning.includes('do zdroja'))).toBe(true);
+      expect(response.result.status).toBe('ok');
+      expect(response.result.records).toHaveLength(3);
     }));
-  it('reports a synthetic live WAL as partial without changing its files', () =>
+  it('includes committed live WAL usage without changing source files', () =>
     temp(async (dir) => {
       const path = join(dir, 'opencode.db');
       await makeDb(path);
@@ -285,14 +284,14 @@ describe('opencode', () => {
         const names = (await readdir(dir)).sort();
         const direct = await opencodeParser.parse(path);
         const cached = await scanCached(opencodeParser, path, join(dir, 'cache.sqlite'));
-        expect(direct.partial).toBe(true);
-        expect(direct.warnings).toBe(1);
-        expect(cached.partial).toBe(true);
-        expect(cached.warnings).toBe(1);
+        expect(direct.partial).not.toBe(true);
+        expect(direct.records.map(({ inputTokens }) => inputTokens)).toEqual([123, 123, 6, 8]);
+        expect(cached.partial).not.toBe(true);
+        expect(cached.records).toHaveLength(4);
         expect(await readFile(path)).toEqual(dbBefore);
         expect(await readFile(`${path}-wal`)).toEqual(walBefore);
         expect(await readFile(`${path}-shm`)).toEqual(shmBefore);
-        expect((await readdir(dir)).sort()).toEqual(names);
+        expect((await readdir(dir)).filter((name) => name !== 'cache.sqlite').sort()).toEqual(names);
       } finally {
         await close(writer);
       }

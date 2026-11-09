@@ -110,7 +110,12 @@ Vyššie uvedené počty sú diagnostika sémantiky, nie výsledok parsera.
 
 Parsery vracajú records spolu s počtom warnings, samostatnými limits a agregátmi mismatchFields. Codex číta JSONL a streamované JSONL.zst, používa last_token_usage a vynechá opakovaný kumulatívny stav relácie. Limitné okná sú oddelené od UsageRecord. Model a výslovné pole speed prichádzajú z posledného turn_context; inak je rýchlosť unknown.
 
-Čítanie databáz OpenCode je dočasne vypnuté: všetky skeny vrátia čiastočný stav s vysvetlením, kým nebude overený konzistentný snapshot bez zápisov do zdroja. Zachovaná normalizačná logika počíta input = input + cache.read + cache.write, cached input = cache.read a output = output + reasoning. Nesúhlasné total označí upozornením; neplatné povinné počty vynechá. Mena zdrojovej ceny a skutočná fakturácia zostávajú neoverené a cena sa neprezentuje ako známa.
+OpenCode sa číta bez zápisu do zdrojovej databázy. Pri aktívnom WAL SQLite
+spracuje potvrdené transakcie z dočasnej kópie databázy a WAL. Ak sa zdroj
+počas čítania zmení alebo má aktívny rollback journal, sken označí výsledok
+ako čiastočný. Normalizácia počíta input = input + cache.read + cache.write,
+cached input = cache.read a output = output + reasoning. Nesúhlasné total
+označí upozornením a neplatné povinné počty vynechá. Cena ostáva neznáma.
 
 Grok číta JSONL po riadkoch. Lokálne overený typ s počtami je shell.turn.inference_done. Páruje kontext podľa sid. Bez potvrdeného ID udalosti zachová aj riadky so zhodnou reláciou, trace, indexom, časom a počtami. Taký súčet je čiastočný: opakovanie sa môže započítať dvakrát, tieto riadky sa nevynechávajú, takže ich súčet nepodhodnotí, a neistý súčet je len orientačný odhad. Nezmenený prefix toho istého súboru sa pri obnovení nepripočítava znova. Ak session ID nie je výslovne prepojené v kontexte, použije sessionId aj model unknown. Overenie voči indexu našlo zhodu troch z 25 korelačných identifikátorov. Pri chýbajúcich povinných poliach sa položka preskočí a sken označí ako čiastočný.
 
@@ -124,4 +129,8 @@ Pri šiestich lokálnych nezhodách OpenCode je celkové pole total vždy menši
 
 ## F3: prístup k OpenCode WAL (syntetický test)
 
-Pri predchádzajúcom syntetickom teste otvorenia `mode=ro` bez `immutable=1` sa zmenil byte súboru `-shm`, hoci databáza a WAL zostali nezmenené. Kontrola existencie WAL/SHM pred otvorením nestačila: medzi kontrolou a otvorením môže vzniknúť nový WAL. Preto sú teraz všetky SQLite skeny OpenCode fail-closed vypnuté. Konzistentný snapshot bez zápisu a úplnosť živej histórie zostávajú **NEOVERENÉ**. Pozorovanie pochádza zo syntetického testu, nie z používateľských dát.
+Pri otvorení zdroja cez `mode=ro` sa v syntetickom teste zmenil byte
+súboru `-shm`. Čítačka preto zdroj bez WAL otvára cez `immutable=1`.
+Pri živom WAL otvorí až dočasnú kópiu. Test s nezapísanou položkou
+v hlavnej databáze overuje zahrnutie potvrdeného záznamu z WAL a rovnaké
+bajty pôvodnej databázy, WAL aj SHM po skene.

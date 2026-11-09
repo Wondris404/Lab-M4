@@ -10,7 +10,6 @@ import { codexParser } from '../parsers/codex.js';
 import { codexAccumulator, type CodexCursorState } from '../parsers/codex-cursor.js';
 import { scanJsonlAppend } from './grok-cursor.js';
 import { scanCodexDirectory } from './codex-directory.js';
-import { opencodeReadUnavailable } from '../parsers/opencode.js';
 
 async function lstatIfExists(path: string) {
   try { return await lstat(path); } catch (error) {
@@ -24,11 +23,6 @@ export async function scanCached(parser: Parser, source: string, cachePath: stri
   const original = await lstat(source);
   if (original.isSymbolicLink()) throw new Error('Nepovolený odkaz.');
   const canonical = await realpath(source);
-  // Never serve a prior complete SQLite cache while source reads are disabled.
-  if (parser.provider === 'opencode') {
-    await assertSafeFile(source);
-    return opencodeReadUnavailable();
-  }
   const key = createHash('sha256').update(`${parser.provider}\0${canonical}`).digest('hex');
   const codexDirectory = original.isDirectory() && parser === codexParser;
   let signature: string | undefined;
@@ -75,11 +69,12 @@ export async function scanCached(parser: Parser, source: string, cachePath: stri
     if (parser === codexParser && original.isFile() && /\.jsonl$/i.test(canonical))
       return await scanJsonlAppend(db, `${key}:v5`, canonical, (previous) => codexAccumulator(previous as CodexCursorState | undefined, pseudonym), force);
     const row = await new Promise<{ signature: string; result: string } | undefined>((resolve, reject) => db.get('SELECT signature, result FROM scan_cache WHERE id = ?', [key], (e, value) => e ? reject(e) : resolve(value as { signature: string; result: string } | undefined)));
-    if (!force && row && row.signature === signature) return JSON.parse(row.result) as ParseResult;
+    if (!force && parser.provider !== 'opencode' && row && row.signature === signature)
+      return JSON.parse(row.result) as ParseResult;
     const parsed = await parser.parse(canonical);
     const result = { ...parsed, records: parsed.records.map((record) => ({ ...normalizeRecord(record), sessionId: pseudonym(record.sessionId) })), limits: parsed.limits.map((limit) => ({ ...limit, sessionId: pseudonym(limit.sessionId) })) };
     // Cache replacement is atomic; no original file is written.
-    if (!result.partial)
+    if (!result.partial && parser.provider !== 'opencode')
       await exec('INSERT OR REPLACE INTO scan_cache (id, signature, result) VALUES (?, ?, ?)', [key, signature, JSON.stringify(result)]);
     return result;
   } finally {

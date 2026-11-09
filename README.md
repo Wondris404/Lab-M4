@@ -12,19 +12,27 @@
   <a href="LICENSE">MIT licencia</a>
 </p>
 
-Verzia **1.0.0 sa pripravuje**; zatiaľ nejde o publikované vydanie. Rozsah,
-overenie a známe obmedzenia sú v [prehľade vydania](docs/RELEASE-1.0.0.md).
-Parsery Usage zostávajú v `packages/usage-core`.
+Táto vetva pripravuje verziu **1.1.0** s voliteľným konverzačným režimom.
+Parsery Usage sú v `packages/usage-core`.
 
 ## Čo je Lab-M4
 
 Lab-M4 je vyvíjaná desktopová aplikácia pre prácu s AI nástrojmi vo Windows. V jednom okne vieš mať otvorených viac relácií PowerShellu a pozrieť si spotrebu tokenov zo zdrojov, ktoré sám vyberieš.
 
 - **Terminál:** interaktívny PowerShell s kartami a rozdelením okna na viac panelov.
-- **AI nástroje:** existujúce CLI môžeš používať v termináli. Zabudovaná AI konfigurácia je v aktuálnom `main` vypnutá; plnohodnotný AI chat ani živá orchestrácia sa tu neprezentujú ako dokončené funkcie.
+- **Chat** používa prihlásený Codex CLI vo Windows. Konverzáciu môžeš otvoriť vedľa terminálu a pri prepnutí ostane zachovaná.
 - **Usage:** lokálny prehľad tokenov z ručne vybranej histórie Codexu a Grok Build, s filtrami a lokálnym CSV exportom. Známe ceny/odhady sa zobrazujú v USD, nie ako presná fakturácia. OpenCode čítanie zostáva dočasne vypnuté, kým nebude overený bezpečný SQLite snapshot.
 
 Desktopová aplikácia používa Tauri, Rust, React, TypeScript a xterm.js. Automatizovaná orchestrácia viacerých agentov je vo vývoji.
+
+## Chat s Codexom
+
+Nainštaluj Codex CLI, prihlás sa cez `codex login` a v Lab-M4 otvor **Chat**.
+Aplikácia nájde natívny `codex.exe` v štandardnej inštalácii npm alebo na
+`PATH`. Pre inú inštaláciu môžeš pri štarte nastaviť `LAB_M4_CODEX_EXE`
+na jeho absolútnu cestu. Správy odosiela Codex až po stlačení **Odoslať**.
+Chat používa dočasnú konverzáciu a oddelený pracovný priečinok v režime iba
+na čítanie. Lab-M4 pri tomto pripojení neukladá prihlasovacie údaje.
 
 ## Stiahnutie pre Windows
 

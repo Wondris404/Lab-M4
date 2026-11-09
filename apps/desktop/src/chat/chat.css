@@ -1,0 +1,105 @@
+.conversation-view {
+  height: calc(100vh - 40px);
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.conversation-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px clamp(12px, 4vw, 32px);
+  border-bottom: 1px solid var(--border);
+}
+
+.conversation-header h1,
+.conversation-header p {
+  margin: 0;
+}
+
+.conversation-header p,
+.conversation-empty p {
+  color: var(--text-dim);
+}
+
+.conversation-scroll {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+}
+
+.conversation-content,
+.conversation-composer {
+  width: min(820px, calc(100% - 24px));
+  margin-inline: auto;
+}
+
+.conversation-content {
+  padding-block: 24px;
+}
+
+.conversation-empty {
+  margin-top: 8vh;
+  text-align: center;
+}
+
+.conversation-turn {
+  display: grid;
+  gap: 14px;
+  margin-block: 0 24px;
+  overflow-wrap: anywhere;
+}
+
+.conversation-question {
+  justify-self: end;
+  max-width: min(86%, 620px);
+  padding: 10px 14px;
+  border-radius: 15px 15px 4px 15px;
+  background: var(--accent-soft);
+  white-space: pre-wrap;
+}
+
+.conversation-composer {
+  box-sizing: border-box;
+  display: grid;
+  gap: 8px;
+  padding: 10px;
+  margin-block: 0 14px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--surface);
+}
+
+.conversation-composer textarea {
+  resize: vertical;
+  min-height: 42px;
+  max-height: 25vh;
+  border: 0;
+  padding: 6px;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+}
+
+.conversation-view button {
+  padding: 6px 12px;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  color: inherit;
+  background: var(--btn-bg);
+}
+
+.conversation-view button:disabled {
+  opacity: .55;
+}
+
+.conversation-composer button {
+  justify-self: end;
+  border-color: var(--accent);
+}
+
+.conversation-view :focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}

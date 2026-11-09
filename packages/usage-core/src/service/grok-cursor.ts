@@ -50,6 +50,7 @@ export async function scanJsonlAppend(
   path: string,
   createAccumulator: (previous?: unknown) => JsonlAccumulator,
   force: boolean,
+  skipLongLines = false,
 ): Promise<CursorResult> {
   const run = (sql: string, values: unknown[] = []) =>
     new Promise<void>((resolve, reject) =>
@@ -106,6 +107,7 @@ export async function scanJsonlAppend(
     let carry = Buffer.alloc(0);
     const chunk = Buffer.alloc(64 * 1024);
     let oversized = false;
+    let discarding = false;
     try {
       while (position < info.size) {
         const { bytesRead } = await file.read(
@@ -124,15 +126,28 @@ export async function scanJsonlAppend(
           end !== -1;
           end = data.indexOf(10, start)
         ) {
-          if (end - start > 1024 * 1024) throw new LineLimitError();
-          let line = data.subarray(start, end).toString('utf8');
-          if (line.endsWith('\r')) line = line.slice(0, -1);
-          accumulator.consume(line);
+          if (!discarding && end - start > 1024 * 1024) {
+            if (!skipLongLines) throw new LineLimitError();
+            discarding = true;
+          }
+          if (discarding) {
+            accumulator.result.warnings++;
+            accumulator.result.partial = true;
+          } else {
+            let line = data.subarray(start, end).toString('utf8');
+            if (line.endsWith('\r')) line = line.slice(0, -1);
+            accumulator.consume(line);
+          }
+          discarding = false;
           start = end + 1;
           offset = base + start;
         }
-        carry = data.subarray(start);
-        if (carry.length > 1024 * 1024) throw new LineLimitError();
+        carry = discarding ? Buffer.alloc(0) : data.subarray(start);
+        if (carry.length > 1024 * 1024) {
+          if (!skipLongLines) throw new LineLimitError();
+          carry = Buffer.alloc(0);
+          discarding = true;
+        }
       }
     } catch (error) {
       if (!(error instanceof LineLimitError)) throw error;
@@ -170,7 +185,7 @@ export async function scanJsonlAppend(
         ],
       }),
     };
-    if (oversized) {
+    if (oversized || discarding) {
       // Publish only the validated prefix and leave the last saved cursor intact.
       result.warnings++;
       result.partial = true;

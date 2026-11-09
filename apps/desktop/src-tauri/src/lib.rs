@@ -1,3 +1,4 @@
+mod chat;
 mod pty_input;
 mod usage;
 mod usage_integrity;
@@ -1189,6 +1190,7 @@ pub fn run() {
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
         .manage(AppState::default())
+        .manage(chat::ChatState::default())
         .manage(usage::UsageState::default())
         .setup(|app| {
             let url =
@@ -1211,8 +1213,13 @@ pub fn run() {
             agent_hook_url,
             load_app_settings,
             save_app_settings,
+            chat::chat_send,
+            chat::chat_models,
+            chat::chat_stop,
+            chat::chat_reset,
             usage::usage_suggest_sources,
             usage::usage_list_sources,
+            usage::usage_set_auto_source,
             usage::usage_remove_source,
             usage::usage_select_source,
             usage::usage_scan,
@@ -1223,6 +1230,9 @@ pub fn run() {
                 event,
                 tauri::WindowEvent::CloseRequested { .. } | tauri::WindowEvent::Destroyed
             ) {
+                if let Some(state) = window.app_handle().try_state::<chat::ChatState>() {
+                    state.close();
+                }
                 if let Some(state) = window.app_handle().try_state::<AppState>() {
                     kill_all(&state);
                 }

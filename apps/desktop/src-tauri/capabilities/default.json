@@ -2,10 +2,14 @@
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
   "description": "Main window permissions actually used: pty and shell commands, window basics, directory picker, and the About links.",
-  "windows": ["main"],
+  "windows": [
+    "main"
+  ],
   "permissions": [
     "core:event:allow-listen",
     "core:event:allow-unlisten",
+    "core:window:allow-available-monitors",
+    "core:window:allow-is-minimized",
     "core:window:allow-close",
     "core:window:allow-destroy",
     "core:window:allow-inner-size",
@@ -25,9 +29,14 @@
     "allow-agent-hook-url",
     "allow-load-app-settings",
     "allow-save-app-settings",
+    "allow-chat-send",
+    "allow-chat-models",
+    "allow-chat-stop",
+    "allow-chat-reset",
     "allow-usage-list-sources",
     "allow-usage-select-source",
     "allow-usage-remove-source",
-    "allow-usage-scan"
+    "allow-usage-scan",
+    "allow-usage-set-auto-source"
   ]
 }

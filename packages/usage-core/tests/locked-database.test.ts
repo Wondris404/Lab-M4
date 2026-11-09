@@ -15,7 +15,7 @@ const close = (db: sqlite3.Database) =>
     db.close((error) => (error ? reject(error) : resolve())),
   );
 
-it('does not open an unavailable database during or after a writer lock', async () => {
+it('skips a rollback journal and reads the database after the writer releases it', async () => {
   const dir = await testTempDir('sqlite-lock-');
   const sourceDir = join(dir, 'source');
   await mkdir(sourceDir);
@@ -32,6 +32,7 @@ it('does not open an unavailable database during or after a writer lock', async 
       'CREATE TABLE session(id TEXT,time_created INTEGER,tokens_input INTEGER,tokens_cache_read INTEGER,tokens_cache_write INTEGER,tokens_output INTEGER,tokens_reasoning INTEGER,cost REAL)',
     );
     await run(writer, 'BEGIN EXCLUSIVE');
+    await run(writer, "INSERT INTO message VALUES ('test', 1, '{}')");
     const names = (await readdir(sourceDir)).sort();
     const locked = await scanCached(opencodeParser, path, cache);
     expect(locked.partial).toBe(true);
@@ -40,10 +41,9 @@ it('does not open an unavailable database during or after a writer lock', async 
     expect((await readdir(sourceDir)).sort()).toEqual(names);
     await run(writer, 'ROLLBACK');
     const unlocked = await scanCached(opencodeParser, path, cache);
-    expect(unlocked.partial).toBe(true);
-    expect(unlocked.warnings).toBe(1);
-    expect(unlocked.warningDetails?.[0]).toContain('do zdroja');
-    expect((await readdir(sourceDir)).sort()).toEqual(names);
+    expect(unlocked.partial).not.toBe(true);
+    expect(unlocked.warnings).toBe(0);
+    expect(await readdir(sourceDir)).toEqual(['opencode.db']);
   } finally {
     await close(writer);
   }

@@ -1,8 +1,11 @@
+import { lstat } from "node:fs/promises";
+import { isGrokHistory, parseGrokHistory } from "./grok-history.js";
 import { createHash } from 'node:crypto';
 import { emptyResult, mergeCountRisk, type Parser } from './contracts.js';
 import {
   count,
   assertSafeFile,
+  assertSafePath,
   ExpansionLimitError,
   LineLimitError,
   ZstdIntegrityError,
@@ -128,6 +131,8 @@ export function grokAccumulator(
 export const grokBuildParser: Parser = {
   provider: 'grok-build',
   async parse(path) {
+    await assertSafePath(path);
+    if (isGrokHistory(path, (await lstat(path)).isDirectory())) return parseGrokHistory(path);
     await assertSafeFile(path);
     const accumulator = grokAccumulator();
     const result = accumulator.result;

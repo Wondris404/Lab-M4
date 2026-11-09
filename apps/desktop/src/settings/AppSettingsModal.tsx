@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { AppSettingsApi } from "./useAppSettings";
+import { AppearancePanel } from "./AppearancePanel";
 import {
   AI_PROVIDER_PRESETS,
   DEFAULT_FONT_SIZE,
@@ -18,7 +19,7 @@ import {
   refreshFontDetection,
   type FontPreset,
 } from "./fonts";
-import { getTheme, THEME_LIST } from "./themes";
+import { getTheme } from "./themes";
 import { AboutPanel } from "./AboutPanel";
 
 interface AppSettingsModalProps {
@@ -128,8 +129,9 @@ export function AppSettingsModal({ api }: AppSettingsModalProps) {
   };
 
   const tabs: { id: SettingsTab; label: string }[] = [
-    { id: "appearance", label: "Appearance" },
-    { id: "terminal", label: "Terminal" },
+    { id: "appearance", label: "Vzhľad" },
+    { id: "mode", label: "Režim aplikácie" },
+    { id: "terminal", label: "Terminál" },
     // Lab-M4: credential-backed AI is disabled; original implementation retained.
     // { id: "ai", label: "AI" },
     { id: "general", label: "General" },
@@ -163,11 +165,11 @@ export function AppSettingsModal({ api }: AppSettingsModalProps) {
         }}
         role="dialog"
         aria-modal="true"
-        aria-label="Settings"
+        aria-label="Nastavenia"
       >
         <header className="agent-modal-header">
-          <span className="agent-modal-title">Settings</span>
-          <button type="button" className="agent-modal-close" aria-label="Close settings" onClick={closeSettings}>
+          <span className="agent-modal-title">Nastavenia</span>
+          <button type="button" className="agent-modal-close" aria-label="Zavrieť nastavenia" onClick={closeSettings}>
             ×
           </button>
         </header>
@@ -192,43 +194,28 @@ export function AppSettingsModal({ api }: AppSettingsModalProps) {
 
           <div className="settings-panel">
             {settingsTab === "about" && <AboutPanel />}
-            {settingsTab === "appearance" && (
-              <div className="settings-section">
-                <p className="settings-section-hint">
-                  Theme applies immediately to the app chrome and terminals.
-                </p>
-                <div className="theme-grid">
-                  {THEME_LIST.map((theme) => {
-                    const selected = settings.appearance.theme === theme.id;
-                    return (
-                      <button
-                        key={theme.id}
-                        type="button"
-                        className={
-                          selected
-                            ? "theme-card theme-card-selected"
-                            : "theme-card"
-                        }
-                        onClick={() => api.setTheme(theme.id)}
-                      >
-                        <span
-                          className="theme-swatch"
-                          style={{
-                            background: `linear-gradient(135deg, ${theme.css["--bg"]} 50%, ${theme.css["--sidebar-bg"]} 50%)`,
-                            borderColor: theme.css["--tile-border"],
-                          }}
-                        >
-                          <span
-                            className="theme-swatch-accent"
-                            style={{ background: theme.css["--accent"] }}
-                          />
-                        </span>
-                        <span className="theme-card-label">{theme.label}</span>
-                        <span className="theme-card-desc">{theme.description}</span>
-                      </button>
-                    );
-                  })}
-                </div>
+            {settingsTab === "appearance" && <AppearancePanel api={api} />}
+            {settingsTab === "mode" && (
+              <div className="settings-section appearance-panel">
+                <label>
+                  Režim aplikácie
+                  <select value={settings.appearance.appMode} onChange={(event) =>
+                    api.setAppearance({ appMode: event.target.value === "chat" ? "chat" : "terminal" })}>
+                    <option value="chat">Chat</option>
+                    <option value="terminal">Terminál</option>
+                  </select>
+                </label>
+                <label>
+                  Animácie v chate
+                  <select value={settings.appearance.chatAnimation} onChange={(event) => {
+                    const value = event.target.value;
+                    api.setAppearance({ chatAnimation: value === "pixel" || value === "off" ? value : "subtle" });
+                  }}>
+                    <option value="off">Vypnuté</option>
+                    <option value="subtle">Jemné</option>
+                    <option value="pixel">Pixelové</option>
+                  </select>
+                </label>
               </div>
             )}
 
@@ -393,7 +380,7 @@ export function AppSettingsModal({ api }: AppSettingsModalProps) {
                       className="agent-modal-cancel settings-reset-btn"
                       onClick={() => api.resetTerminalColorsFromTheme()}
                     >
-                      Reset from {getTheme(settings.appearance.theme).label}
+                      Reset from {getTheme(api.appearance.terminalTheme).label}
                     </button>
                   </div>
                 )}

@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-chat-reset"
+description = "Enables the chat_reset command without any pre-configured scope."
+commands.allow = ["chat_reset"]
+
+[[permission]]
+identifier = "deny-chat-reset"
+description = "Denies the chat_reset command without any pre-configured scope."
+commands.deny = ["chat_reset"]

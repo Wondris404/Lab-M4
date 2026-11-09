@@ -16,14 +16,16 @@ vi.mock('../../../apps/desktop/src/usage/useUsage.js', () => ({
     refresh: () => {}, addSource: () => {},
   }),
 }));
+import { buildUsageDashboard, metricValue } from '../../../apps/desktop/src/usage/dashboard.js';
 import { UsageTab } from '../../../apps/desktop/src/usage/UsageTab.js';
 
 it('does not display a rounded total when token addition exceeds safe integer precision', () => {
   const html = renderToStaticMarkup(React.createElement(UsageTab));
-  expect(html).toContain('Tokeny <strong>—</strong>');
+  expect(html).toContain('class="usage-hero" title="—">—</strong>');
   expect(html).toContain('Súčet tokenov nemožno presne zobraziť.');
-  expect(html).toContain('<span>2025-01-01</span><span>—</span>');
-  expect(html).not.toContain('<meter');
+  const { buckets } = buildUsageDashboard(data.records, 7, Date.parse('2025-01-02T12:00:00Z'));
+  const codex = buckets.flatMap(({ byAgent }) => [...byAgent.values()]);
+  expect(codex.map((bucket) => metricValue(bucket, 'tokens'))).toEqual([null]);
 });
 
 it('retains exact independent daily counts when only the cross-day total overflows', () => {
@@ -31,10 +33,10 @@ it('retains exact independent daily counts when only the cross-day total overflo
   data.records.push({ ...data.records[0]!, timestamp: '2025-01-02T00:00:00Z', input: 1 });
   try {
     const html = renderToStaticMarkup(React.createElement(UsageTab));
-    expect(html).toContain('Tokeny <strong>—</strong>');
-    expect(html).toContain('9.007.199.254.740.991');
-    expect(html).toContain('<span>2025-01-02</span>');
-    expect(html).toContain('<meter');
+    expect(html).toContain('class="usage-hero" title="—">—</strong>');
+    const { buckets } = buildUsageDashboard(data.records, 7, Date.parse('2025-01-02T12:00:00Z'));
+    const codex = buckets.flatMap(({ byAgent }) => [...byAgent.values()]);
+    expect(codex.map((bucket) => metricValue(bucket, 'tokens'))).toEqual([Number.MAX_SAFE_INTEGER, 1]);
   } finally {
     data.records.pop();
     data.records[0]!.output = 2;

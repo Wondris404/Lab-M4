@@ -35,6 +35,24 @@ const prefix = (id: string) =>
     }),
   ].join('\n') + '\n';
 
+it('continues past oversized Codex lines and keeps distinct rollouts from a shared session', async () => {
+  const dir = await testTempDir('codex-long-line-');
+  const source = join(dir, 'sessions');
+  await mkdir(source);
+  const cache = join(dir, 'cache.sqlite');
+  for (const id of ['first', 'second']) {
+    const meta = row({ type: 'session_meta', payload: { id, session_id: 'shared' } });
+    await writeFile(join(source, id + '.jsonl'), [
+      meta, 'x'.repeat(1024 * 1024 + 1), usage(100, 10), '',
+    ].join('\n'));
+  }
+  const cached = await scanCached(codexParser, source, cache);
+  expect(cached.partial).toBe(true);
+  expect(cached.records).toHaveLength(2);
+  expect(new Set(cached.records.map((record) => record.sessionId)).size).toBe(2);
+  expect((await codexParser.parse(source)).records).toHaveLength(2);
+});
+
 it('incrementally parses Codex last usage across append, partial line, truncate and rotation', async () => {
   const dir = await testTempDir('codex-cursor-');
   const path = join(dir, 'codex.jsonl');

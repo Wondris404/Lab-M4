@@ -10,7 +10,7 @@ import { codexParser } from '../parsers/codex.js';
 import { codexAccumulator, type CodexCursorState } from '../parsers/codex-cursor.js';
 import { scanJsonlAppend } from './grok-cursor.js';
 import { scanCodexDirectory } from './codex-directory.js';
-import { opencodeReadUnavailable } from '../parsers/opencode.js';
+import { isGrokHistory } from '../parsers/grok-history.js';
 
 async function lstatIfExists(path: string) {
   try { return await lstat(path); } catch (error) {
@@ -20,19 +20,15 @@ async function lstatIfExists(path: string) {
 }
 
 /** Cache normalized data only. Caller must select an application-owned cache path. */
-export async function scanCached(parser: Parser, source: string, cachePath: string, force = false): Promise<ParseResult> {
+export async function scanCached(parser: Parser, source: string, cachePath: string, force = false, codexHome = false): Promise<ParseResult> {
   const original = await lstat(source);
   if (original.isSymbolicLink()) throw new Error('Nepovolený odkaz.');
   const canonical = await realpath(source);
-  // Never serve a prior complete SQLite cache while source reads are disabled.
-  if (parser.provider === 'opencode') {
-    await assertSafeFile(source);
-    return opencodeReadUnavailable();
-  }
+  const grokHistory = parser === grokBuildParser && isGrokHistory(canonical, original.isDirectory());
   const key = createHash('sha256').update(`${parser.provider}\0${canonical}`).digest('hex');
   const codexDirectory = original.isDirectory() && parser === codexParser;
   let signature: string | undefined;
-  if (codexDirectory) {
+  if (codexDirectory || grokHistory) {
     await assertSafePath(source);
   } else if (original.isDirectory() && parser.provider === 'codex') {
     const files: string[] = [];
@@ -48,7 +44,7 @@ export async function scanCached(parser: Parser, source: string, cachePath: stri
     const info = await lstat(canonical);
     const wal = await lstatIfExists(`${canonical}-wal`);
     const version = /\.zst$/i.test(canonical)
-      ? (parser === grokBuildParser ? 17 : 12)
+      ? (parser === grokBuildParser ? 17 : 13)
       : (parser === grokBuildParser ? 17 : 11);
     signature = JSON.stringify([version, info.dev, info.ino, info.size, info.mtimeMs, info.ctimeMs, wal?.size ?? null, wal?.mtimeMs ?? null]);
   }
@@ -69,17 +65,17 @@ export async function scanCached(parser: Parser, source: string, cachePath: stri
     const metadata = await new Promise<{ value: string }>((resolve, reject) => db.get('SELECT value FROM cache_meta WHERE name = ?', ['session_salt'], (e, value) => e ? reject(e) : resolve(value as { value: string })));
     const pseudonym = (sessionId: string) => createHmac('sha256', metadata.value).update(`${parser.provider}\0${sessionId}`).digest('hex');
     if (codexDirectory)
-      return await scanCodexDirectory(db, key, canonical, pseudonym, force);
-    if (parser === grokBuildParser && original.isFile() && !/\.zst$/i.test(canonical))
+      return await scanCodexDirectory(db, key, canonical, pseudonym, force, codexHome);
+    if (parser === grokBuildParser && !grokHistory && original.isFile() && !/\.zst$/i.test(canonical))
       return await scanJsonlAppend(db, `${key}:v7`, canonical, (previous) => grokAccumulator(previous as GrokCursorState | undefined, pseudonym), force);
     if (parser === codexParser && original.isFile() && /\.jsonl$/i.test(canonical))
-      return await scanJsonlAppend(db, `${key}:v5`, canonical, (previous) => codexAccumulator(previous as CodexCursorState | undefined, pseudonym), force);
+      return await scanJsonlAppend(db, `${key}:v6`, canonical, (previous) => codexAccumulator(previous as CodexCursorState | undefined, pseudonym), force, true);
     const row = await new Promise<{ signature: string; result: string } | undefined>((resolve, reject) => db.get('SELECT signature, result FROM scan_cache WHERE id = ?', [key], (e, value) => e ? reject(e) : resolve(value as { signature: string; result: string } | undefined)));
-    if (!force && row && row.signature === signature) return JSON.parse(row.result) as ParseResult;
+    if (!force && !grokHistory && parser.provider !== 'opencode' && row && row.signature === signature) return JSON.parse(row.result) as ParseResult;
     const parsed = await parser.parse(canonical);
-    const result = { ...parsed, records: parsed.records.map((record) => ({ ...normalizeRecord(record), sessionId: pseudonym(record.sessionId) })), limits: parsed.limits.map((limit) => ({ ...limit, sessionId: pseudonym(limit.sessionId) })) };
+    const result = { ...parsed, records: parsed.records.map((record) => ({ ...(grokHistory ? record : normalizeRecord(record)), sessionId: pseudonym(record.sessionId) })), limits: parsed.limits.map((limit) => ({ ...limit, sessionId: pseudonym(limit.sessionId) })) };
     // Cache replacement is atomic; no original file is written.
-    if (!result.partial)
+    if (!result.partial && !grokHistory && parser.provider !== 'opencode')
       await exec('INSERT OR REPLACE INTO scan_cache (id, signature, result) VALUES (?, ?, ?)', [key, signature, JSON.stringify(result)]);
     return result;
   } finally {

@@ -29,11 +29,11 @@ it('counts only known sessions, marks incompleteness, and retains unknown usage'
   const html = renderToStaticMarkup(React.createElement(UsageTab));
   expect(html).toContain('Známe relácie <strong>2</strong>');
   expect(html).toContain('Neúplné: neznáme relácie');
-  expect(html).toContain('<td>Neznáma</td>');
+  expect(html).toMatch(/<td[^>]*>Neznáma<\/td>/);
   expect(html).not.toContain('synthetic-unknown');
   expect(html).toContain('known-grok');
   expect(html).toContain('known-codex');
-  expect(html).toContain('<strong title="60">60</strong>');
+  expect(html).toContain('class="usage-hero" title="60">60</strong>');
   const csv = usageCsv(data.records);
   expect(csv).not.toContain('synthetic-unknown');
   expect(csv).toContain('"known-grok"');

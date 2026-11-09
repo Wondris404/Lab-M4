@@ -148,15 +148,15 @@ describe('usage view data', () => {
         return { result: { status: 'ok', totalRecords: 0, offset: 0, snapshotId: 'a'.repeat(64), records: [], warnings: [] } };
     });
     vi.stubGlobal('window', { __TAURI_INTERNALS__: { invoke } });
-    let removeSource: ReturnType<typeof useUsage>['removeSource'] | undefined;
+    let changeSource: ReturnType<typeof useUsage>['changeSource'] | undefined;
     function CaptureAction() {
-      ({ removeSource } = useUsage());
+      ({ changeSource } = useUsage());
       return null;
     }
     try {
       renderToStaticMarkup(createElement(CaptureAction));
-      expect(removeSource).toBeTypeOf('function');
-      await removeSource?.('lost');
+      expect(changeSource).toBeTypeOf('function');
+      await changeSource?.({ id: 'lost', agent: 'codex', name: 'logs', coveredBy: null });
       expect(invoke.mock.calls).toEqual([
         ['usage_remove_source', { id: 'lost' }, undefined],
         ['usage_list_sources', {}, undefined],

@@ -1,7 +1,11 @@
+#[cfg(test)]
 use std::collections::HashMap;
-use std::path::{Path, PathBuf};
+use std::path::Path;
+#[cfg(test)]
+use std::path::PathBuf;
 
 // Paths were canonicalized and checked by safe_source before reaching this code.
+#[cfg(test)]
 pub(super) struct Source<'a> {
     pub id: &'a str,
     pub agent: &'a str,
@@ -24,7 +28,7 @@ fn is_scanned_file(path: &Path) -> bool {
 
 // Mirror findCodexFiles: every .codex directory restricts traversal to its
 // sessions and archived_sessions children. Other directories are recursive.
-fn codex_contains(parent: &Path, child: &Path, child_is_dir: bool) -> bool {
+pub(super) fn codex_contains(parent: &Path, child: &Path, child_is_dir: bool) -> bool {
     let Ok(relative) = child.strip_prefix(parent) else {
         return false;
     };
@@ -55,6 +59,7 @@ fn codex_contains(parent: &Path, child: &Path, child_is_dir: bool) -> bool {
 }
 
 /// Identify fully covered sources, not events with similar contents.
+#[cfg(test)]
 pub(super) fn covered_sources<'a>(sources: &'a [Source<'a>]) -> HashMap<&'a str, &'a str> {
     let mut covered = HashMap::new();
     for child in sources {

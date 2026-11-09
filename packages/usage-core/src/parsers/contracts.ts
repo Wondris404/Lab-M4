@@ -36,5 +36,5 @@ export const emptyResult = (): ParseResult => ({
 });
 export interface Parser {
   readonly provider: Provider;
-  parse(path: string): Promise<ParseResult>;
+  parse(path: string, historyOnly?: boolean): Promise<ParseResult>;
 }

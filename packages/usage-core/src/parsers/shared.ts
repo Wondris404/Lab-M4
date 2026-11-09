@@ -2,7 +2,6 @@ import { createReadStream } from 'node:fs';
 import { lstat, readdir, realpath } from 'node:fs/promises';
 import { basename, join, parse, resolve, sep } from 'node:path';
 import { Transform } from 'node:stream';
-import { createInterface } from 'node:readline';
 import { Decompress } from 'fzstd';
 import xxhash, { type XXHash } from 'xxhash-wasm';
 
@@ -203,6 +202,7 @@ export async function assertSafeFile(path: string): Promise<void> {
 export async function* lines(
   path: string,
   budget = newExpansionBudget(),
+  onLongLine?: () => void,
 ): AsyncGenerator<string> {
   await assertSafeFile(path);
   let expanded = 0;
@@ -271,40 +271,45 @@ export async function* lines(
     : stream;
   if (decompressed !== stream)
     stream.on('error', (error) => decompressed.destroy(error));
-  let lineBytes = 0;
-  let endsWithNewline = false;
-  const bounded = decompressed.pipe(
-    new Transform({
-      transform(chunk: Buffer, _encoding, callback) {
-        if (chunk.length) endsWithNewline = chunk[chunk.length - 1] === 10;
-        for (const byte of chunk) {
-          lineBytes = byte === 10 ? 0 : lineBytes + 1;
-          if (lineBytes > 1024 * 1024) return callback(new LineLimitError());
-        }
-        callback(null, chunk);
-      },
-    }),
-  );
-  decompressed.on('error', (error: Error) => bounded.destroy(error));
+  const limit = 1024 * 1024;
+  let pieces: Buffer[] = [];
+  let length = 0;
+  let discarding = false;
   try {
-    let pending: string | undefined;
-    for await (const line of createInterface({
-      input: bounded,
-      crlfDelay: Infinity,
-    })) {
-      if (pending !== undefined) yield pending;
-      pending = line;
+    for await (const chunk of decompressed as AsyncIterable<Buffer>) {
+      for (let start = 0; start < chunk.length;) {
+        const newline = chunk.indexOf(10, start);
+        const end = newline < 0 ? chunk.length : newline;
+        if (!discarding && length + end - start > limit) {
+          if (!onLongLine) throw new LineLimitError();
+          onLongLine();
+          pieces = [];
+          length = 0;
+          discarding = true;
+        }
+        if (!discarding && end > start) {
+          pieces.push(chunk.subarray(start, end));
+          length += end - start;
+        }
+        if (newline >= 0) {
+          if (!discarding) yield Buffer.concat(pieces, length).toString('utf8').replace(/\r$/, '');
+          pieces = [];
+          length = 0;
+          discarding = false;
+        }
+        start = end + 1;
+      }
     }
-    // A validated archive has a definite EOF. A live plain log can still append
-    // to its last line, so it needs a newline before that line is committed.
-    if (pending !== undefined && (compressed || endsWithNewline)) yield pending;
+    // Only a validated archive has a definite EOF.
+    if (compressed && !discarding && length > 0) {
+      yield Buffer.concat(pieces, length).toString('utf8').replace(/\r$/, '');
+    }
   } finally {
     stream.destroy();
     decompressed.destroy();
-    bounded.destroy();
   }
 }
-export async function* findCodexFiles(path: string): AsyncGenerator<string> {
+export async function* findCodexFiles(path: string, historyOnly = false): AsyncGenerator<string> {
   const info = await lstat(path);
   if (info.isSymbolicLink())
     throw new Error('Symbolické odkazy nie sú povolené.');
@@ -315,7 +320,7 @@ export async function* findCodexFiles(path: string): AsyncGenerator<string> {
     }
     return;
   }
-  if (basename(path).toLowerCase() === '.codex') {
+  if (historyOnly || basename(path).toLowerCase() === '.codex') {
     for (const name of ['sessions', 'archived_sessions']) {
       try {
         yield* findCodexFiles(join(path, name));

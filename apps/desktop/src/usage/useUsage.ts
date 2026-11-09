@@ -8,12 +8,15 @@ export interface Source {
   name: string;
   /** An approved source which fully covers this one, or null. */
   coveredBy: string | null;
+  automatic?: boolean;
+  enabled?: boolean;
 }
 interface Page {
   version?: number;
   error?: string;
   result?: {
     status: string;
+    stale?: boolean;
     totalRecords: number;
     offset: number;
     snapshotId: string;
@@ -34,6 +37,8 @@ export async function fetchUsage(
   const records: UsageItem[] = [];
   const warnings: string[] = [];
   let partial = false;
+  let stale = false;
+  sources = sources.filter((source) => source.enabled !== false);
   const byId = new Map(sources.map((source) => [source.id, source]));
   if (byId.size !== sources.length) throw new Error('Neplatný zoznam zdrojov Usage.');
   for (const source of sources) {
@@ -62,14 +67,14 @@ export async function fetchUsage(
     let total = 0;
     let snapshot: string | undefined;
     do {
-      if (!active()) return { records, warnings, partial };
+      if (!active()) return { records, warnings, partial, ...(stale && { stale }) };
       const page = await request<Page | null>('usage_scan', { id: source.id, force: false, offset })
         .catch((reason: unknown): Page => {
           if (reason === 'Sidecar output invalid')
             throw new Error('Neplatná odpoveď služby Usage.');
           return { version: 1, error: 'INVALID_OR_UNREADABLE' };
         });
-      if (!active()) return { records, warnings, partial };
+      if (!active()) return { records, warnings, partial, ...(stale && { stale }) };
       if (page?.version === 1 && page.result === undefined &&
           (page.error === 'INVALID_OR_UNREADABLE' || page.error === 'LIVE_WAL')) {
         warnings.push(`${source.agent} (${source.name}): zdroj sa nepodarilo načítať.`);
@@ -94,6 +99,7 @@ export async function fetchUsage(
       if (typeof data.snapshotId !== 'string' || !/^[a-f0-9]{64}$/.test(data.snapshotId))
         throw new Error('Služba Usage nepodporuje bezpečné stránkovanie; zostavte aktuálny sidecar.');
       if (offset === 0) {
+        stale ||= data.stale === true;
         total = data.totalRecords;
         snapshot = data.snapshotId;
         sourceWarnings.push(
@@ -121,19 +127,21 @@ export async function fetchUsage(
     scanned++;
   }
   if (failed && !scanned) throw new Error('Nepodarilo sa načítať žiadny zdroj Usage.');
-  return { records, warnings, partial };
+  return { records, warnings, partial, ...(stale && { stale }) };
 }
 
-export function useUsage() {
+export function useUsage(visible = true) {
   const [sources, setSources] = useState<Source[]>([]);
   const [records, setRecords] = useState<UsageItem[]>([]);
   const [warnings, setWarnings] = useState<string[]>([]);
   const [partial, setPartial] = useState(false);
+  const [stale, setStale] = useState(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string>();
   const generation = useRef(0);
+  const inFlight = useRef<Promise<void> | null>(null);
 
-  const refresh = useCallback(async () => {
+  const scan = useCallback(async () => {
     const current = ++generation.current;
     const active = () => generation.current === current;
     setLoading(true);
@@ -147,6 +155,7 @@ export function useUsage() {
       setRecords(result.records);
       setWarnings(result.warnings);
       setPartial(result.partial);
+      setStale(result.stale === true);
     } catch (reason) {
       if (active()) setError(String(reason));
     } finally {
@@ -154,12 +163,26 @@ export function useUsage() {
     }
   }, []);
 
+  const refresh = useCallback(() => {
+    if (inFlight.current) return inFlight.current;
+    const requested = generation.current;
+    const task = Promise.resolve().then(async () => {
+      if (requested === generation.current) await scan();
+    }).finally(() => {
+      if (inFlight.current === task) inFlight.current = null;
+    });
+    inFlight.current = task;
+    return task;
+  }, [scan]);
+
+  useEffect(() => () => {
+    generation.current++;
+    inFlight.current = null;
+  }, []);
+
   useEffect(() => {
-    void refresh();
-    return () => {
-      generation.current++;
-    };
-  }, [refresh]);
+    if (visible) void refresh();
+  }, [refresh, visible]);
 
   const addSource = useCallback(
     async (agent: string, folder: boolean) => {
@@ -176,11 +199,15 @@ export function useUsage() {
     [refresh],
   );
 
-  const removeSource = useCallback(
-    async (id: string) => {
+  const changeSource = useCallback(
+    async (source: Source) => {
       setLoading(true);
       try {
-        await invoke('usage_remove_source', { id });
+        if (source.automatic) {
+        await invoke('usage_set_auto_source', { id: source.id, enabled: source.enabled === false });
+      } else {
+        await invoke('usage_remove_source', { id: source.id });
+      }
         await refresh();
       } catch (reason) {
         setError(String(reason));
@@ -190,5 +217,5 @@ export function useUsage() {
     [refresh],
   );
 
-  return { sources, records, warnings, partial, loading, error, refresh, addSource, removeSource };
+  return { sources, records, warnings, partial, stale, loading, error, refresh, addSource, changeSource };
 }

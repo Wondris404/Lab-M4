@@ -180,7 +180,7 @@ async function closeWindow() {
 async function verifyInstalledUsage() {
   await startSession();
   await step('scan two fixtures through the installed Usage tab', async () => {
-    await click('.lab-tabs button:nth-of-type(2)');
+    await click('.workspace-nav button[aria-label="Usage"]');
     await until('installed Usage results', async () => {
       const result = await request('POST', endpoint('/execute/sync'), {
         script: `const usage = document.querySelector('.usage-tab');
@@ -188,13 +188,13 @@ async function verifyInstalledUsage() {
           return {
             error: usage.querySelector('[role="alert"]')?.textContent,
             partial: [...usage.querySelectorAll('[role="status"]')].some(e => e.textContent.startsWith('Orientačný odhad')),
-            rows: [...usage.querySelectorAll('tbody tr')].map(row => [...row.cells].map(cell => cell.textContent)),
+            rows: [...usage.querySelectorAll('.usage-ledger tbody tr')].map(row => [...row.cells].map(cell => cell.textContent)),
           };`, args: [],
       });
       if (result?.error) throw new Error(`Installed Usage scan failed: ${result.error}`);
       if (!result?.partial || result.rows.length !== 1) return false;
       const row = result.rows[0];
-      if (row[1] !== 'codex' || row[4] !== '10' || row[5] !== '4' || row[8] !== '—')
+      if (row[1] !== 'Codex' || row[4] !== '10' || row[5] !== '4' || row[8] !== '—')
         throw new Error('Installed Usage returned unexpected token counts or pricing');
       return true;
     }, 60_000);
@@ -215,7 +215,7 @@ async function verifyTerminal() {
     marker('first.txt', '$global:labSession-$global:labOrder', 'first-AB'));
   await step('create second terminal', async () => {
     await click('[aria-label="Actions menu"]');
-    await click('.sidebar-menu button:nth-of-type(2)');
+    await click('.sidebar-menu [role="menuitem"]:first-of-type');
     await until('second session', async () => (await elements('.session-item')).length === 2);
   });
   const secondPid = await step('verify second terminal marker', async () => {

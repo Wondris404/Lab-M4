@@ -14,8 +14,11 @@
   --tile-border-target: #a2c8b3;
   --divider: rgba(225, 233, 233, 0.08);
   --mono-font: Cascadia Code, Consolas, Courier New, monospace;
+  color-scheme: dark;
+}
 
-  /* Derived surfaces — recompute from theme tokens so light/dark both work */
+:root,
+.terminal-pane {
   --hover: color-mix(in srgb, var(--text) 9%, var(--sidebar-bg));
   --active: color-mix(in srgb, var(--text) 14%, var(--sidebar-bg));
   --surface: color-mix(in srgb, var(--text) 5%, var(--bg));
@@ -36,6 +39,8 @@
   --shadow: color-mix(in srgb, #000 35%, transparent);
 }
 
+:root[data-theme-mode="dark"] { --on-accent: #000; }
+
 html,
 body,
 #root {
@@ -45,7 +50,6 @@ body,
   color: var(--text);
   font-family: "Segoe UI", Inter, system-ui, sans-serif;
   font-size: 13px;
-  color-scheme: dark;
 }
 
 .app-shell {
@@ -75,6 +79,141 @@ body,
 
 .sidebar.collapsed {
   /* width/flex-basis set inline */
+}
+
+.workspace-nav {
+  display: grid;
+  flex: 0 0 auto;
+  gap: 4px;
+  margin-top: auto;
+  padding: 8px;
+  border-top: 1px solid var(--sidebar-border);
+}
+
+.workspace-nav button,
+.appearance-mode button {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 8px;
+  min-height: 34px;
+  border: 1px solid transparent;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+  cursor: pointer;
+}
+
+.workspace-nav button:hover,
+.appearance-mode button:hover {
+  border-color: var(--sidebar-border);
+}
+
+.workspace-nav button[aria-current="page"],
+.appearance-mode button[aria-pressed="true"] {
+  border-color: var(--accent);
+  background: var(--toolbar-bg);
+}
+
+.workspace-nav button:focus-visible,
+.appearance-mode button:focus-visible {
+  outline: 2px solid var(--accent);
+}
+
+.workspace-nav-icon {
+  display: inline-grid;
+  place-items: center;
+  width: 20px;
+  font-size: 16px;
+}
+
+.workspace-usage-icon {
+  height: 20px;
+  flex: 0 0 20px;
+  color: var(--accent);
+}
+
+.sidebar.collapsed .workspace-nav button {
+  justify-content: center;
+  padding-inline: 0;
+}
+
+.appearance-mode {
+  margin: 0 0 10px;
+  padding: 4px 0 0;
+  border: 0;
+}
+
+.appearance-mode button {
+  display: inline-flex;
+  margin-right: 6px;
+}
+
+.appearance-panel {
+  display: grid;
+  gap: 14px;
+}
+
+.appearance-panel label {
+  display: grid;
+  gap: 5px;
+  color: var(--text);
+}
+
+.appearance-panel select,
+.accent-custom input[type="text"] {
+  min-width: 0;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 6px 8px;
+  background: var(--bg);
+  color: var(--text);
+}
+
+.accent-presets,
+.accent-custom {
+  display: flex;
+  align-items: end;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 8px;
+}
+
+.accent-swatch {
+  width: 14px;
+  height: 14px;
+  border: 1px solid var(--border);
+  border-radius: 50%;
+}
+
+.accent-custom input[type="text"] { width: 9ch; }
+.accent-custom input[aria-invalid="true"] { border-color: var(--danger); }
+
+.accent-preview,
+.appearance-reset {
+  display: inline-block;
+  width: fit-content;
+  border-radius: 7px;
+  padding: 7px 12px;
+}
+
+.accent-preview {
+  background: var(--accent-fill);
+  color: var(--accent-ink);
+}
+
+.appearance-reset {
+  background: var(--surface);
+  color: var(--text);
+  border: 1px solid var(--border);
+  cursor: pointer;
+}
+
+.settings-modal :focus-visible,
+.chat-workspace :focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
 }
 
 .sidebar-resize-handle {
@@ -737,6 +876,107 @@ body,
   min-width: 0;
   background: var(--bg);
   position: relative;
+}
+
+.terminal-pane[hidden],
+.chat-workspace[hidden],
+.chat-conversation[hidden],
+.usage-pane[hidden] {
+  display: none;
+}
+
+.chat-workspace {
+  flex: 1 1 auto;
+  min-width: 0;
+  background: var(--bg);
+}
+
+.chat-conversation {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+}
+
+.chat-conversation-header {
+  padding: 12px clamp(12px, 4vw, 48px);
+  border-bottom: 1px solid var(--border);
+  color: var(--text-dim);
+}
+
+.chat-conversation-header h1 {
+  margin: 3px 0 0;
+  color: var(--text);
+  font-size: 18px;
+  overflow-wrap: anywhere;
+}
+
+.chat-conversation .agent-pane {
+  flex: 1 1 auto;
+  height: auto;
+  width: min(100%, 840px);
+  margin-inline: auto;
+  font-size: 14px;
+}
+
+.chat-conversation .agent-pane-input-row {
+  margin: 0 clamp(8px, 2vw, 24px) 16px;
+}
+
+.chat-conversation .agent-msg-user .agent-msg-body {
+  align-self: end;
+  background: var(--accent-fill);
+  color: var(--accent-ink);
+  max-width: 85%;
+}
+
+.chat-conversation .agent-pane-send:not(:disabled) {
+  background: var(--accent-fill);
+  color: var(--accent-ink);
+}
+
+.chat-no-session { margin: 20px; }
+
+.chat-message-status {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 1.3em;
+}
+
+.chat-indicator {
+  display: inline-flex;
+  flex: 0 0 22px;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+  color: var(--accent);
+}
+
+.chat-indicator i {
+  width: 5px;
+  height: 5px;
+  background: currentColor;
+  animation: chat-pulse 960ms steps(2, end) infinite;
+}
+
+.chat-indicator i:nth-child(2) { animation-delay: 160ms; }
+.chat-indicator i:nth-child(3) { animation-delay: 320ms; }
+.chat-indicator[data-phase="tool"] i:nth-child(2) { transform: translateY(-3px); }
+.chat-indicator[data-phase="stream"] i:nth-child(3) { transform: translateY(-3px); }
+.chat-indicator-subtle i { border-radius: 50%; animation-timing-function: ease-in-out; }
+
+@keyframes chat-pulse {
+  0%, 100% { opacity: 0.35; }
+  50% { opacity: 1; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .chat-indicator i { animation: none; }
+}
+
+.usage-pane {
+  flex: 1 1 auto;
+  min-width: 0;
 }
 
 .toolbar {
@@ -2115,6 +2355,18 @@ body,
   overflow: hidden;
 }
 
+@media (max-width: 540px) {
+  .settings-modal-body { flex-direction: column; min-height: 0; }
+  .settings-tabs {
+    flex: 0 0 auto;
+    flex-direction: row;
+    flex-wrap: wrap;
+    border-right: none;
+    border-bottom: 1px solid var(--border);
+  }
+  .settings-panel { min-height: 0; }
+}
+
 .settings-tabs {
   flex: 0 0 132px;
   display: flex;
@@ -2143,7 +2395,7 @@ body,
 }
 
 .settings-tab-active {
-  background: rgba(14, 99, 156, 0.22);
+  background: var(--accent-soft);
   color: var(--text);
   box-shadow: inset 2px 0 0 var(--accent);
 }

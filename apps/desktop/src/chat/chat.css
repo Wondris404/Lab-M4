@@ -1,5 +1,5 @@
 .conversation-view {
-  height: calc(100vh - 40px);
+  height: 100%;
   display: flex;
   flex-direction: column;
   min-height: 0;
@@ -9,6 +9,8 @@
   display: flex;
   align-items: center;
   justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 12px;
   padding: 12px clamp(12px, 4vw, 32px);
   border-bottom: 1px solid var(--border);
 }
@@ -56,7 +58,8 @@
   max-width: min(86%, 620px);
   padding: 10px 14px;
   border-radius: 15px 15px 4px 15px;
-  background: var(--accent-soft);
+  background: var(--accent-fill, var(--accent));
+  color: var(--accent-ink, var(--on-accent));
   white-space: pre-wrap;
 }
 
@@ -94,9 +97,174 @@
   opacity: .55;
 }
 
-.conversation-composer button {
-  justify-self: end;
-  border-color: var(--accent);
+.conversation-controls {
+  position: relative;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.chat-picker { min-width: 0; }
+
+.conversation-controls > button { flex: 0 0 auto; }
+
+.conversation-view .chat-picker-trigger {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  max-width: 100%;
+  min-width: 0;
+  min-height: 34px;
+  border-color: transparent;
+  background: transparent;
+  text-align: left;
+}
+
+.conversation-view .chat-picker-trigger:hover,
+.conversation-view .chat-picker-trigger[aria-expanded="true"] {
+  background: var(--btn-bg);
+  border-color: var(--border);
+}
+
+.chat-picker-mark { color: var(--accent); }
+
+.chat-picker-trigger-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.chat-picker-panel {
+  position: absolute;
+  z-index: 12;
+  inset-inline-start: 0;
+  bottom: calc(100% + 10px);
+  width: min(360px, 100%);
+  max-height: min(430px, calc(100dvh - 165px));
+  display: flex;
+  flex-direction: column;
+  box-sizing: border-box;
+  overflow: hidden;
+  padding: 4px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--surface);
+  box-shadow: 0 14px 32px rgb(0 0 0 / 28%);
+}
+
+.chat-picker-heading {
+  min-height: 36px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding-inline: 8px;
+  border-radius: 8px;
+  background: var(--btn-bg);
+  font-weight: 650;
+}
+
+.chat-picker-progress {
+  margin-inline-start: auto;
+  color: var(--text-dim);
+  font-size: .82em;
+  font-weight: 400;
+}
+
+.conversation-view .chat-picker-back {
+  padding: 0 6px;
+  border-color: transparent;
+  background: transparent;
+  color: var(--accent);
+  font-size: 1.35em;
+}
+
+.chat-picker-search { padding: 6px 4px 2px; }
+.chat-picker-search input {
+  box-sizing: border-box;
+  width: 100%;
+  padding: 5px 8px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg);
+  color: var(--text);
+  font: inherit;
+}
+
+.chat-picker-rows {
+  padding: 3px;
+  overflow: auto;
+  overscroll-behavior: contain;
+}
+
+.chat-picker-rows p { margin: 8px; color: var(--text-dim); }
+
+.conversation-view .chat-picker-row {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  min-height: 38px;
+  padding: 6px 8px;
+  border-color: transparent;
+  background: transparent;
+  text-align: left;
+}
+
+.conversation-view .chat-picker-row:hover:not(:disabled),
+.conversation-view .chat-picker-row[aria-pressed="true"] { background: var(--btn-bg); }
+.chat-picker-row[aria-pressed="true"] > span:last-child { color: var(--accent); }
+.chat-picker-row strong, .chat-picker-row small { display: block; overflow-wrap: anywhere; }
+.chat-picker-row strong { font-weight: 550; }
+.chat-picker-row small { color: var(--text-dim); }
+
+.conversation-composer button[type="submit"]:not(:disabled) {
+  background: var(--accent-fill, var(--accent));
+  color: var(--accent-ink, var(--on-accent));
+}
+
+.conversation-status {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 1.5em;
+  color: var(--text-dim);
+}
+
+.conversation-indicator {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  color: var(--accent);
+}
+
+.conversation-indicator i {
+  width: 4px;
+  height: 4px;
+  border-radius: 50%;
+  background: currentColor;
+  animation: conversation-pulse 900ms ease-in-out infinite alternate;
+}
+
+.conversation-indicator[data-animation="pixel"] i {
+  width: 5px;
+  height: 5px;
+  border-radius: 0;
+  animation-timing-function: steps(2, end);
+}
+
+.conversation-indicator i:nth-child(2) { animation-delay: 150ms; }
+.conversation-indicator i:nth-child(3) { animation-delay: 300ms; }
+
+@keyframes conversation-pulse {
+  from { opacity: .4; }
+  to { opacity: 1; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .conversation-indicator i { animation: none; }
 }
 
 .conversation-view :focus-visible {

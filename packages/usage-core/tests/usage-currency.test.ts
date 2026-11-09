@@ -29,8 +29,8 @@ describe('known USD and unknown costs', () => {
   it('renders the USD amount and an explicitly partial sum for unknown cost', () => {
     const html = renderToStaticMarkup(React.createElement(UsageTab));
     expect(html).toContain('<th>USD</th>');
-    expect(html).toContain('<td>1,25</td>');
-    expect(html).toContain('1,25 USD');
+    expect(html).toMatch(/<td[^>]*>1,25<\/td>/);
+    expect(html.replaceAll('\u00a0', ' ')).toContain('1,25 USD');
     expect(html).toContain('Čiastočné / NEOVERENÉ');
     expect(html).not.toContain('<th>EUR</th>');
   });

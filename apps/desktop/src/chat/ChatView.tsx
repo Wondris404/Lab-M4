@@ -2,18 +2,41 @@ import { useEffect, useRef, useState, type FormEvent } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { AgentMarkdown } from "../agent/AgentMarkdown";
+import type { AppearanceSettings } from "../settings/types";
+import { DEFAULT_SELECTION, ModelPicker, PLATFORMS, type ModelCatalog, type ModelSelection, type Platform } from "./ModelPicker";
 import "./chat.css";
+
+const EMPTY_MESSAGES: Message[] = [];
 
 interface Message {
   id: number;
   question: string;
+  model: string;
   answer: string;
   error?: string;
 }
 
-export function ChatView() {
-  const [messages, setMessages] = useState<Message[]>([]);
-  const [draft, setDraft] = useState("");
+export function ChatView({ visible, animation }: { visible: boolean; animation: AppearanceSettings["chatAnimation"] }) {
+  const [platform, setPlatform] = useState<Platform>("codex");
+  const [histories, setHistories] = useState<Partial<Record<Platform, Message[]>>>({});
+  const [drafts, setDrafts] = useState<Partial<Record<Platform, string>>>({});
+  const [catalogs, setCatalogs] = useState<Partial<Record<Platform, { model: string; catalog: ModelCatalog }>>>({});
+  const [choices, setChoices] = useState<Partial<Record<Platform, ModelSelection>>>({});
+  const [catalogError, setCatalogError] = useState("");
+  const [catalogAttempt, setCatalogAttempt] = useState(0);
+  const [catalogLoading, setCatalogLoading] = useState(false);
+  const messages = histories[platform] ?? EMPTY_MESSAGES;
+  const draft = drafts[platform] ?? "";
+  const selection = choices[platform] ?? DEFAULT_SELECTION;
+  const { model, speed, thinking } = selection;
+  const requestedModel = platform === "codex" ? "" : model;
+  const catalogEntry = catalogs[platform];
+  const optionsReady = catalogEntry?.model === requestedModel;
+  const catalog = catalogEntry?.catalog;
+  const setDraft = (value: string) => setDrafts((previous) => ({ ...previous, [platform]: value }));
+  function setMessages(update: (messages: Message[]) => Message[]) {
+    setHistories((previous) => ({ ...previous, [platform]: update(previous[platform] ?? EMPTY_MESSAGES) }));
+  }
   const [active, setActive] = useState<number>();
   const [stopping, setStopping] = useState(false);
   const [error, setError] = useState("");
@@ -22,6 +45,34 @@ export function ChatView() {
   const submitted = useRef(false);
   const next = useRef(0);
   const scroll = useRef<HTMLDivElement>(null);
+  const catalogRequests = useRef(new Map<string, Promise<ModelCatalog>>());
+
+  useEffect(() => {
+    if (!visible || optionsReady || active !== undefined) return;
+    let listening = true;
+    setCatalogError("");
+    setCatalogLoading(true);
+    const key = JSON.stringify([platform, requestedModel]);
+    let request = catalogRequests.current.get(key);
+    if (!request) {
+      request = invoke<ModelCatalog>("chat_models", { platform, model: requestedModel || null }).finally(() => {
+        catalogRequests.current.delete(key);
+      });
+      catalogRequests.current.set(key, request);
+    }
+    void request.then((catalog) => {
+      if (listening) {
+        setCatalogs((previous) => ({ ...previous, [platform]: { model: requestedModel, catalog } }));
+        setCatalogLoading(false);
+      }
+    }).catch((reason: unknown) => {
+      if (listening) {
+        setCatalogError(String(reason));
+        setCatalogLoading(false);
+      }
+    });
+    return () => { listening = false; };
+  }, [visible, optionsReady, requestedModel, platform, catalogAttempt, active]);
 
   useEffect(() => {
     if (scroll.current) scroll.current.scrollTop = scroll.current.scrollHeight;
@@ -34,7 +85,7 @@ export function ChatView() {
   async function send(event: FormEvent) {
     event.preventDefault();
     const question = draft.trim();
-    if (!question || activeRef.current !== undefined) return;
+    if (!question || catalogLoading || activeRef.current !== undefined) return;
     if (new TextEncoder().encode(question).length > 32_768) {
       setError("Správa je príliš dlhá.");
       return;
@@ -46,7 +97,7 @@ export function ChatView() {
     setActive(id);
     setError("");
     setDraft("");
-    setMessages((previous) => [...previous, { id, question, answer: "" }]);
+    setMessages((previous) => [...previous, { id, question, model: model || "Predvolený model", answer: "" }]);
     let unlisten: (() => void) | undefined;
     try {
       unlisten = await listen<{ requestId: number; text: string }>("chat-delta", ({ payload }) => {
@@ -56,7 +107,10 @@ export function ChatView() {
       });
       if (cancelBeforeSend.current) throw Error("Odpoveď bola zastavená.");
       submitted.current = true;
-      const answer = await invoke<string>("chat_send", { requestId: id, message: question });
+      const answer = await invoke<string>("chat_send", {
+        requestId: id, message: question, platform, model: model || null,
+        speed: speed || null, thinking: thinking || null,
+      });
       update(id, (message) => ({ ...message, answer }));
     } catch (reason) {
       update(id, (message) => ({ ...message, error: String(reason) }));
@@ -86,8 +140,8 @@ export function ChatView() {
 
   async function reset() {
     try {
-      await invoke("chat_reset");
-      setMessages([]);
+      await invoke("chat_reset", { platform });
+      setMessages(() => []);
       setError("");
     } catch (reason) {
       setError(String(reason));
@@ -99,9 +153,9 @@ export function ChatView() {
       <header className="conversation-header">
         <div>
           <h1>Chat</h1>
-          <p>Codex · prihlásenie cez Codex CLI</p>
+          <p>Prihlásenie cez {platform === "opencode" ? "OpenCode" : PLATFORMS[platform].cli}</p>
         </div>
-        <button type="button" disabled={active !== undefined || !messages.length} onClick={() => void reset()}>
+        <button type="button" disabled={catalogLoading || active !== undefined || !messages.length} onClick={() => void reset()}>
           Nový chat
         </button>
       </header>
@@ -110,16 +164,25 @@ export function ChatView() {
           {!messages.length && (
             <div className="conversation-empty">
               <h2>S čím ti môžem pomôcť?</h2>
-              <p>Odoslaná správa sa spracuje cez tvoj účet v Codex CLI.</p>
+              <p>Odoslaná správa sa spracuje cez tvoj účet v {PLATFORMS[platform].company}.</p>
             </div>
           )}
-          {messages.map(({ id, question, answer, error: turnError }) => (
+          {messages.map(({ id, question, model: usedModel, answer, error: turnError }) => (
             <div className="conversation-turn" key={id}>
-              <div className="conversation-question">{question}</div>
+              <div className="conversation-question" title={usedModel}>{question}</div>
               {(answer || turnError || active === id) && (
                 <div className="conversation-answer">
                   {answer && <AgentMarkdown text={answer} />}
-                  {active === id && !answer && <p role="status">Čakám na odpoveď…</p>}
+                  {active === id && (
+                    <p className="conversation-status" role="status">
+                      {animation !== "off" && !stopping && (
+                        <span className="conversation-indicator" data-animation={animation} aria-hidden="true">
+                          <i /><i /><i />
+                        </span>
+                      )}
+                      {stopping ? "Zastavujem…" : answer ? "Model odpovedá…" : "Čakám na odpoveď…"}
+                    </p>
+                  )}
                   {turnError && <p role="alert">{turnError} Ďalšia správa začne nový kontext.</p>}
                 </div>
               )}
@@ -137,9 +200,21 @@ export function ChatView() {
               event.currentTarget.form?.requestSubmit();
             }
           }} />
-        {active === undefined
-          ? <button type="submit" disabled={!draft.trim()}>Odoslať</button>
-          : <button type="button" disabled={stopping} onClick={() => void stop()}>{stopping ? "Zastavujem…" : "STOP"}</button>}
+        <div className="conversation-controls">
+          <ModelPicker platform={platform} selection={selection} catalog={catalog} optionsReady={optionsReady}
+            loading={catalogLoading} error={catalogError} visible={visible} disabled={active !== undefined}
+            onPlatform={(value) => {
+              if (value === platform) return;
+              setError("");
+              setCatalogError("");
+              setPlatform(value);
+            }}
+            onSelection={(value) => setChoices((previous) => ({ ...previous, [platform]: value }))}
+            onRetry={() => setCatalogAttempt((value) => value + 1)} />
+          {active === undefined
+            ? <button type="submit" disabled={catalogLoading || !draft.trim()}>Odoslať</button>
+            : <button type="button" disabled={stopping} onClick={() => void stop()}>{stopping ? "Zastavujem…" : "STOP"}</button>}
+        </div>
       </form>
     </main>
   );

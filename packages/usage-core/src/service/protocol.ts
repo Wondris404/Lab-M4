@@ -1,3 +1,4 @@
+import { isGrokHistory } from '../parsers/grok-history.js';
 import { lstat } from 'node:fs/promises';
 import { createHash, type Hash } from 'node:crypto';
 import { estimateNoteFor } from '../core/estimate-note.js';
@@ -11,7 +12,7 @@ export interface ScanRequest {
   version: 1;
   requestId: string;
   method: 'scan';
-  params: { agent: Provider; path: string; cachePath?: string; force?: boolean; offset?: number; limit?: number };
+  params: { agent: Provider; path: string; cachePath?: string; force?: boolean; offset?: number; limit?: number; full?: boolean; codexHome?: boolean };
 }
 
 // Length framing prevents field-boundary collisions. Hash one field at a time,
@@ -83,9 +84,13 @@ export async function handleRequest(input: unknown) {
   if (agent === 'antigravity') return { version: 1, requestId: request.requestId, result: { status: 'not-supported', records: [], warnings: ['NEOVERENÉ'] } };
   const parser: Parser = parserRegistry[agent];
   const info = await lstat(path);
-  const parsed = (info.isFile() || (agent === 'codex' && info.isDirectory())) && request.params.cachePath
-    ? await scanCached(parser, path, request.params.cachePath, request.params.force ?? false)
-    : await parser.parse(path).then((result) => ({ ...result, records: result.records.map(normalizeRecord) }));
+  const codexHome = request.params.codexHome === true;
+  const grokHistory = agent === 'grok-build' && isGrokHistory(path, info.isDirectory());
+  if (codexHome && (agent !== 'codex' || !info.isDirectory())) throw new Error('Invalid Codex history home');
+  const parsed = (info.isFile() || agent === 'codex' || grokHistory) && request.params.cachePath
+    ? await scanCached(parser, path, request.params.cachePath, request.params.force ?? false, codexHome)
+    : await parser.parse(path, codexHome).then((result) => grokHistory
+      ? result : ({ ...result, records: result.records.map(normalizeRecord) }));
   const countRisk = parsed.countRisk ?? (parsed.partial ? 'under-count' : 'none');
   const warningDetails = parsed.warningDetails ?? [];
   const estimateNote = estimateNoteFor(parsed.partial || countRisk !== 'none', countRisk === 'both' ? [] : warningDetails);
@@ -102,7 +107,7 @@ export async function handleRequest(input: unknown) {
         ...(estimateNote && !warningDetails.includes(estimateNote) ? [estimateNote] : []),
         ...Object.entries(parsed.mismatchFields).map(([kind, count]) => `${kind}: ${count}`),
       ],
-      records: parsed.records.slice(offset, offset + limit).map((r) => ({
+      records: (request.params.full === true ? parsed.records : parsed.records.slice(offset, offset + limit)).map((r) => ({
         agent: r.provider, model: r.model, session: r.sessionId, sessionKnown: r.sessionKnown !== false, timestamp: r.timestamp,
         input: r.inputTokens, output: r.outputTokens, cached: r.cachedInputTokens,
         reasoning: r.reasoningTokens, costSource: r.costSource,

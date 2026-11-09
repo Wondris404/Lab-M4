@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 import { createPortal } from "react-dom";
 import { Terminal } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
@@ -6,7 +6,7 @@ import { WebglAddon } from "@xterm/addon-webgl";
 import { invoke } from "@tauri-apps/api/core";
 import { LogicalPosition, LogicalSize } from "@tauri-apps/api/dpi";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
-import { getCurrentWindow, UserAttentionType } from "@tauri-apps/api/window";
+import { availableMonitors, getCurrentWindow, UserAttentionType } from "@tauri-apps/api/window";
 import { open } from "@tauri-apps/plugin-dialog";
 import "@xterm/xterm/css/xterm.css";
 import { shouldWaitForCursorCorrection } from "./terminalOutput";
@@ -17,6 +17,11 @@ import claudeIcon from "./assets/ai-claude.svg";
 import opencodeIcon from "./assets/ai-opencode.svg";
 import appLogo from "./assets/wraith-logo.png";
 import { AgentPaneView } from "./agent/AgentPaneView";
+import { ChatView } from "./chat/ChatView";
+import { UsageTab } from "./usage/UsageTab";
+import { isLightTheme, resolveAppearance, SYSTEM_THEME_QUERY } from "./settings/applyAppearance";
+import { captureWindowGeometry, isReachableWindowPosition } from "./settings/windowGeometry";
+import { getTheme } from "./settings/themes";
 import {
   psSingleQuote,
   buildAgentCommand as buildAgentCommandShared,
@@ -27,7 +32,7 @@ import type { OrchestratorApi, PaneAgentName } from "./agent/orchestratorTypes";
 import { waitForAgentToken, waitForPaneOutput } from "./agent/orchestratorWait";
 import type { PaneInfo } from "./agent/tools";
 import {
-  AppSettingsModal,
+  type AppSettingsApi,
   applyTerminalAppearance,
   clampFontSize,
   COLLAPSED_SIDEBAR_WIDTH,
@@ -37,7 +42,6 @@ import {
   ensureFontStackReady,
   resolveTerminalTheme,
   SIDEBAR_COLLAPSE_THRESHOLD,
-  useAppSettings,
   type AiSettings,
 } from "./settings";
 import {
@@ -1374,13 +1378,11 @@ function TiledNode({
   );
 }
 
-function App() {
-  const appSettings = useAppSettings();
+function App({ appSettings }: { appSettings: AppSettingsApi }) {
   const {
     settings,
     settingsRef,
     ready: settingsReady,
-    settingsOpen,
     openSettings,
     setFontSize: setSettingsFontSize,
     setSidebarCollapsed,
@@ -1388,6 +1390,20 @@ function App() {
     setWindowGeometry,
     flushPersist: flushSettingsPersist,
   } = appSettings;
+
+  const [usageVisible, setUsageVisible] = useState(false);
+  const [usageOpened, setUsageOpened] = useState(false);
+  const chatMode = settings.appearance.appMode === "chat";
+  const terminalVisible = !usageVisible && !chatMode;
+  const terminalTheme = appSettings.appearance.terminalTheme;
+  const terminalStyle = useMemo(() => ({
+    ...Object.fromEntries(Object.entries(getTheme(terminalTheme).css)
+      .filter(([name]) => !name.startsWith("--accent"))),
+    colorScheme: isLightTheme(terminalTheme) ? "light" : "dark",
+    "--accent": isLightTheme(terminalTheme) ? "var(--accent-light)" : "var(--accent-dark)",
+    "--accent-hover": "var(--accent)",
+    "--on-accent": isLightTheme(terminalTheme) ? "#fff" : "#000",
+  }) as CSSProperties, [terminalTheme]);
 
   const [sessions, setSessions] = useState<Session[]>([]);
   const [sidebar, setSidebar] = useState<SidebarState>({
@@ -1615,7 +1631,7 @@ function App() {
   const applyAppearanceToAll = useCallback(() => {
     const s = settingsRef.current;
     const opts = {
-      themeId: s.appearance.theme,
+      themeId: terminalTheme,
       fontFamily: s.terminal.fontFamily,
       fontSize: s.terminal.fontSize,
       colorMode: s.terminal.colorMode,
@@ -1632,7 +1648,7 @@ function App() {
         );
       }
     }
-  }, [collectAliveWindows, settingsRef]);
+  }, [collectAliveWindows, settingsRef, terminalTheme]);
 
   // Live-update terminals when theme / font / colors change.
   useEffect(() => {
@@ -1640,7 +1656,6 @@ function App() {
     applyAppearanceToAll();
   }, [
     settingsReady,
-    settings.appearance.theme,
     settings.terminal.fontFamily,
     settings.terminal.fontSize,
     settings.terminal.colorMode,
@@ -2180,7 +2195,7 @@ function App() {
         scrollback: 10000,
         windowsPty: { backend: "conpty" },
         theme: resolveTerminalTheme(
-          s.appearance.theme,
+          resolveAppearance(s.appearance, window.matchMedia(SYSTEM_THEME_QUERY).matches).terminalTheme,
           s.terminal.colorMode,
           s.terminal.colors
         ),
@@ -3283,7 +3298,11 @@ function App() {
         const win = getCurrentWindow();
         await win.setSize(new LogicalSize(geom.width, geom.height));
         if (geom.x !== null && geom.y !== null) {
-          await win.setPosition(new LogicalPosition(geom.x, geom.y));
+          const scale = await win.scaleFactor();
+          const position = new LogicalPosition(geom.x, geom.y).toPhysical(scale);
+          if (isReachableWindowPosition(position, await availableMonitors())) {
+            await win.setPosition(position);
+          }
         }
       } catch {
         // ignore restore failures
@@ -3298,41 +3317,23 @@ function App() {
     let unlistenMove: UnlistenFn | null = null;
     let cancelled = false;
 
-    const captureGeometry = async () => {
-      try {
-        const win = getCurrentWindow();
-        const size = await win.innerSize();
-        const pos = await win.outerPosition();
-        const scale = await win.scaleFactor();
-        const width = Math.round(size.width / scale);
-        const height = Math.round(size.height / scale);
-        const x = Math.round(pos.x / scale);
-        const y = Math.round(pos.y / scale);
-        if (windowGeometryTimerRef.current) {
-          clearTimeout(windowGeometryTimerRef.current);
+    const scheduleCapture = () => {
+      if (windowGeometryTimerRef.current) clearTimeout(windowGeometryTimerRef.current);
+      windowGeometryTimerRef.current = setTimeout(async () => {
+        try {
+          const geometry = await captureWindowGeometry(getCurrentWindow());
+          if (geometry && !cancelled && !closingRef.current) setWindowGeometry(geometry);
+        } catch {
+          // Keep the last known placement if the window cannot be queried.
         }
-        windowGeometryTimerRef.current = setTimeout(() => {
-          setWindowGeometry({
-            width: clamp(width, 400, 10000),
-            height: clamp(height, 300, 10000),
-            x,
-            y,
-          });
-        }, WINDOW_GEOMETRY_DEBOUNCE_MS);
-      } catch {
-        // ignore
-      }
+      }, WINDOW_GEOMETRY_DEBOUNCE_MS);
     };
 
     void (async () => {
       try {
         const win = getCurrentWindow();
-        const offResize = await win.onResized(() => {
-          void captureGeometry();
-        });
-        const offMove = await win.onMoved(() => {
-          void captureGeometry();
-        });
+        const offResize = await win.onResized(scheduleCapture);
+        const offMove = await win.onMoved(scheduleCapture);
         if (cancelled) {
           offResize();
           offMove();
@@ -3388,16 +3389,8 @@ function App() {
         try {
           // Capture latest window geometry before exit.
           try {
-            const win = getCurrentWindow();
-            const size = await win.innerSize();
-            const pos = await win.outerPosition();
-            const scale = await win.scaleFactor();
-            setWindowGeometry({
-              width: clamp(Math.round(size.width / scale), 400, 10000),
-              height: clamp(Math.round(size.height / scale), 300, 10000),
-              x: Math.round(pos.x / scale),
-              y: Math.round(pos.y / scale),
-            });
+            const geometry = await captureWindowGeometry(getCurrentWindow());
+            if (geometry) setWindowGeometry(geometry);
           } catch {
             // ignore geometry capture
           }
@@ -3530,6 +3523,7 @@ function App() {
 
   useEffect(() => {
     const onKeyDown = (e: KeyboardEvent) => {
+      if (!terminalVisible || appSettings.settingsOpen) return;
       if (!e.ctrlKey || !e.shiftKey || e.key !== " ") return;
       const activeElement = document.activeElement as HTMLElement | null;
       if (activeElement?.closest(".agent-pane")) return;
@@ -3549,10 +3543,10 @@ function App() {
 
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [togglePaneDictation]);
+  }, [appSettings.settingsOpen, terminalVisible, togglePaneDictation]);
 
   useEffect(() => {
-
+    if (!terminalVisible || appSettings.settingsOpen) return;
     const frame = window.requestAnimationFrame(() => {
       const session = sessionsRef.current.find((s) => s.id === activeSessionId);
       if (!session) return;
@@ -3572,7 +3566,7 @@ function App() {
     });
 
     return () => window.cancelAnimationFrame(frame);
-  }, [activeSessionId, activeWindowIds, activeLayoutSignature]);
+  }, [activeSessionId, activeWindowIds, activeLayoutSignature, appSettings.settingsOpen, terminalVisible]);
 
   const sessionsById = useMemo(
     () => new Map(sessions.map((session) => [session.id, session])),
@@ -3723,21 +3717,6 @@ function App() {
                     role="menuitem"
                     onClick={() => {
                       setHeaderMenuOpen(false);
-                      openSettings("appearance");
-                    }}
-                  >
-                    <span className="sidebar-menu-icon" aria-hidden="true">
-                      ⚙
-                    </span>
-                    <span>Settings</span>
-                  </button>
-                  <div className="sidebar-menu-sep" role="separator" />
-                  <button
-                    type="button"
-                    className="sidebar-menu-item"
-                    role="menuitem"
-                    onClick={() => {
-                      setHeaderMenuOpen(false);
                       void createSession();
                     }}
                   >
@@ -3795,15 +3774,6 @@ function App() {
               onClick={() => setSidebarCollapsed(false)}
             >
               ›
-            </button>
-            <button
-              type="button"
-              className="sidebar-rail-btn"
-              title="Settings"
-              aria-label="Settings"
-              onClick={() => openSettings("appearance")}
-            >
-              ⚙
             </button>
             <button
               type="button"
@@ -3954,6 +3924,36 @@ function App() {
           })}
         </ul>
         )}
+        <nav className="workspace-nav" aria-label="Pracovný priestor">
+          <button type="button" title={chatMode ? "Chat" : "Terminál"} aria-label={chatMode ? "Chat" : "Terminál"}
+            aria-current={usageVisible ? undefined : "page"}
+            onClick={() => setUsageVisible(false)}>
+            <span className="workspace-nav-icon" aria-hidden="true">{chatMode ? "◫" : "›_"}</span>
+            {!sidebarCollapsed && <span>{chatMode ? "Chat" : "Terminál"}</span>}
+          </button>
+          <button type="button" title="Usage" aria-label="Usage"
+            aria-current={usageVisible ? "page" : undefined}
+            onClick={() => {
+              setUsageOpened(true);
+              setUsageVisible(true);
+            }}>
+            <svg className="workspace-nav-icon workspace-usage-icon" viewBox="0 0 18 18"
+              aria-hidden="true" focusable="false" fill="none" stroke="currentColor"
+              strokeWidth=".8" strokeDasharray=".8 .2" shapeRendering="crispEdges">
+              <path d="M10 2.5h5 M8 3.5h8 M7 4.5h4m3 0h3 M6 5.5h3m6 0h2 M6 6.5h2
+                M4 7.5h12 M4 8.5h11 M6 9.5h2 M4 10.5h11 M4 11.5h10 M6 12.5h2
+                M7 13.5h3m5 0h2 M8 14.5h9 M10 15.5h6" />
+              <path opacity=".6" d="M2 3.5h1 M5 4.5h1 M3 5.5h1 M1 6.5h1 M4 6.5h1 M2 8.5h1
+                M1 9.5h1m2 0h1 M2 11.5h1 M4 12.5h1 M1 13.5h1m3 0h1 M3 14.5h1 M5 15.5h1" />
+            </svg>
+            {!sidebarCollapsed && <span>Usage</span>}
+          </button>
+          <button type="button" title="Nastavenia" aria-label="Nastavenia"
+            onClick={() => openSettings("appearance")}>
+            <span className="workspace-nav-icon" aria-hidden="true">⚙</span>
+            {!sidebarCollapsed && <span>Nastavenia</span>}
+          </button>
+        </nav>
         <div
           className="sidebar-resize-handle"
           title="Drag to resize sidebar"
@@ -3964,7 +3964,7 @@ function App() {
         />
       </aside>
 
-      <main className="terminal-pane">
+      <main className="terminal-pane" hidden={!terminalVisible} style={terminalStyle}>
         {hasSessions && (
           <>
             <div className="toolbar">
@@ -4084,7 +4084,15 @@ function App() {
         )}
       </main>
 
-      {settingsOpen && <AppSettingsModal api={appSettings} />}
+      <section className="chat-workspace" hidden={!chatMode || usageVisible}>
+        <ChatView visible={chatMode && !usageVisible} animation={settings.appearance.chatAnimation} />
+      </section>
+
+      {usageOpened && (
+        <div className="usage-pane" hidden={!usageVisible}>
+          <UsageTab visible={usageVisible} theme={appSettings.appearance.usageTheme} />
+        </div>
+      )}
 
       {confirmDialog &&
         createPortal(

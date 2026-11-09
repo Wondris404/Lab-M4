@@ -16,12 +16,14 @@ fn main() {
             "load_app_settings",
             "save_app_settings",
             "chat_send",
+            "chat_models",
             "chat_stop",
             "chat_reset",
             "usage_list_sources",
             "usage_select_source",
             "usage_remove_source",
             "usage_scan",
+            "usage_set_auto_source",
         ]),
     ))
     .expect("failed to run tauri-build");

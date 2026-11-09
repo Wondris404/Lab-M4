@@ -13,11 +13,11 @@ import {
 
 export const codexParser: Parser = {
   provider: 'codex',
-  async parse(path) {
+  async parse(path, historyOnly = false) {
     const result = emptyResult();
     const seen = new Map<string, Set<string>>();
     const budget = newExpansionBudget();
-    for await (const file of findCodexFiles(path)) {
+    for await (const file of findCodexFiles(path, historyOnly)) {
       const recordsBefore = result.records.length;
       const limitsBefore = result.limits.length;
       const warningsBefore = result.warnings;
@@ -26,7 +26,7 @@ export const codexParser: Parser = {
       let model = 'unknown';
       let speed: 'standard' | 'fast' | 'unknown' = 'unknown';
       try {
-        for await (const line of lines(file, budget)) {
+        for await (const line of lines(file, budget, () => { result.warnings++; result.partial = true; })) {
           if (!line.trim()) continue;
           let event: Record<string, unknown>;
           try {
@@ -37,8 +37,8 @@ export const codexParser: Parser = {
             continue;
           }
           const p = obj(event.payload);
-          if (event.type === 'session_meta')
-            sessionId = str(p.session_id) ?? str(p.id);
+          if (event.type === 'session_meta' && !sessionId)
+            sessionId = str(p.id) ?? str(p.session_id);
           if (event.type === 'turn_context') {
             model = str(p.model) ?? 'unknown';
             speed =

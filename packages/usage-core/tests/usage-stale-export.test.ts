@@ -19,8 +19,8 @@ import { UsageTab } from '../../../apps/desktop/src/usage/UsageTab.js';
 
 it('blocks CSV export after refresh fails while showing the error and retaining prior data', () => {
   const html = renderToStaticMarkup(React.createElement(UsageTab));
-  expect(html).toContain('<p role="alert">Obnovenie zlyhalo</p>');
-  expect(html).toContain('<button disabled="">Exportovať CSV</button>');
-  expect(html).toContain('<option>previous-model</option>');
+  expect(html).toMatch(/<p role="alert"[^>]*>Obnovenie zlyhalo<\/p>/);
+  expect(html).toMatch(/<button[^>]*disabled=""[^>]*>Exportovať CSV<\/button>/);
+  expect(html).toContain('previous-model');
   expect(html).toContain('aria-label="Odobrať z Usage: codex (synthetic)"');
 });

@@ -19,6 +19,7 @@ enum End {
     Backpressure,
     Timeout,
     Stopped,
+    CheckComplete(u32),
 }
 
 enum Note {
@@ -42,6 +43,7 @@ fn result_name(end: &End) -> &'static str {
         End::Backpressure => "backpressure",
         End::Timeout => "timeout",
         End::Stopped => "stop",
+        End::CheckComplete(_) => "check-complete",
     }
 }
 
@@ -94,8 +96,9 @@ fn drain(carry: &mut Vec<u8>, input: &SyncSender<ParentInput>) -> Result<bool, E
 
 fn run() -> io::Result<End> {
     let mut args = env::args_os().skip(1);
-    let timeout = args
-        .next()
+    let first = args.next();
+    let check_mode = first.as_deref() == Some(std::ffi::OsStr::new("--check"));
+    let timeout = if check_mode { args.next() } else { first }
         .and_then(|value| value.to_str()?.parse::<u64>().ok())
         .filter(|value| (1..=600_000).contains(value))
         .ok_or_else(|| io::Error::other("Invalid agent timeout"))?;
@@ -105,7 +108,7 @@ fn run() -> io::Result<End> {
     );
     let args: Vec<_> = args.collect();
     let args: Vec<_> = args.iter().map(|arg| arg.as_os_str()).collect();
-    let allowed = [
+    let common = [
         "SystemRoot",
         "WINDIR",
         "PATH",
@@ -113,13 +116,37 @@ fn run() -> io::Result<End> {
         "HOME",
         "APPDATA",
         "LOCALAPPDATA",
-        "CODEX_HOME",
-        "GROK_HOME",
         "TMP",
         "TEMP",
     ];
-    let values: Vec<_> = allowed
+    let provider: &[&str] = if check_mode {
+        &[]
+    } else {
+        &[
+            "CODEX_HOME",
+            "OPENAI_API_KEY",
+            "GROK_HOME",
+            "XAI_API_KEY",
+            "XDG_DATA_HOME",
+            "XDG_CACHE_HOME",
+            "XDG_STATE_HOME",
+            "XDG_CONFIG_HOME",
+            "OPENCODE_DB",
+            "OPENCODE_CONFIG_DIR",
+            "OPENCODE_DISABLE_PROJECT_CONFIG",
+            "OPENCODE_DISABLE_AUTOUPDATE",
+            "OPENCODE_PERMISSION",
+            "OPENCODE_CONFIG_CONTENT",
+            "ANTHROPIC_API_KEY",
+            "OPENROUTER_API_KEY",
+            "GOOGLE_GENERATIVE_AI_API_KEY",
+            "GEMINI_API_KEY",
+            "OPENCODE_API_KEY",
+        ]
+    };
+    let values: Vec<_> = common
         .iter()
+        .chain(provider)
         .filter_map(|&name| env::var_os(name).map(|value| (name, value)))
         .collect();
     let profile: Vec<_> = values
@@ -195,12 +222,23 @@ fn run() -> io::Result<End> {
     });
     let mut parent_eof = false;
     let end = loop {
+        if check_mode {
+            if let Some(code) = agent.exit_code()? {
+                break End::CheckComplete(code);
+            }
+        }
         let remaining = deadline.saturating_duration_since(Instant::now());
         if remaining.is_zero() {
             break End::Timeout;
         }
-        match ended.recv_timeout(remaining) {
+        let interval = if check_mode {
+            remaining.min(Duration::from_millis(25))
+        } else {
+            remaining
+        };
+        match ended.recv_timeout(interval) {
             Ok(Note::ParentEof) => parent_eof = true,
+            Ok(Note::AgentClosed) if check_mode => continue,
             Ok(Note::AgentClosed) => {
                 break if parent_eof {
                     End::ParentClosed
@@ -211,6 +249,7 @@ fn run() -> io::Result<End> {
             Ok(Note::InputFailed) => break End::InputFailed,
             Ok(Note::Backpressure) => break End::Backpressure,
             Ok(Note::Stopped) => break End::Stopped,
+            Err(RecvTimeoutError::Timeout) if check_mode => continue,
             Err(RecvTimeoutError::Timeout) => break End::Timeout,
             Err(RecvTimeoutError::Disconnected) => break End::InputFailed,
         }
@@ -219,6 +258,9 @@ fn run() -> io::Result<End> {
     eprintln!("LAB_M4_RESULT {}", result_name(&end));
     agent.stop(Duration::from_secs(3))?;
     eprintln!("LAB_M4_JOB_STOP {active} {}", agent.active_count()?);
+    if let End::CheckComplete(code) = end {
+        eprintln!("LAB_M4_CHECK_EXIT {code}");
+    }
     Ok(end)
 }
 
@@ -229,6 +271,7 @@ fn main() {
         Ok(End::InputFailed) => 3,
         Ok(End::Backpressure) => 4,
         Ok(End::Stopped) => 5,
+        Ok(End::CheckComplete(_)) => 6,
         Ok(End::Timeout) => 124,
         Err(_) => {
             eprintln!("LAB_M4_JOB_FAILED");

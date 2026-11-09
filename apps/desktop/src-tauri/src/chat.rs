@@ -79,7 +79,7 @@ struct Turn {
 }
 
 enum Operation {
-    Send(Turn),
+    Send(Box<Turn>),
     Models {
         model: Option<String>,
         cancel: Arc<AtomicBool>,
@@ -159,6 +159,7 @@ pub(crate) async fn chat_models(
 }
 
 #[tauri::command]
+#[allow(clippy::too_many_arguments)] // Keep the existing flat Tauri invoke payload.
 pub(crate) async fn chat_send(
     window: WebviewWindow,
     state: tauri::State<'_, ChatState>,
@@ -191,7 +192,12 @@ pub(crate) async fn chat_send(
         cancel: cancel.clone(),
     };
     state
-        .request(platform, Some(request_id), Operation::Send(turn), cancel)
+        .request(
+            platform,
+            Some(request_id),
+            Operation::Send(Box::new(turn)),
+            cancel,
+        )
         .await
 }
 

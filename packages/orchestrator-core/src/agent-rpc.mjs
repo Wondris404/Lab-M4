@@ -129,6 +129,7 @@ export function connectAgent(child, { jsonrpc, signal, onNotification = () => {}
   }
 
   return {
+    closed,
     notify(method, params) { write({ method, params }); },
     request(method, params) {
       if (pending) return Promise.reject(new Error('An agent request is already pending'));

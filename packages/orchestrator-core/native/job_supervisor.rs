@@ -114,6 +114,8 @@ extern "system" {
         returned: *mut u32,
     ) -> i32;
     fn TerminateJobObject(job: Handle, code: u32) -> i32;
+    #[allow(dead_code)]
+    fn GetExitCodeProcess(process: Handle, code: *mut u32) -> i32;
     fn CreatePipe(read: *mut Handle, write: *mut Handle, attrs: *const c_void, size: u32) -> i32;
     fn SetHandleInformation(handle: Handle, mask: u32, flags: u32) -> i32;
     fn InitializeProcThreadAttributeList(
@@ -391,6 +393,15 @@ impl Supervised {
             WAIT_OBJECT_0 => Ok(false),
             _ => Err(io::Error::last_os_error()),
         }
+    }
+    #[allow(dead_code)] // Used by the orchestration test runner, not the chat transport.
+    pub(crate) fn exit_code(&self) -> io::Result<Option<u32>> {
+        if self.running()? {
+            return Ok(None);
+        }
+        let mut code = 0;
+        check(unsafe { GetExitCodeProcess(self.process.0, &mut code) })?;
+        Ok(Some(code))
     }
     pub(crate) fn active_count(&self) -> io::Result<u32> {
         let mut info: Accounting = unsafe { zeroed() };

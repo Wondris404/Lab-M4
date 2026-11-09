@@ -1,4 +1,8 @@
 mod chat;
+#[cfg(windows)]
+#[path = "../../../../packages/orchestrator-core/native/job_supervisor.rs"]
+mod job_supervisor;
+mod orchestration;
 mod pty_input;
 mod usage;
 mod usage_integrity;
@@ -1191,6 +1195,7 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .manage(AppState::default())
         .manage(chat::ChatState::default())
+        .manage(orchestration::OrchestrationState::default())
         .manage(usage::UsageState::default())
         .setup(|app| {
             let url =
@@ -1217,6 +1222,9 @@ pub fn run() {
             chat::chat_models,
             chat::chat_stop,
             chat::chat_reset,
+            orchestration::orchestration_start,
+            orchestration::orchestration_snapshot,
+            orchestration::orchestration_action,
             usage::usage_suggest_sources,
             usage::usage_list_sources,
             usage::usage_set_auto_source,
@@ -1231,6 +1239,12 @@ pub fn run() {
                 tauri::WindowEvent::CloseRequested { .. } | tauri::WindowEvent::Destroyed
             ) {
                 if let Some(state) = window.app_handle().try_state::<chat::ChatState>() {
+                    state.close();
+                }
+                if let Some(state) = window
+                    .app_handle()
+                    .try_state::<orchestration::OrchestrationState>()
+                {
                     state.close();
                 }
                 if let Some(state) = window.app_handle().try_state::<AppState>() {

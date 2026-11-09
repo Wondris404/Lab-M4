@@ -1,6 +1,7 @@
 import { cp, lstat, mkdir, readFile, readdir, realpath, rm, writeFile } from 'node:fs/promises';
 import { createHash } from 'node:crypto';
 import { createRequire } from 'node:module';
+import { execFileSync } from 'node:child_process';
 import { dirname, join, resolve } from 'node:path';
 import { build } from 'esbuild';
 const root = resolve(import.meta.dirname, '..');
@@ -31,6 +32,11 @@ if (previous && !previous.isDirectory()) throw new Error('Invalid sidecar stagin
 await rm(stage, { recursive: true, force: true });
 await mkdir(join(stage, 'node_modules'), { recursive: true });
 await build({ entryPoints: [join(root, 'apps/usage-service/src/main.ts')], bundle: true, platform: 'node', format: 'cjs', external: ['sqlite3'], outfile: join(stage, 'main.cjs') });
+if (process.platform === 'win32') {
+  const orchestrator = join(root, 'packages/orchestrator-core');
+  await build({ entryPoints: [join(orchestrator, 'src/desktop-bridge.mjs')], bundle: true, platform: 'node', format: 'cjs', outfile: join(stage, 'orchestration.cjs') });
+  execFileSync('rustc', ['--edition', '2021', '-D', 'warnings', '-O', join(orchestrator, 'native/agent_transport.rs'), '-o', join(stage, 'agent_transport.exe')], { stdio: 'inherit', windowsHide: true });
+}
 for (const [name, source] of [['sqlite3', sqliteRoot], ['bindings', bindingsRoot], ['file-uri-to-path', uriRoot]]) {
   await cp(source, join(stage, 'node_modules', name), { recursive: true, dereference: true });
 }

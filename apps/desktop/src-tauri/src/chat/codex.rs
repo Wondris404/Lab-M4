@@ -1,8 +1,5 @@
-#[path = "../../../../../packages/orchestrator-core/native/job_supervisor.rs"]
-mod job_supervisor;
-
 use super::{ChatDelta, Choice, Model, ModelCatalog, ModelOptions, Turn};
-use job_supervisor::Supervised;
+use crate::job_supervisor::Supervised;
 use serde_json::{json, Value};
 use std::{
     env,
@@ -21,7 +18,7 @@ const FRAME_LIMIT: usize = 1024 * 1024;
 pub(super) const ANSWER_LIMIT: usize = 256 * 1024;
 pub(super) const TURN_TIMEOUT: Duration = Duration::from_secs(180);
 
-fn executable() -> Option<PathBuf> {
+pub(super) fn executable() -> Option<PathBuf> {
     let architecture = if cfg!(target_arch = "aarch64") {
         "arm64"
     } else {

@@ -20,7 +20,7 @@ pub(super) struct Session {
     thinking: Option<ThinkingConfig>,
 }
 
-fn executable(platform: Platform) -> Result<PathBuf, String> {
+pub(super) fn executable(platform: Platform) -> Result<PathBuf, String> {
     let name = if platform == Platform::GrokBuild {
         "grok.exe"
     } else {

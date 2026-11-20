@@ -1,3 +1,13 @@
+export function usageDay(timestamp: string) {
+  const date = new Date(timestamp);
+  if (!Number.isFinite(date.getTime())) return '';
+  return [
+    date.getFullYear(),
+    String(date.getMonth() + 1).padStart(2, '0'),
+    String(date.getDate()).padStart(2, '0'),
+  ].join('-');
+}
+
 /** Slovak product formatting with explicit dot grouping. */
 export function formatFull(value: number): string {
   if (!Number.isFinite(value)) return '—';

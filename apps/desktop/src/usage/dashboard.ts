@@ -25,16 +25,6 @@ export function providerInfo(agent: string) {
   return PROVIDERS[agent] ?? { label: agent, color: 'var(--usage-other)' };
 }
 
-export function usageDay(timestamp: string) {
-  const date = new Date(timestamp);
-  if (!Number.isFinite(date.getTime())) return '';
-  return [
-    date.getFullYear(),
-    String(date.getMonth() + 1).padStart(2, '0'),
-    String(date.getDate()).padStart(2, '0'),
-  ].join('-');
-}
-
 function dayStart(value: number, delta = 0) {
   const date = new Date(value);
   date.setHours(0, 0, 0, 0);

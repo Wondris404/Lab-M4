@@ -11,6 +11,7 @@ import {
   usageState,
 } from '../../../apps/desktop/src/usage/viewModel.js';
 import type { UsageItem } from '../../../apps/desktop/src/usage/UsageTab.js';
+import { usageDay } from '../../../apps/desktop/src/usage/format.js';
 import { usageCsv } from '../../../apps/desktop/src/usage/csv.js';
 import { handleRequest } from '../src/service/protocol.js';
 import { testTempDir } from './test-temp.js';
@@ -42,9 +43,10 @@ describe('usage view data', () => {
     expect(usageState(false, undefined, 1, 1)).toBe('ready');
   });
   it('filters by agent, model, day and session and sorts numeric columns', () => {
+    const timestamp = new Date(2025, 0, 1, 12).toISOString();
     const records = [
-      item('codex', 10),
-      item('codex', 3),
+      item('codex', 10, timestamp),
+      item('codex', 3, timestamp),
       item('grok-build', 5, '2025-01-02T00:00:00Z'),
     ];
     const filters = {
@@ -62,6 +64,16 @@ describe('usage view data', () => {
     expect(
       selectUsage(records, filters, 'input', true).map((row) => row.input),
     ).toEqual([10, 3]);
+  });
+
+  it('filters by the displayed local day for equivalent timestamps with different offsets', () => {
+    const records = [
+      item('codex', 10, '2025-01-01T23:45:00-12:00'),
+      item('codex', 3, '2025-01-02T23:45:00+12:00'),
+    ];
+    const day = usageDay('2025-01-02T11:45:00Z');
+    expect(selectUsage(records, { agent: '', model: '', day, session: '' }, 'input', false))
+      .toEqual([records[1], records[0]]);
   });
 
   it('loads every backend page and preserves source warnings', async () => {
@@ -163,6 +175,41 @@ describe('usage view data', () => {
         ['usage_scan', { id: 'other', force: false, offset: 0 }, undefined],
       ]);
     } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it('refreshes a changed source list even when the earlier scan is still running', async () => {
+    const source = { id: 'old', agent: 'codex', name: 'logs', coveredBy: null };
+    let removed = false;
+    let finishScan = () => {};
+    const scanPending = new Promise<void>((resolve) => { finishScan = resolve; });
+    const invoke = vi.fn(async (command: string) => {
+      if (command === 'usage_list_sources') return removed ? [] : [source];
+      if (command === 'usage_remove_source') removed = true;
+      if (command === 'usage_scan') {
+        await scanPending;
+        return { result: { status: 'ok', totalRecords: 0, offset: 0, snapshotId: 'a'.repeat(64), records: [], warnings: [] } };
+      }
+    });
+    vi.stubGlobal('window', { __TAURI_INTERNALS__: { invoke } });
+    let actions: Pick<ReturnType<typeof useUsage>, 'refresh' | 'changeSource'> | undefined;
+    function CaptureActions() {
+      actions = useUsage();
+      return null;
+    }
+    try {
+      renderToStaticMarkup(createElement(CaptureActions));
+      const scan = actions?.refresh();
+      await vi.waitFor(() => expect(invoke).toHaveBeenCalledWith('usage_scan', { id: 'old', force: false, offset: 0 }, undefined));
+      const mutation = actions?.changeSource(source);
+      finishScan();
+      await Promise.all([scan, mutation]);
+      expect(invoke.mock.calls.map(([command]) => command)).toEqual([
+        'usage_list_sources', 'usage_scan', 'usage_remove_source', 'usage_list_sources',
+      ]);
+    } finally {
+      finishScan();
       vi.unstubAllGlobals();
     }
   });

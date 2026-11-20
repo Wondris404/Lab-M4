@@ -184,6 +184,12 @@ export function useUsage(visible = true) {
     if (visible) void refresh();
   }, [refresh, visible]);
 
+  const refreshAfterSourceChange = useCallback(async () => {
+    generation.current++;
+    await inFlight.current;
+    await refresh();
+  }, [refresh]);
+
   const addSource = useCallback(
     async (agent: string, folder: boolean) => {
       try {
@@ -191,12 +197,12 @@ export function useUsage(visible = true) {
           agent,
           folder,
         });
-        if (selected) await refresh();
+        if (selected) await refreshAfterSourceChange();
       } catch (reason) {
         setError(String(reason));
       }
     },
-    [refresh],
+    [refreshAfterSourceChange],
   );
 
   const changeSource = useCallback(
@@ -204,17 +210,17 @@ export function useUsage(visible = true) {
       setLoading(true);
       try {
         if (source.automatic) {
-        await invoke('usage_set_auto_source', { id: source.id, enabled: source.enabled === false });
-      } else {
-        await invoke('usage_remove_source', { id: source.id });
-      }
-        await refresh();
+          await invoke('usage_set_auto_source', { id: source.id, enabled: source.enabled === false });
+        } else {
+          await invoke('usage_remove_source', { id: source.id });
+        }
+        await refreshAfterSourceChange();
       } catch (reason) {
         setError(String(reason));
         setLoading(false);
       }
     },
-    [refresh],
+    [refreshAfterSourceChange],
   );
 
   return { sources, records, warnings, partial, stale, loading, error, refresh, addSource, changeSource };

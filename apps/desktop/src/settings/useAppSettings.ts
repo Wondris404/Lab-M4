@@ -286,34 +286,25 @@ export function useAppSettings() {
 
   const setAiSettings = useCallback(
     async (ai: AiSettings) => {
-      const next: AppSettings = {
-        ...settingsRef.current,
-        ai: { ...ai },
-      };
-      settingsRef.current = next;
-      setSettings(next);
-      await persist(next);
+      updateSettings((prev) => ({ ...prev, ai: { ...ai } }), { persist: false });
+      await flushPersist();
     },
-    [persist]
+    [flushPersist, updateSettings]
   );
 
   const setGeneralSettings = useCallback(
     async (general: Partial<GeneralSettings>) => {
-      const next: AppSettings = {
-        ...settingsRef.current,
+      updateSettings((prev) => ({
+        ...prev,
         general: {
-          ...settingsRef.current.general,
+          ...prev.general,
           ...general,
-          window: general.window
-            ? { ...general.window }
-            : { ...settingsRef.current.general.window },
+          window: { ...(general.window ?? prev.general.window) },
         },
-      };
-      settingsRef.current = next;
-      setSettings(next);
-      await persist(next);
+      }), { persist: false });
+      await flushPersist();
     },
-    [persist]
+    [flushPersist, updateSettings]
   );
 
   const setSidebarCollapsed = useCallback(

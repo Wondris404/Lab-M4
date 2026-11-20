@@ -1,6 +1,9 @@
-import { expect, it } from "vitest";
+import { expect, it, vi } from "vitest";
+import { createElement } from "react";
+import { renderToStaticMarkup } from "react-dom/server";
 import { normalizeAppSettings } from "../../../apps/desktop/src/settings/types";
 import { accentColors, resolveAppearance } from "../../../apps/desktop/src/settings/applyAppearance";
+import { useAppSettings } from "../../../apps/desktop/src/settings/useAppSettings";
 
 it("preserves terminal palettes, custom colors and the Usage override from legacy settings", () => {
   const settings = normalizeAppSettings({
@@ -35,4 +38,30 @@ it("keeps foreground text readable on very dark and very light custom accent fil
   expect(accentColors("#ffffff", false).foreground).toBe("#000");
   expect(accentColors("#000000", true).readable).not.toBe("rgb(0, 0, 0)");
   expect(accentColors("#ffffff", false).readable).not.toBe("rgb(255, 255, 255)");
+});
+
+it("keeps an immediate settings save from being overwritten by a pending appearance save", async () => {
+  const invoke = vi.fn(async () => undefined);
+  vi.stubGlobal("window", { matchMedia: () => ({ matches: false }), __TAURI_INTERNALS__: { invoke } });
+  vi.useFakeTimers();
+  let settings: ReturnType<typeof useAppSettings> | undefined;
+  function CaptureSettings() {
+    settings = useAppSettings();
+    return null;
+  }
+  try {
+    renderToStaticMarkup(createElement(CaptureSettings));
+    settings?.setAppearance({ accent: "#112233" });
+    await settings?.setGeneralSettings({ confirmClosePane: false });
+    await vi.advanceTimersByTimeAsync(300);
+    expect(invoke).toHaveBeenCalledExactlyOnceWith("save_app_settings", {
+      state: expect.objectContaining({
+        appearance: expect.objectContaining({ accent: "#112233" }),
+        general: expect.objectContaining({ confirmClosePane: false }),
+      }),
+    }, undefined);
+  } finally {
+    vi.useRealTimers();
+    vi.unstubAllGlobals();
+  }
 });

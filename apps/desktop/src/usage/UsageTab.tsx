@@ -5,11 +5,10 @@ import {
   PERIODS,
   periodStart,
   providerInfo,
-  usageDay,
   type UsageMetric,
   type UsagePeriod,
 } from './dashboard';
-import { formatFull } from './format';
+import { formatFull, usageDay } from './format';
 import { usageCsv } from './csv';
 import { useUsage } from './useUsage';
 import { selectUsage, usageState, type SortField } from './viewModel';
